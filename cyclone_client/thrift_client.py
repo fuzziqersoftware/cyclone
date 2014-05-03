@@ -1,0 +1,104 @@
+import socket
+import threading
+
+import thrift.transport
+import thrift.transport.TSocket
+import thrift.protocol
+
+from .cyclone_if import Cyclone as cyclone_service
+from .cyclone_if import ttypes as cyclone_types
+from .common import KeyMetadata
+
+
+def metadata_to_thrift(m):
+  archive_args = [cyclone_types.ArchiveArg(precision=x[0], points=x[1])
+                  for x in m.archive_args]
+  return cyclone_types.SeriesMetadata(archive_args=archive_args,
+      x_files_factor=m.x_files_factor, agg_method=m.agg_method)
+
+def metadata_from_thrift(m):
+  ret = KeyMetadata()
+  ret.archive_args = [(a.precision, a.points) for a in m.archive_args]
+  ret.x_files_factor = m.x_files_factor
+  ret.agg_method = m.agg_method
+  return ret
+
+
+class CycloneThriftClient(threading.local):
+  def __init__(self, host, port, timeout=None):
+    self.host = host
+    self.port = port
+    self.timeout = timeout
+    self.socket = None
+    self.client = None
+    self.connect()
+
+  def connect(self):
+    if self.socket:
+      self.socket.close()
+
+    self.socket = thrift.transport.TSocket.TSocket(self.host, self.port)
+    if self.timeout is not None:
+      self.socket.setTimeout(self.timeout)
+    # transport = TTransport.TBufferedTransport(self.socket)
+    trans = thrift.transport.TTransport.TFramedTransport(self.socket)
+    proto = thrift.protocol.TBinaryProtocol.TBinaryProtocolAccelerated(trans)
+    self.client = cyclone_service.Client(proto)
+    trans.open()
+
+  def execute_command(self, k, *args):
+    try:
+      return getattr(self.client, k)(*args)
+
+    except (thrift.transport.TTransport.TTransportException, socket.error) as e:
+      # if the connection was broken, reconnect and retry
+      if isinstance(e, socket.error) and (e.errno != errno.EPIPE):
+        raise
+
+      self.connect()
+      return getattr(self.client, k)(*args)
+
+  def update_metadata(self, key_name_to_metadata, create_new=True,
+      skip_existing=False, truncate_existing=False):
+    x = {k: metadata_to_thrift(v) for k, v in key_name_to_metadata.iteritems()}
+    return self.execute_command('update_metadata', x, create_new, skip_existing,
+        truncate_existing)
+
+  def delete_series(self, key_names):
+    return self.execute_command('delete_series', key_names)
+
+  def read_metadata(self, key_names):
+    results = {}
+    for k, v in self.execute_command('read_metadata', key_names).iteritems():
+      if v.error:
+        raise RuntimeError(v)
+      results[k] = metadata_from_thrift(v.metadata)
+    return results
+
+  def read(self, key_names, start_time, end_time):
+    thrift_results = self.execute_command('read', key_names, start_time,
+        end_time)
+
+    results = {}
+    for k, v in thrift_results.iteritems():
+      if v.error:
+        raise RuntimeError(v)
+      v.metadata = metadata_from_thrift(v.metadata)
+      v.data = [(d.timestamp, d.value) for d in v.data]
+      results[k] = v
+    return results
+
+  def write(self, key_name_to_datapoints):
+    thrift_args = {}
+    for key_name, datapoints in key_name_to_datapoints.iteritems():
+      thrift_args[key_name] = [cyclone_types.Datapoint(timestamp=x[0], value=x[1]) for x in datapoints]
+
+    return self.execute_command('write', thrift_args)
+
+  def find(self, patterns):
+    results = {}
+    for k, v in self.execute_command('find', patterns).iteritems():
+      if v.error:
+        raise RuntimeError(v)
+      results[k] = v.results
+    return results
