@@ -39,22 +39,10 @@ struct Options {
 
   vector<pair<string, SeriesMetadata>> autocreate_rules;
 
-  Options(const string& filename) : filename(filename) {
+  Options(const string& filename, bool is_reload = false) : filename(filename) {
     auto json = JSONObject::load(this->filename);
 
-    // load immutable configuration
-    this->http_listen_addrs = this->parse_listen_addrs_list((*json)["http_listen"]);
-    this->line_listen_addrs = this->parse_listen_addrs_list((*json)["line_listen"]);
-    this->pickle_listen_addrs = this->parse_listen_addrs_list((*json)["pickle_listen"]);
-    this->thrift_port = (*json)["thrift_port"]->as_int();
-    this->http_threads = (*json)["http_threads"]->as_int();
-    this->stream_threads = (*json)["stream_threads"]->as_int();
-    this->thrift_threads = (*json)["thrift_threads"]->as_int();
-    try {
-      this->exit_check_usecs = (*json)["exit_check_usecs"]->as_int();
-    } catch (const JSONObject::key_error& e) {
-      this->exit_check_usecs = 2000000; // 2 seconds
-    }
+    // load mutable configuration
     try {
       this->stats_report_usecs = (*json)["stats_report_usecs"]->as_int();
     } catch (const JSONObject::key_error& e) {
@@ -65,11 +53,30 @@ struct Options {
     } catch (const JSONObject::key_error& e) {
       this->open_file_cache_size = 1024;
     }
-    this->store = this->parse_store_config((*json)["store_config"]);
 
     this->autocreate_rules = this->parse_autocreate_rules((*json)["autocreate_rules"]);
 
-    this->store->set_autocreate_rules(this->autocreate_rules);
+    // load immutable configuration
+    if (!is_reload) {
+      this->http_listen_addrs = this->parse_listen_addrs_list(
+          (*json)["http_listen"]);
+      this->line_listen_addrs = this->parse_listen_addrs_list(
+          (*json)["line_listen"]);
+      this->pickle_listen_addrs = this->parse_listen_addrs_list(
+          (*json)["pickle_listen"]);
+      this->thrift_port = (*json)["thrift_port"]->as_int();
+      this->http_threads = (*json)["http_threads"]->as_int();
+      this->stream_threads = (*json)["stream_threads"]->as_int();
+      this->thrift_threads = (*json)["thrift_threads"]->as_int();
+      try {
+        this->exit_check_usecs = (*json)["exit_check_usecs"]->as_int();
+      } catch (const JSONObject::key_error& e) {
+        this->exit_check_usecs = 2000000; // 2 seconds
+      }
+
+      this->store = this->parse_store_config((*json)["store_config"]);
+      this->store->set_autocreate_rules(this->autocreate_rules);
+    }
   }
 
   static vector<pair<string, int>> parse_listen_addrs_list(
@@ -202,6 +209,7 @@ int main(int argc, char **argv) {
   log(INFO, "fuzziqer software cyclone");
 
   string config_filename = (argc < 2) ? "cyclone.conf.json" : argv[1];
+  uint64_t config_modification_time = stat(config_filename).st_mtime;
   Options opt(config_filename);
 
   WhisperArchive::set_files_lru_max_size(opt.open_file_cache_size);
@@ -256,51 +264,76 @@ int main(int argc, char **argv) {
   // TODO: also check the config file for updates periodically
 
   // collect stats periodically and report them to the store
-  if (opt.stats_report_usecs) {
-    uint64_t next_stats_report_time = now() + opt.stats_report_usecs;
-    while (!should_exit) {
-      if (now() >= next_stats_report_time) {
-        string hostname = gethostname();
-        auto stats = opt.store->get_stats(true);
+  uint64_t next_stats_report_time = opt.stats_report_usecs ?
+      (now() + opt.stats_report_usecs) : 0;
+  uint64_t next_config_check_time = now() + 10000000;
+  while (!should_exit) {
 
-        unordered_map<string, Series> data_to_write;
+    if (now() >= next_config_check_time) {
+      uint64_t t = stat(config_filename).st_mtime;
+      if (t > config_modification_time) {
+        log(INFO, "configuration file was modified; reloading");
 
-        uint64_t n = now() / 1000000;
-        for (const auto& stat : stats) {
-          string key = string_printf("cyclone.%s.%s", hostname.c_str(),
-              stat.first.c_str());
-          auto& series = data_to_write[key];
-          series.emplace_back();
-          series.back().timestamp = n;
-          series.back().value = stat.second;
+        Options new_opt(config_filename);
+        if (new_opt.open_file_cache_size != opt.open_file_cache_size) {
+          log(INFO, "open_file_cache_size changed from %lu to %lu",
+              opt.open_file_cache_size, new_opt.open_file_cache_size);
+          opt.open_file_cache_size = new_opt.open_file_cache_size;
+          WhisperArchive::set_files_lru_max_size(opt.open_file_cache_size);
         }
-        string key = string_printf("cyclone.%s.open_file_cache_size",
-            hostname.c_str(), WhisperArchive::get_files_lru_size());
 
-        opt.store->write(data_to_write);
+        if (new_opt.stats_report_usecs != opt.stats_report_usecs) {
+          log(INFO, "stats_report_usecs changed from %lu to %lu",
+              opt.stats_report_usecs, new_opt.stats_report_usecs);
+          opt.stats_report_usecs = new_opt.stats_report_usecs;
+          next_stats_report_time = opt.stats_report_usecs ? now() : 0;
+        }
 
-        next_stats_report_time += opt.stats_report_usecs;
+        if (new_opt.autocreate_rules != opt.autocreate_rules) {
+          log(INFO, "autocreate rules changed");
+          opt.autocreate_rules = new_opt.autocreate_rules;
+          opt.store->set_autocreate_rules(opt.autocreate_rules);
+        }
+
+        config_modification_time = t;
       }
 
-      if (should_flush) {
-        opt.store->flush();
-        should_flush = false;
-      }
-
-      usleep(next_stats_report_time - now());
+      next_config_check_time = now() + 10000000;
     }
 
-  // if stats are disabled, just wait for signals instead
-  } else {
-    sigset_t signals;
-    sigemptyset(&signals);
-    while (!should_exit) {
-      sigsuspend(&signals);
-      if (should_flush) {
-        opt.store->flush();
-        should_flush = false;
+    if (next_stats_report_time && (now() >= next_stats_report_time)) {
+      string hostname = gethostname();
+      auto stats = opt.store->get_stats(true);
+
+      unordered_map<string, Series> data_to_write;
+
+      uint64_t n = now() / 1000000;
+      for (const auto& stat : stats) {
+        string key = string_printf("cyclone.%s.%s", hostname.c_str(),
+            stat.first.c_str());
+        auto& series = data_to_write[key];
+        series.emplace_back();
+        series.back().timestamp = n;
+        series.back().value = stat.second;
       }
+      string key = string_printf("cyclone.%s.open_file_cache_size",
+          hostname.c_str(), WhisperArchive::get_files_lru_size());
+
+      opt.store->write(data_to_write);
+
+      next_stats_report_time += opt.stats_report_usecs;
     }
+
+    if (should_flush) {
+      opt.store->flush();
+      should_flush = false;
+    }
+
+    uint64_t wakeup_time = next_config_check_time;
+    if (next_stats_report_time && (wakeup_time > next_stats_report_time)) {
+      wakeup_time = next_stats_report_time;
+    }
+    usleep(wakeup_time - now());
   }
 
   signal(SIGINT, SIG_DFL);
