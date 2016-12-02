@@ -152,20 +152,20 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
 
         // expected format: [(key, (timestamp, value))...]
         for (const auto& datapoint : o.as_list()) {
-          const auto& datapoint_list = datapoint.as_list();
+          const auto& datapoint_list = datapoint->as_list();
           if (datapoint_list.size() != 2) {
             continue;
           }
-          const auto& value_list = datapoint_list[1].as_list();
+          const auto& value_list = datapoint_list[1]->as_list();
           if (value_list.size() != 2) {
             continue;
           }
 
           // data[key][timestamp] = value
-          auto& series = data[datapoint_list[0].as_string()];
+          auto& series = data[datapoint_list[0]->as_string()];
           series.emplace_back();
-          series.back().timestamp = value_list[0].as_int();
-          series.back().value = value_list[1].as_float();
+          series.back().timestamp = value_list[0]->as_int();
+          series.back().value = value_list[1]->as_float();
         }
       } catch (const exception& e) {
         log(INFO, "[StreamServer] received bad pickle object (%s)", e.what());

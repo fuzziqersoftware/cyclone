@@ -43,43 +43,44 @@ struct Options {
     auto json = JSONObject::load(this->filename);
 
     // load immutable configuration
-    this->http_listen_addrs = this->parse_listen_addrs_list(json["http_listen"]);
-    this->line_listen_addrs = this->parse_listen_addrs_list(json["line_listen"]);
-    this->pickle_listen_addrs = this->parse_listen_addrs_list(json["pickle_listen"]);
-    this->thrift_port = json["thrift_port"].as_int();
-    this->http_threads = json["http_threads"].as_int();
-    this->stream_threads = json["stream_threads"].as_int();
-    this->thrift_threads = json["thrift_threads"].as_int();
+    this->http_listen_addrs = this->parse_listen_addrs_list((*json)["http_listen"]);
+    this->line_listen_addrs = this->parse_listen_addrs_list((*json)["line_listen"]);
+    this->pickle_listen_addrs = this->parse_listen_addrs_list((*json)["pickle_listen"]);
+    this->thrift_port = (*json)["thrift_port"]->as_int();
+    this->http_threads = (*json)["http_threads"]->as_int();
+    this->stream_threads = (*json)["stream_threads"]->as_int();
+    this->thrift_threads = (*json)["thrift_threads"]->as_int();
     try {
-      this->exit_check_usecs = json["exit_check_usecs"].as_int();
+      this->exit_check_usecs = (*json)["exit_check_usecs"]->as_int();
     } catch (const JSONObject::key_error& e) {
       this->exit_check_usecs = 2000000; // 2 seconds
     }
     try {
-      this->stats_report_usecs = json["stats_report_usecs"].as_int();
+      this->stats_report_usecs = (*json)["stats_report_usecs"]->as_int();
     } catch (const JSONObject::key_error& e) {
       this->stats_report_usecs = 60000000; // 1 minute
     }
     try {
-      this->open_file_cache_size = json["open_file_cache_size"].as_int();
+      this->open_file_cache_size = (*json)["open_file_cache_size"]->as_int();
     } catch (const JSONObject::key_error& e) {
       this->open_file_cache_size = 1024;
     }
-    this->store = this->parse_store_config(json["store_config"]);
+    this->store = this->parse_store_config((*json)["store_config"]);
 
-    this->autocreate_rules = this->parse_autocreate_rules(json["autocreate_rules"]);
+    this->autocreate_rules = this->parse_autocreate_rules((*json)["autocreate_rules"]);
 
     this->store->set_autocreate_rules(this->autocreate_rules);
   }
 
-  static vector<pair<string, int>> parse_listen_addrs_list(const JSONObject& list) {
+  static vector<pair<string, int>> parse_listen_addrs_list(
+      shared_ptr<JSONObject> list) {
     vector<pair<string, int>> ret;
-    for (const auto& item : list.as_list()) {
+    for (const auto& item : list->as_list()) {
       try {
-        int port = item.as_int();
+        int port = item->as_int();
         ret.emplace_back(make_pair("", port));
       } catch (const JSONObject::type_error& e) {
-        string netloc = item.as_string();
+        string netloc = item->as_string();
         size_t colon_offset = netloc.find(':');
         if (colon_offset == string::npos) {
           ret.emplace_back(make_pair(netloc, 0));
@@ -92,44 +93,45 @@ struct Options {
     return ret;
   }
 
-  static shared_ptr<Store> parse_store_config(const JSONObject& store_config) {
+  static shared_ptr<Store> parse_store_config(
+      shared_ptr<JSONObject> store_config) {
 
-    string type = store_config["type"].as_string();
+    string type = (*store_config)["type"]->as_string();
 
     if (!type.compare("multi")) {
       unordered_map<string, shared_ptr<Store>> stores;
-      for (auto& it : store_config["stores"].as_dict()) {
+      for (auto& it : (*store_config)["stores"]->as_dict()) {
         stores.emplace(it.first, parse_store_config(it.second));
       }
       return shared_ptr<Store>(new MultiStore(stores));
     }
 
     if (!type.compare("remote")) {
-      string hostname = store_config["hostname"].as_string();
-      int port = store_config["port"].as_int();
+      string hostname = (*store_config)["hostname"]->as_string();
+      int port = (*store_config)["port"]->as_int();
       return shared_ptr<Store>(new RemoteStore(hostname, port));
     }
 
     if (!type.compare("disk")) {
-      string directory = store_config["directory"].as_string();
+      string directory = (*store_config)["directory"]->as_string();
       return shared_ptr<Store>(new DiskStore(directory));
     }
 
     if (!type.compare("cached_disk")) {
-      string directory = store_config["directory"].as_string();
+      string directory = (*store_config)["directory"]->as_string();
       return shared_ptr<Store>(new CachedDiskStore(directory));
     }
 
     if (!type.compare("write_buffer")) {
-      size_t num_write_threads = store_config["num_write_threads"].as_int();
-      size_t batch_size = store_config["batch_size"].as_int();
-      shared_ptr<Store> substore = parse_store_config(store_config["substore"]);
+      size_t num_write_threads = (*store_config)["num_write_threads"]->as_int();
+      size_t batch_size = (*store_config)["batch_size"]->as_int();
+      shared_ptr<Store> substore = parse_store_config((*store_config)["substore"]);
       return shared_ptr<Store>(new WriteBufferStore(substore, num_write_threads,
           batch_size));
     }
 
     if (!type.compare("read_only")) {
-      shared_ptr<Store> substore = parse_store_config(store_config["substore"]);
+      shared_ptr<Store> substore = parse_store_config((*store_config)["substore"]);
       return shared_ptr<Store>(new ReadOnlyStore(substore));
     }
 
@@ -140,21 +142,41 @@ struct Options {
     throw runtime_error("invalid store config");
   }
 
-  static vector<pair<string, SeriesMetadata>> parse_autocreate_rules(const JSONObject& json) {
+  static vector<pair<string, SeriesMetadata>> parse_autocreate_rules(
+      shared_ptr<const JSONObject> json) {
     vector<pair<string, SeriesMetadata>> ret;
-    for (const auto& item : json.as_list()) {
-      const auto& item_list = item.as_list();
+    for (const auto& item : json->as_list()) {
+      const auto& item_list = item->as_list();
       if (item_list.size() != 4) {
-        auto item_ser = item.serialize();
+        auto item_ser = item->serialize();
         log(WARNING, "autocreate rules contain bad entry: %s", item_ser.c_str());
         continue;
       }
 
       SeriesMetadata m;
-      m.archive_args = WhisperArchive::parse_archive_args(item_list[1].as_string());
-      m.x_files_factor = item_list[2].as_float();
-      m.agg_method = item_list[3].as_int();
-      ret.emplace_back(make_pair(item_list[0].as_string(), m));
+      m.archive_args = WhisperArchive::parse_archive_args(item_list[1]->as_string());
+      m.x_files_factor = item_list[2]->as_float();
+      try {
+        m.agg_method = item_list[3]->as_int();
+      } catch (const JSONObject::type_error& e) {
+        string s = item_list[3]->as_string();
+        if (s == "average") {
+          m.agg_method = AggregationMethod::Average;
+        } else if (s == "sum") {
+          m.agg_method = AggregationMethod::Sum;
+        } else if (s == "last") {
+          m.agg_method = AggregationMethod::Last;
+        } else if (s == "min") {
+          m.agg_method = AggregationMethod::Min;
+        } else if (s == "max") {
+          m.agg_method = AggregationMethod::Max;
+        } else {
+          auto item_ser = item->serialize();
+          log(WARNING, "autocreate rules contain bad entry: %s", item_ser.c_str());
+          continue;
+        }
+      }
+      ret.emplace_back(make_pair(item_list[0]->as_string(), m));
     }
     return ret;
 
