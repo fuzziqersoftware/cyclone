@@ -25,15 +25,23 @@ def metadata_from_thrift(m):
 
 
 class CycloneThriftClient(threading.local):
+  """Cyclone thrift client.
+
+  The Thrift interface serves both read and write queries. Unlike the other
+  clients in this module, the Thrift client maintains a persistent connection to
+  the server and automatically reconnects if it's disconnected.
+
+  """
+
   def __init__(self, host, port, timeout=None):
     self.host = host
     self.port = port
     self.timeout = timeout
     self.socket = None
     self.client = None
-    self.connect()
+    self._connect()
 
-  def connect(self):
+  def _connect(self):
     if self.socket:
       self.socket.close()
 
@@ -46,7 +54,7 @@ class CycloneThriftClient(threading.local):
     self.client = cyclone_service.Client(proto)
     trans.open()
 
-  def execute_command(self, k, *args):
+  def _execute_command(self, k, *args):
     try:
       return getattr(self.client, k)(*args)
 
@@ -55,28 +63,28 @@ class CycloneThriftClient(threading.local):
       if isinstance(e, socket.error) and (e.errno != errno.EPIPE):
         raise
 
-      self.connect()
+      self._connect()
       return getattr(self.client, k)(*args)
 
   def update_metadata(self, key_name_to_metadata, create_new=True,
       skip_existing=False, truncate_existing=False):
     x = {k: metadata_to_thrift(v) for k, v in key_name_to_metadata.iteritems()}
-    return self.execute_command('update_metadata', x, create_new, skip_existing,
+    return self._execute_command('update_metadata', x, create_new, skip_existing,
         truncate_existing)
 
   def delete_series(self, key_names):
-    return self.execute_command('delete_series', key_names)
+    return self._execute_command('delete_series', key_names)
 
   def read_metadata(self, key_names):
     results = {}
-    for k, v in self.execute_command('read_metadata', key_names).iteritems():
+    for k, v in self._execute_command('read_metadata', key_names).iteritems():
       if v.error:
         raise RuntimeError(v)
       results[k] = metadata_from_thrift(v.metadata)
     return results
 
   def read(self, key_names, start_time, end_time):
-    thrift_results = self.execute_command('read', key_names, start_time,
+    thrift_results = self._execute_command('read', key_names, start_time,
         end_time)
 
     results = {}
@@ -93,11 +101,11 @@ class CycloneThriftClient(threading.local):
     for key_name, datapoints in key_name_to_datapoints.iteritems():
       thrift_args[key_name] = [cyclone_types.Datapoint(timestamp=x[0], value=x[1]) for x in datapoints]
 
-    return self.execute_command('write', thrift_args)
+    return self._execute_command('write', thrift_args)
 
   def find(self, patterns):
     results = {}
-    for k, v in self.execute_command('find', patterns).iteritems():
+    for k, v in self._execute_command('find', patterns).iteritems():
       if v.error:
         raise RuntimeError(v)
       results[k] = v.results
