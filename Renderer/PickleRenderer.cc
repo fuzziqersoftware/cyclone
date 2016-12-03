@@ -100,7 +100,7 @@ void PickleRenderer::render_find_results(
 
     // TODO: is it ok for intervals to be blank? unclear if it's used by the
     // frontend
-    evbuffer_add_printf(this->buf, "(T\x09intervals]T\x06isLeaf%cT\x0Bmetric_path%c",
+    evbuffer_add_printf(this->buf, "(U\x09intervals]U\x06isLeaf%cU\x0Bmetric_path%c",
         is_directory ? '\x89' : '\x88', long_name ? 'T' : 'U');
     if (long_name) {
       uint32_t size = it.size();
@@ -114,5 +114,5 @@ void PickleRenderer::render_find_results(
     evbuffer_add(this->buf, "d", 1);
   }
 
-  evbuffer_add(this->buf, "l.", 1);
+  evbuffer_add(this->buf, "l.", 2);
 }

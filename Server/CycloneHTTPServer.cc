@@ -134,11 +134,15 @@ string CycloneHTTPServer::handle_graphite_find_request(struct Thread& t,
   }
 
   string def = "";
-  string query = this->get_url_param(params, "query", &def);
   string format = this->get_url_param(params, "format", &def);
 
+  vector<string> queries;
+  for (auto its = params.equal_range("query"); its.first != its.second; its.first++) {
+    queries.emplace_back(its.first->second);
+  }
+
   auto r = this->create_renderer(format, out_buffer);
-  auto ret = this->store->find({query});
+  auto ret = this->store->find(queries);
   r->render_find_results(ret);
   return r->content_type();
 }

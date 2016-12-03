@@ -45,30 +45,33 @@ void JSONRenderer::render_data(const unordered_map<string, ReadResult>& results)
 }
 
 void JSONRenderer::render_find_results(const unordered_map<string, FindResult>& results) const {
-  // the graphite interface supports only one query at once
-  if (results.size() != 1) {
-    throw runtime_error("can\'t render multiple find results at once");
-  }
-  const auto& result = results.begin()->second;
+  // the graphite interface supports only one query at once, but it also doesn't
+  // support JSON... so we use a completely different format here.
 
-  evbuffer_add(this->buf, "[", 1);
-  size_t num_items = 0;
-  for (const auto& it : result.results) {
-    if (num_items) {
-      evbuffer_add(this->buf, ",", 1);
-    }
-    if (ends_with(it, ".*")) {
-      string dirname = it;
-      dirname.resize(dirname.size() - 2); // trim off the .*
-      evbuffer_add_printf(this->buf,
-          "{\"intervals\":[],\"isLeaf\":false,\"metric_path\":\"%s\"}", dirname.c_str());
+  evbuffer_add(this->buf, "{", 1);
+
+  size_t num_results = 0;
+  for (const auto& it : results) {
+    const auto& pattern = it.first;
+    const auto& result = it.second;
+
+    if (num_results) {
+      evbuffer_add_printf(this->buf, ",\"%s\":[", pattern.c_str());
     } else {
-      // TODO: is it ok for intervals to be blank? unclear if it's used by the
-      // frontend
-      evbuffer_add_printf(this->buf,
-          "{\"intervals\":[],\"isLeaf\":true,\"metric_path\":\"%s\"}", it.c_str());
+      evbuffer_add_printf(this->buf, "\"%s\":[", pattern.c_str());
     }
-    num_items++;
+
+    size_t num_items = 0;
+    for (const auto& it : result.results) {
+      if (num_items) {
+        evbuffer_add_printf(this->buf, ",\"%s\"", it.c_str());
+      } else {
+        evbuffer_add_printf(this->buf, "\"%s\"", it.c_str());
+      }
+      num_items++;
+    }
+    evbuffer_add(this->buf, "]", 1);
+    num_results++;
   }
-  evbuffer_add(this->buf, "]", 1);
+  evbuffer_add(this->buf, "}", 1);
 }
