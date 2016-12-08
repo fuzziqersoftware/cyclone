@@ -27,21 +27,8 @@ class CycloneHTTPClient(threading.local):
     self.port = port
     self.format = format
 
-  def read_metadata(self, key_names):
-    """Reads the metadata for the given keys.
-
-    Returns a dict of {key_name: KeyMetadata}. Raises RuntimeError on failure.
-
-    """
-    results = {}
-    for k, v in self.execute_command('read_metadata', key_names).iteritems():
-      if v.error:
-        raise RuntimeError(v)
-      results[k] = metadata_from_thrift(v.metadata)
-    return results
-
   def read(self, key_names, start_time=None, end_time=None):
-    """Reads the metadata for the given keys.
+    """Reads data from the given keys.
 
     Returns a dict of {key_name: ReadResult}. ReadResult objects have these
     attributes:
