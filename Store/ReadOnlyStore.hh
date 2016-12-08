@@ -35,6 +35,8 @@ public:
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
 
+  virtual int64_t delete_from_cache(const std::string& path);
+
 private:
   std::shared_ptr<Store> store;
 };

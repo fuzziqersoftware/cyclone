@@ -37,6 +37,9 @@ public:
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
 
+  virtual int64_t delete_from_cache(const std::string& path);
+  virtual int64_t delete_pending_writes(const std::string& pattern);
+
 private:
   std::shared_ptr<ConsistentHashRing> ring;
   std::unordered_map<std::string, std::shared_ptr<Store>> stores;

@@ -45,6 +45,9 @@ public:
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
 
+  virtual int64_t delete_from_cache(const std::string& paths);
+  virtual int64_t delete_pending_writes(const std::string& paths);
+
   static bool token_is_pattern(const std::string& token);
   static bool pattern_is_basename(const std::string& token);
   static bool pattern_is_indeterminate(const std::string& pattern);

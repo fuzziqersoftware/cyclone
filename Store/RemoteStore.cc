@@ -68,6 +68,14 @@ unordered_map<string, int64_t> RemoteStore::get_stats(bool rotate) {
   return unordered_map<string, int64_t>();
 }
 
+int64_t RemoteStore::delete_from_cache(const std::string& path) {
+  return this->get_client()->delete_from_cache(path);
+}
+
+int64_t RemoteStore::delete_pending_writes(const std::string& pattern) {
+  return this->get_client()->delete_pending_writes(pattern);
+}
+
 shared_ptr<CycloneClient> RemoteStore::get_client() {
   if (!this->client) {
     boost::shared_ptr<TSocket> socket(new TSocket(this->hostname, this->port));

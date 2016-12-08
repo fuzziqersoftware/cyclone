@@ -608,6 +608,92 @@ unordered_map<string, int64_t> CachedDiskStore::get_stats(bool rotate) {
   return current_stats.to_map();
 }
 
+int64_t CachedDiskStore::delete_from_cache(const string& path) {
+  // if the path is empty, delete the ENTIRE cache
+  if (path.empty() || (path == "*")) {
+    CachedDirectoryContents old_root;
+
+    {
+      rw_guard_multi guards;
+      guards.add(this->cache_root.subdirectories_lock, true);
+      guards.add(this->cache_root.files_lock, true);
+
+      this->cache_root.subdirectories.swap(old_root.subdirectories);
+      this->cache_root.files.swap(old_root.files);
+      this->cache_root.subdirectories_lru.swap(old_root.subdirectories_lru);
+      this->cache_root.files_lru.swap(old_root.files_lru);
+    }
+
+    auto counts = old_root.get_counts();
+    return counts.first + counts.second;
+  }
+
+  // path isn't empty - we're deleting only part of the cache
+  KeyPath p(path);
+  rw_guard_multi guards;
+  CachedDirectoryContents* level = &this->cache_root;
+
+  // move to the directory containing the key we want to delete
+  for (const auto& item : p.directories) {
+    try {
+      rw_guard g(level->subdirectories_lock, false);
+      level = &level->subdirectories.at(item);
+      guards.add(move(g));
+    } catch (const out_of_range& e) {
+      return 0; // path already doesn't exist in the cache
+    }
+  }
+
+  // now, the basename can be a subdirectory or a file, or even both
+  int64_t items_deleted = 0;
+
+  // check if a subdirectory exists with the given name and delete it if so
+  bool exists;
+  {
+    rw_guard g(level->subdirectories_lock, false);
+    exists = level->subdirectories.count(p.basename);
+  }
+  if (exists) {
+    CachedDirectoryContents old_level;
+    {
+      rw_guard g(level->subdirectories_lock, true);
+      auto it = level->subdirectories.find(p.basename);
+      if (it != level->subdirectories.end()) {
+        // we don't need to lock it->second because we already hold a write lock
+        // for its parent directory - no other thread can access it right now
+        it->second.subdirectories.swap(old_level.subdirectories);
+        it->second.subdirectories_lru.swap(old_level.subdirectories_lru);
+        it->second.files.swap(old_level.files);
+        it->second.files_lru.swap(old_level.files_lru);
+
+        level->subdirectories.erase(it);
+        level->subdirectories_lru.erase(it->first);
+        level->list_complete = false;
+      }
+    }
+    auto counts = old_level.get_counts();
+    items_deleted += (counts.first + counts.second);
+  }
+
+  // check if a file exists with the given name and delete it if so
+  {
+    rw_guard g(level->files_lock, false);
+    exists = level->files.count(p.basename);
+  }
+  if (exists) {
+    // not worth swapping the WhisperArchive out; just delete it inline
+    rw_guard g(level->files_lock, true);
+    bool deleted = level->files.erase(p.basename);
+    if (deleted) {
+      level->files_lru.erase(p.basename);
+      level->list_complete = false;
+      items_deleted++;
+    }
+  }
+
+  return items_deleted;
+}
+
 void CachedDiskStore::populate_cache_level(CachedDirectoryContents* level,
     const string& filesystem_path) {
   if (level->list_complete) {

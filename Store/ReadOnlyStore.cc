@@ -59,3 +59,7 @@ unordered_map<string, FindResult> ReadOnlyStore::find(
 unordered_map<string, int64_t> ReadOnlyStore::get_stats(bool rotate) {
   return this->store->get_stats(rotate);
 }
+
+int64_t ReadOnlyStore::delete_from_cache(const std::string& path) {
+  return this->store->delete_from_cache(path);
+}

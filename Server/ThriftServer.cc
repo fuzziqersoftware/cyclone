@@ -58,6 +58,14 @@ public:
     _return = this->store->find(patterns);
   }
 
+  int64_t delete_from_cache(const std::string& path) {
+    return this->store->delete_from_cache(path);
+  }
+
+  int64_t delete_pending_writes(const std::string& pattern) {
+    return this->store->delete_pending_writes(pattern);
+  }
+
 private:
   shared_ptr<Store> store;
 };

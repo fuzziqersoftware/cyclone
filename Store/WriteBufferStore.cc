@@ -424,6 +424,59 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
   return ret;
 }
 
+int64_t WriteBufferStore::delete_from_cache(const std::string& path) {
+  return this->store->delete_from_cache(path);
+}
+
+int64_t WriteBufferStore::delete_pending_writes(const string& pattern) {
+
+  // if the pattern is '*' or empty, delete everything
+  if (pattern.empty() || (pattern == "*")) {
+    // swap the map with a blank object so the destructors are called outside of
+    // the lock context
+    map<string, QueueItem> local_queue;
+    {
+      rw_guard g(this->queue_lock, true);
+      local_queue.swap(this->queue);
+      this->queued_update_metadatas = 0;
+      this->queued_writes = 0;
+      this->queued_datapoints = 0;
+    }
+
+    return local_queue.size() + this->store->delete_pending_writes(pattern);
+  }
+
+  // else, delete everything that matches the pattern
+  size_t num_queue_items_deleted = 0;
+  size_t num_update_metadatas_deleted = 0;
+  size_t num_writes_deleted = 0;
+  size_t num_datapoints_deleted = 0;
+
+  rw_guard g(this->queue_lock, true);
+  for (auto it = this->queue.begin(); it != this->queue.end();) {
+    if (this->name_matches_pattern(it->first, pattern)) {
+      num_queue_items_deleted++;
+      if (!it->second.metadata.archive_args.empty()) {
+        num_update_metadatas_deleted++;
+      }
+      if (!it->second.data.empty()) {
+        num_writes_deleted++;
+        num_datapoints_deleted += it->second.data.size();
+      }
+      // TODO: maybe move these destructor calls out of the lock context too
+      it = this->queue.erase(it);
+    } else {
+      it++;
+    }
+  }
+
+  this->queued_update_metadatas -= num_update_metadatas_deleted;
+  this->queued_writes -= num_writes_deleted;
+  this->queued_datapoints -= num_datapoints_deleted;
+
+  return num_queue_items_deleted + this->store->delete_pending_writes(pattern);
+}
+
 
 WriteBufferStore::QueueItem::QueueItem(const SeriesMetadata& metadata,
     bool create_new, UpdateMetadataBehavior update_behavior) :

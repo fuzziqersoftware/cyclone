@@ -68,4 +68,13 @@ service Cyclone {
   // searches for directory and key names matching the given patterns. if a
   // result ends with '.*', it's a directory; otherwise it's a key.
   FindResultMap find(1: list<string> patterns);
+
+  // if the server has a cache store, deletes the given path from the cache. if
+  // the path is blank or "*", deletes everything in the cache.
+  i64 delete_from_cache(1: string path);
+
+  // if the server has a write buffer store, deletes everything matching the
+  // given pattern from the write buffer. if the pattern is blank, deletes
+  // everything in the write buffer.
+  i64 delete_pending_writes(1: string pattern);
 }

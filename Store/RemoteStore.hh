@@ -35,6 +35,9 @@ public:
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
 
+  virtual int64_t delete_from_cache(const std::string& path);
+  virtual int64_t delete_pending_writes(const std::string& pattern);
+
 private:
   std::shared_ptr<CycloneClient> client;
   std::shared_ptr<CycloneClient> get_client();
