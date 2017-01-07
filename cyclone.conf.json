@@ -12,12 +12,13 @@
   // - a string without a : in it, to listen on a Unix socket.
   "http_listen": [5050],
   // list of addresses on which to listen for the Graphite line receiver
-  // protocol.
-  "line_listen": [2003, "/var/run/cyclone-line.sock"],
-  // list of addresses on which to listen for the Graphite pickle protocol.
-  "pickle_listen": [2004, "/var/run/cyclone-pickle.sock"],
-  // port on which to run the Thrift server. unlike the other servers, multiple
-  // addresses or specific interfaces cannot be used here.
+  // protocol. same semantics as http_listen.
+  "line_listen": [2003],
+  // list of addresses on which to listen for the Graphite pickle protocol. same
+  // semantics as http_listen and line_listen.
+  "pickle_listen": [2004],
+  // port on which to run the Thrift server. unlike the other servers, only a
+  // single port can be given here, and Unix sockets can't be given.
   "thrift_port": 2000,
 
   // number of threads to service requests for each type of server. the line
@@ -30,8 +31,11 @@
   "exit_check_usecs": 5000000,
 
   // cyclone generates metrics about internal operations every so often; this
-  // specifies how often it reports them. to disable stats reporting, set this
-  // to zero. this field can be changed without restarting the server.
+  // specifies how often it writes them. to disable stats reporting, set this to
+  // zero. note that it generally doesn't make sense for this interval to be
+  // shorter than the highest-resolution archive in the relevant database files
+  // (see the autocreate rules section below). this field can be changed without
+  // restarting the server.
   "stats_report_usecs": 60000000,
 
   // maximum number of whisper database files to keep open at once. this field
@@ -40,8 +44,8 @@
 
   // the store configuration specifies how data is accessed. most setups
   // probably will want to use a write buffer store around a cached disk store,
-  // which is what the default configuration (below this comment) uses. there
-  // are several other types of stores, which can be configured as follows:
+  // which is what the default configuration uses. there are several types of
+  // stores, which can be configured as follows:
   //
   // -- multi store: this store distributes data between multiple substores
   //    using a consistent hashing algorithm. each substore has a unique name
@@ -64,7 +68,12 @@
   // }
   //
   // -- disk store: this store reads and writes data in whisper files in a local
-  //    data directory.
+  //    data directory. it caches open file descriptors, but does not cache any
+  //    file metadata, so files can be modified on disk by other processes in
+  //    the background and cyclone won't get confused. however, if you delete
+  //    files, they may still be open in cyclone's cache, and won't get
+  //    recreated if new data is received that would be written to them. it's
+  //    recommended to delete entire series using the thrift interface instead.
   // {
   //   "store_type": "disk",
   //   "directory": "/path/to/cyclone/data",
@@ -73,8 +82,8 @@
   // -- cached disk store: same as a disk store, but maintains a metadata cache
   //    on top of the disk, reducing the number of reads on the underlying disk.
   //    the cache is automatically populated and doesn't have config options.
-  //    unlike non-cached disk stores, operating on the underlying whisper files
-  //    while the server is running is not recommended.
+  //    unlike the non-cached disk store, operating on the underlying whisper
+  //    files in any way while the server is running is not recommended.
   // {
   //   "store_type": "cached_disk",
   //   "directory": "/path/to/cyclone/data",
@@ -108,7 +117,7 @@
     "batch_size": 100,
     "substore": {
       "type": "cached_disk",
-      "directory": "/cyclone-data",
+      "directory": "./cyclone-data",
     },
   },
 
@@ -121,10 +130,10 @@
   // rules are 4-tuples of this format:
   // [key_pattern, retentions, x_files_factor, aggregation_method]
   //
-  // -- key_pattern is the patter to match the keys against. in these patterns,
+  // -- key_pattern is the pattern to match the keys against. in these patterns,
   //    [abc] matches the characters a, b, or c; {abc,def,ghi} matches the
   //    substrings "abc", "def", or "ghi"; * matches any number of characters
-  //    except . (period); ** matches any number of characters.
+  //    except '.'; ** matches any number of characters including '.'.
   // -- retentions are comma-separated pairs of "seconds_per_point:num_points".
   //    either of these quantities may be expressed in a time length instead of
   //    a bare number.
