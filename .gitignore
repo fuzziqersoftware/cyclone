@@ -3,5 +3,6 @@
 gen-cpp
 *.o
 *.pyc
+*.pyo
 gmon.out
 cyclone
