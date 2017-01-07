@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <phosg/FileCache.hh>
+
 #include "../gen-cpp/Cyclone.h"
 
 
@@ -64,8 +66,6 @@ public:
   void update_metadata(const std::vector<ArchiveArg>& archive_args,
       float x_files_factor, uint32_t agg_method, bool truncate = false);
 
-  void open_file(bool create = false);
-  void close_file();
   size_t get_file_size() const;
 
   static std::vector<ArchiveArg> parse_archive_args(const std::string& s);
@@ -93,23 +93,20 @@ private:
     uint64_t value; // actually a double, but byteswapped
   } __attribute__((packed));
 
-  void create_file();
-  void write_header();
+  void create_file(int fd);
+  void write_header(int fd);
 
-  uint32_t get_base_interval(uint32_t archive_index);
-  void write_archive(uint32_t archive_index, const Series& data,
+  uint32_t get_base_interval(int fd, uint32_t archive_index);
+  void write_archive(int fd, uint32_t archive_index, const Series& data,
       uint32_t start_index, uint32_t end_index);
-  bool propagate_write(uint64_t interval, uint32_t archive_index,
+  bool propagate_write(int fd, uint64_t interval, uint32_t archive_index,
       uint32_t target_archive_index);
   double aggregate(uint64_t interval_start, uint64_t interval_step,
       const FilePoint* pts, uint32_t num_pts) const;
 
   const std::string filename;
-  scoped_fd fd;
   mutable std::vector<int64_t> base_intervals; // -1 = not present
   std::shared_ptr<Metadata> metadata;
 
-  static size_t files_lru_max_size;
-  static LRUSet<scoped_fd*> files_lru;
-  static std::mutex files_lru_lock;
+  static FileCache file_cache;
 };

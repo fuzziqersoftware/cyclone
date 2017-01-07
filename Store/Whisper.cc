@@ -54,13 +54,13 @@ static int64_t parse_time_length(const string& s) {
 
 
 WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
-  this->open_file();
+  auto lease = WhisperArchive::file_cache.lease(filename, 0);
 
   // guess: most files have <= 10 archives (we'll read more later if needed)
   // because this is a guess, we can't use preadx - it's ok to read fewer bytes
   size_t archives_read = 10;
   vector<uint8_t> data(sizeof(FileHeader) + archives_read * sizeof(ArchiveMetadata));
-  ssize_t bytes_read = pread(this->fd, data.data(), data.size(), 0);
+  ssize_t bytes_read = pread(lease.fd, data.data(), data.size(), 0);
   if (bytes_read < sizeof(FileHeader)) {
     throw runtime_error("can\'t read header for " + this->filename);
   }
@@ -80,7 +80,7 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
     data.resize(sizeof(FileHeader) + this->metadata->num_archives * sizeof(ArchiveMetadata));
     off_t off = sizeof(FileHeader) + archives_read * sizeof(ArchiveMetadata);
     size_t size = (this->metadata->num_archives - archives_read) * sizeof(ArchiveMetadata);
-    preadx(this->fd, &data[off], size, off);
+    preadx(lease.fd, &data[off], size, off);
   }
 
   for (uint32_t x = 0; x < archive_count; x++) {
@@ -94,7 +94,6 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
 WhisperArchive::WhisperArchive(const string& filename,
     const vector<ArchiveArg>& archive_args, float x_files_factor,
     uint32_t agg_method) : filename(filename) {
-  this->open_file(true);
   this->update_metadata(archive_args, x_files_factor, agg_method, true);
 }
 
@@ -104,7 +103,7 @@ WhisperArchive::WhisperArchive(const string& filename, const string& archive_arg
         x_files_factor, agg_method) { }
 
 WhisperArchive::~WhisperArchive() {
-  this->close_file(); // this removes it from the lru
+  WhisperArchive::file_cache.close(this->filename);
 }
 
 shared_ptr<const WhisperArchive::Metadata> WhisperArchive::get_metadata() const {
@@ -206,10 +205,10 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
   uint64_t start_interval = start_time - (start_time % archive.seconds_per_point) + archive.seconds_per_point;
   uint64_t end_interval = end_time - (end_time % archive.seconds_per_point) + archive.seconds_per_point;
 
-  this->open_file();
+  auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
 
   // find out where to begin & end
-  uint64_t archive_start_time = this->get_base_interval(archive_index);
+  uint64_t archive_start_time = this->get_base_interval(lease.fd, archive_index);
   if (archive_start_time == 0) {
     // archive is blank
     // TODO: we should read from multiple archives in this case
@@ -235,7 +234,7 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
   if (start_offset < end_offset) {
     num_points = (end_offset - start_offset) / sizeof(FilePoint);
     raw_points.reset(new FilePoint[num_points]);
-    preadx(this->fd, raw_points.get(), sizeof(FilePoint) * num_points, start_offset);
+    preadx(lease.fd, raw_points.get(), sizeof(FilePoint) * num_points, start_offset);
 
   } else {
     uint32_t num_points_first = archive.points - (start_offset - archive.offset) / sizeof(FilePoint);
@@ -243,9 +242,9 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
     num_points = num_points_first + num_points_second;
 
     raw_points.reset(new FilePoint[num_points]);
-    preadx(this->fd, raw_points.get(), sizeof(FilePoint) * num_points_first,
+    preadx(lease.fd, raw_points.get(), sizeof(FilePoint) * num_points_first,
         start_offset);
-    preadx(this->fd, &(raw_points.get()[num_points_first]),
+    preadx(lease.fd, &(raw_points.get()[num_points_first]),
         sizeof(FilePoint) * num_points_second, archive.offset);
   }
 
@@ -271,7 +270,7 @@ void WhisperArchive::write(const Series& data) {
 
   // TODO: wtf is going on here? after a create, this open call is super slow,
   // but subsequent open calls are fast
-  this->open_file();
+  auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
 
   uint32_t x;
   for (x = 0; (x < data.size()) && (archive_index < this->metadata->num_archives); x++) {
@@ -280,7 +279,7 @@ void WhisperArchive::write(const Series& data) {
     // while we can't fit any more points into the current archive, commit
     while (archive_index < this->metadata->num_archives && (this->metadata->archives[archive_index].points * this->metadata->archives[archive_index].seconds_per_point) < pt_age) {
       if (next_commit_point != x) {
-        this->write_archive(archive_index, data, next_commit_point, x);
+        this->write_archive(lease.fd, archive_index, data, next_commit_point, x);
         next_commit_point = x;
       }
       archive_index++;
@@ -288,12 +287,13 @@ void WhisperArchive::write(const Series& data) {
   }
 
   if (archive_index < this->metadata->num_archives) {
-    this->write_archive(archive_index, data, next_commit_point, x);
+    this->write_archive(lease.fd, archive_index, data, next_commit_point, x);
   }
 }
 
 void WhisperArchive::truncate() {
-  this->create_file();
+  auto lease = WhisperArchive::file_cache.lease(filename);
+  this->create_file(lease.fd);
 }
 
 void WhisperArchive::update_metadata(const std::vector<ArchiveArg>& archive_args,
@@ -358,7 +358,8 @@ void WhisperArchive::update_metadata(const std::vector<ArchiveArg>& archive_args
       offset += archive_args[x].points * sizeof(FilePoint);
     }
 
-    this->create_file();
+    auto lease = WhisperArchive::file_cache.lease(filename);
+    this->create_file(lease.fd);
 
   } else {
     // TODO: support changing archive_args (this will probably be very tedious)
@@ -389,7 +390,8 @@ void WhisperArchive::update_metadata(const std::vector<ArchiveArg>& archive_args
     }
 
     if (should_write_header) {
-      this->write_header();
+      auto lease = WhisperArchive::file_cache.lease(filename, 0);
+      this->write_header(lease.fd);
     }
   }
 }
@@ -399,41 +401,16 @@ size_t WhisperArchive::get_file_size() const {
   return last_archive->offset + sizeof(FilePoint) * last_archive->points;
 }
 
-void WhisperArchive::open_file(bool create) {
-  if (!this->fd.is_open()) {
-    this->fd.open(this->filename, O_RDWR | (create ? O_CREAT : 0), 0644);
-
-    {
-      lock_guard<mutex> g(this->files_lru_lock);
-      this->files_lru.emplace(&this->fd, 0);
-      while (this->files_lru.count() > this->files_lru_max_size) {
-        this->files_lru.evict_object().first->close();
-      }
-    }
-  }
-}
-
-void WhisperArchive::close_file() {
-  {
-    lock_guard<mutex> g(this->files_lru_lock);
-    this->files_lru.erase(&this->fd);
-  }
-
-  this->fd.close();
-}
-
-void WhisperArchive::create_file() {
-  this->open_file(true);
-
-  ftruncate(this->fd, 0);
-  this->write_header();
-  ftruncate(this->fd, this->get_file_size());
+void WhisperArchive::create_file(int fd) {
+  ftruncate(fd, 0);
+  this->write_header(fd);
+  ftruncate(fd, this->get_file_size());
 
   this->base_intervals.clear();
   this->base_intervals.resize(this->metadata->num_archives, 0);
 }
 
-void WhisperArchive::write_header() {
+void WhisperArchive::write_header(int fd) {
   vector<uint8_t> data(sizeof(FileHeader) + this->metadata->num_archives * sizeof(FileArchiveHeader));
 
   FileHeader* sw_header = (FileHeader*)data.data();
@@ -450,37 +427,34 @@ void WhisperArchive::write_header() {
     sw_archive_header++;
   }
 
-  this->open_file();
-  pwritex(this->fd, data.data(), data.size(), 0);
+  pwritex(fd, data.data(), data.size(), 0);
 }
 
-uint32_t WhisperArchive::get_base_interval(uint32_t archive_index) {
+uint32_t WhisperArchive::get_base_interval(int fd, uint32_t archive_index) {
   int64_t base_interval = this->base_intervals[archive_index];
   if (base_interval == (uint32_t)-1) {
     FilePoint first_point;
-    this->open_file();
-    preadx(this->fd, &first_point, sizeof(first_point),
+    preadx(fd, &first_point, sizeof(first_point),
         this->metadata->archives[archive_index].offset);
     this->base_intervals[archive_index] = bswap32(first_point.time);
   }
   return base_interval;
 }
 
-void WhisperArchive::write_archive(uint32_t archive_index,
+void WhisperArchive::write_archive(int fd, uint32_t archive_index,
     const Series& data, uint32_t start_index, uint32_t end_index) {
 
   const ArchiveMetadata& archive = this->metadata->archives[archive_index];
   int32_t archive_size = archive.points * sizeof(FilePoint);
 
   // get the base interval
-  uint64_t archive_start_interval = this->get_base_interval(archive_index);
+  uint64_t archive_start_interval = this->get_base_interval(fd, archive_index);
   if (archive_start_interval == 0) {
     archive_start_interval = data[start_index].timestamp;
   }
 
   // write all the points to the archive first
   // TODO: don't call pwritex for every loop iteration; coalesce writes somehow
-  this->open_file();
   for (auto pt : data) {
     int64_t point_interval = pt.timestamp - (pt.timestamp % archive.seconds_per_point);
     int64_t time_distance = point_interval - archive_start_interval;
@@ -490,7 +464,7 @@ void WhisperArchive::write_archive(uint32_t archive_index,
     FilePoint sw_pt;
     sw_pt.time = bswap32(point_interval);
     sw_pt.value = bswap64f(pt.value);
-    pwritex(this->fd, &sw_pt, sizeof(FilePoint), point_offset);
+    pwritex(fd, &sw_pt, sizeof(FilePoint), point_offset);
 
     // if the point is at the start of the archive, the base interval was changed
     if (point_offset == archive.offset) {
@@ -512,12 +486,12 @@ void WhisperArchive::write_archive(uint32_t archive_index,
 
     continue_propagation = false;
     for (uint64_t interval : lower_intervals)
-      continue_propagation |= this->propagate_write(interval, archive_index, target_archive_index);
+      continue_propagation |= this->propagate_write(fd, interval, archive_index, target_archive_index);
   }
 }
 
-bool WhisperArchive::propagate_write(uint64_t interval, uint32_t archive_index,
-    uint32_t target_archive_index) {
+bool WhisperArchive::propagate_write(int fd, uint64_t interval,
+    uint32_t archive_index, uint32_t target_archive_index) {
 
   const auto& archive = this->metadata->archives[archive_index];
   const auto& target_archive = this->metadata->archives[target_archive_index];
@@ -526,7 +500,7 @@ bool WhisperArchive::propagate_write(uint64_t interval, uint32_t archive_index,
 
   int64_t target_interval_start = interval - (interval % target_archive.seconds_per_point);
 
-  uint64_t base_interval = this->get_base_interval(archive_index);
+  uint64_t base_interval = this->get_base_interval(fd, archive_index);
   uint32_t start_offset;
   if (base_interval == 0) {
     start_offset = archive.offset;
@@ -540,17 +514,16 @@ bool WhisperArchive::propagate_write(uint64_t interval, uint32_t archive_index,
   uint32_t end_offset = ((start_offset - archive.offset + num_points * sizeof(FilePoint)) % archive_size) + archive.offset;
 
   unique_ptr<FilePoint[]> raw_points(new FilePoint[num_points]);
-  this->open_file();
   if (start_offset < end_offset) {
-    preadx(this->fd, raw_points.get(), sizeof(FilePoint) * num_points, start_offset);
+    preadx(fd, raw_points.get(), sizeof(FilePoint) * num_points, start_offset);
 
   } else {
     // the range spans the circular boundary - need to read 2 chunks
     uint32_t archive_end_offset = archive.offset + sizeof(FilePoint) * archive.points;
     uint32_t num_points_first = (archive_end_offset - start_offset) / sizeof(FilePoint);
-    preadx(this->fd, raw_points.get(), sizeof(FilePoint) * num_points_first,
+    preadx(fd, raw_points.get(), sizeof(FilePoint) * num_points_first,
         start_offset);
-    preadx(this->fd, &(raw_points.get())[num_points_first],
+    preadx(fd, &(raw_points.get())[num_points_first],
         sizeof(FilePoint) * (num_points - num_points_first), archive.offset);
   }
 
@@ -566,7 +539,7 @@ bool WhisperArchive::propagate_write(uint64_t interval, uint32_t archive_index,
   if (num_known >= this->metadata->x_files_factor * num_points) {
     double value = this->aggregate(target_interval_start,
         archive.seconds_per_point, raw_points.get(), num_points);
-    uint64_t target_base_interval = this->get_base_interval(target_archive_index);
+    uint64_t target_base_interval = this->get_base_interval(fd, target_archive_index);
 
     off_t offset;
     if (target_base_interval == 0) {
@@ -585,7 +558,7 @@ bool WhisperArchive::propagate_write(uint64_t interval, uint32_t archive_index,
     FilePoint sw_pt;
     sw_pt.time = bswap32(target_interval_start);
     sw_pt.value = bswap64f(value);
-    pwritex(this->fd, &sw_pt, sizeof(FilePoint), offset);
+    pwritex(fd, &sw_pt, sizeof(FilePoint), offset);
     return true;
   }
 
@@ -643,14 +616,11 @@ double WhisperArchive::aggregate(uint64_t interval_start,
 }
 
 size_t WhisperArchive::get_files_lru_size() {
-  lock_guard<mutex> g(WhisperArchive::files_lru_lock);
-  return WhisperArchive::files_lru.count();
+  return WhisperArchive::file_cache.size();
 }
 
 void WhisperArchive::set_files_lru_max_size(size_t max) {
-  WhisperArchive::files_lru_max_size = max;
+  WhisperArchive::file_cache.set_max_size(max);
 }
 
-size_t WhisperArchive::files_lru_max_size = 1024;
-LRUSet<scoped_fd*> WhisperArchive::files_lru;
-std::mutex WhisperArchive::files_lru_lock;
+FileCache WhisperArchive::file_cache(1024);

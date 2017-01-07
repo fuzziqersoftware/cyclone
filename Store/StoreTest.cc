@@ -473,13 +473,17 @@ int main(int argc, char* argv[]) {
     // TODO: test more complex MultiStores
 
     recreate_directory(data_directory);
+    shared_ptr<Store> buffer_on_disk_store(new WriteBufferStore(disk_store, 0, 0));
+    run_basic_test(buffer_on_disk_store, "WriteBufferStore(DiskStore)", data_directory, true);
+
+    // note: order is important here. the buffer_on_disk_store test will fail if
+    // it runs after any of the the cached_disk_store tests because the
+    // cached_disk_store leaves files open.
+
+    recreate_directory(data_directory);
     shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory));
     cached_disk_store->set_autocreate_rules(autocreate_rules);
     run_basic_test(cached_disk_store, "CachedDiskStore", data_directory);
-
-    recreate_directory(data_directory);
-    shared_ptr<Store> buffer_on_disk_store(new WriteBufferStore(disk_store, 0, 0));
-    run_basic_test(buffer_on_disk_store, "WriteBufferStore(DiskStore)", data_directory, true);
 
     // have to recreate the CachedDiskStore for this test because it will
     // remember test.key2
