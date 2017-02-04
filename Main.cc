@@ -116,7 +116,11 @@ struct Options {
     if (!type.compare("remote")) {
       string hostname = (*store_config)["hostname"]->as_string();
       int port = (*store_config)["port"]->as_int();
-      return shared_ptr<Store>(new RemoteStore(hostname, port));
+      int64_t connection_cache_count = 0;
+      try {
+        connection_cache_count = (*store_config)["connection_cache_count"]->as_int();
+      } catch (const JSONObject::key_error& e) { }
+      return shared_ptr<Store>(new RemoteStore(hostname, port, connection_cache_count));
     }
 
     if (!type.compare("disk")) {

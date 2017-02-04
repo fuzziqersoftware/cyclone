@@ -1,8 +1,10 @@
 #pragma once
 
+#include <mutex>
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "../gen-cpp/Cyclone.h"
 #include "Store.hh"
@@ -12,7 +14,7 @@ class RemoteStore : public Store {
 public:
   RemoteStore() = delete;
   RemoteStore(const RemoteStore& rhs) = delete;
-  RemoteStore(const std::string& hostname, int port);
+  RemoteStore(const std::string& hostname, int port, size_t connection_cache_count);
   virtual ~RemoteStore() = default;
 
   const RemoteStore& operator=(const RemoteStore& rhs) = delete;
@@ -39,9 +41,13 @@ public:
   virtual int64_t delete_pending_writes(const std::string& pattern);
 
 private:
-  std::shared_ptr<CycloneClient> client;
+  std::mutex clients_lock;
+  std::unordered_set<std::shared_ptr<CycloneClient>> clients;
+
   std::shared_ptr<CycloneClient> get_client();
+  void return_client(std::shared_ptr<CycloneClient> client);
 
   std::string hostname;
   int port;
+  size_t connection_cache_count;
 };

@@ -60,10 +60,18 @@
   // }
   //
   // -- remote store: this store forwards all of its read and write requests to
-  //    a remote Cyclone server via the thrift interface.
+  //    a remote Cyclone server via the thrift interface. this store uses
+  //    persistent connections, closing them only if the number of connections
+  //    exceeds connection_cache_count or when an error occurs. if
+  //    connection_cache_count is 0, the connection cache size is unlimited, and
+  //    connections are only closed on errors. at any time, the open connection
+  //    count will be at least the number of currently-executing remote queries.
+  //    this can be limited by wrapping a remote store in a write buffer store;
+  //    each thread of the write buffer store makes only one query at a time.
   // {
   //   "store_type": "remote",
   //   "hostname": "remote-server1",
+  //   "connection_cache_count": 8,
   //   "port": 2000, // thrift port on the remote server
   // }
   //
