@@ -305,3 +305,4 @@ if __name__ == '__main__':
   run_functional_test(store_type='disk')
   run_functional_test(store_type='cached_disk')
   run_functional_test(store_type='buffered_cached_disk')
+  print 'all tests passed'
