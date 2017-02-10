@@ -9,6 +9,7 @@
 #include "Store/CachedDiskStore.hh"
 #include "Store/DiskStore.hh"
 #include "Store/RemoteStore.hh"
+#include "Store/ConsistentHashMultiStore.hh"
 #include "Store/MultiStore.hh"
 #include "Store/WriteBufferStore.hh"
 #include "Store/EmptyStore.hh"
@@ -104,6 +105,14 @@ struct Options {
       shared_ptr<JSONObject> store_config) {
 
     string type = (*store_config)["type"]->as_string();
+
+    if (!type.compare("hash")) {
+      unordered_map<string, shared_ptr<Store>> stores;
+      for (auto& it : (*store_config)["stores"]->as_dict()) {
+        stores.emplace(it.first, parse_store_config(it.second));
+      }
+      return shared_ptr<Store>(new ConsistentHashMultiStore(stores));
+    }
 
     if (!type.compare("multi")) {
       unordered_map<string, shared_ptr<Store>> stores;

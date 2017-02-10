@@ -3,7 +3,6 @@
 #include <memory>
 #include <unordered_map>
 
-#include "ConsistentHashRing.hh"
 #include "Store.hh"
 
 
@@ -40,7 +39,24 @@ public:
   virtual int64_t delete_from_cache(const std::string& path);
   virtual int64_t delete_pending_writes(const std::string& pattern);
 
-private:
-  std::shared_ptr<ConsistentHashRing> ring;
+protected:
   std::unordered_map<std::string, std::shared_ptr<Store>> stores;
+
+  template <typename K, typename V>
+  static void merge_maps(std::unordered_map<K, V>& dest,
+      std::unordered_map<K, V>&& src, void (*merge_value)(const K&, V&, V&)) {
+    for (auto& it : src) {
+      if (!dest.emplace(it.first, std::move(it.second)).second) {
+        V& existing_v = dest.at(it.first);
+        merge_value(it.first, existing_v, it.second);
+      }
+    }
+  }
+
+  static void combine_error_strings(const std::string& k, std::string& v1,
+      std::string& v2);
+  static void combine_read_results(const std::string& k, ReadResult& v1,
+      ReadResult& v2);
+  static void combine_find_results(const std::string& k, FindResult& v1,
+      FindResult& v2);
 };

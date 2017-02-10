@@ -47,9 +47,20 @@
   // which is what the default configuration uses. there are several types of
   // stores, which can be configured as follows:
   //
-  // -- multi store: this store distributes data between multiple substores
-  //    using a consistent hashing algorithm. each substore has a unique name
-  //    which is used as its hash key.
+  // -- hash store: this store distributes data between multiple substores using
+  //    a consistent hashing algorithm. each substore has a unique name which is
+  //    used as its hash key.
+  // {
+  //   "store_type": "hash",
+  //   "stores": {
+  //     "store1": {...},
+  //     "store2": {...},
+  //     ...
+  //   }
+  // }
+  //
+  // -- multi store: this store replicates data between multiple substores. all
+  //    writes are sent to all stores.
   // {
   //   "store_type": "multi",
   //   "stores": {
