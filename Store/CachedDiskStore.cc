@@ -323,6 +323,9 @@ unordered_map<string, string> CachedDiskStore::delete_series(
         this->stats[0].series_deletes++;
       } catch (const runtime_error& e) { }
 
+      // note: we don't need to explicitly close the fd in WhisperArchive's file
+      // cache; it should be closed in the WhisperArchive destructor, which is
+      // indirectly called in check_and_delete_cache_path
       this->check_and_delete_cache_path(p);
 
       ret.emplace(key_name, "");

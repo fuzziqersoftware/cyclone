@@ -119,6 +119,9 @@ unordered_map<string, string> DiskStore::delete_series(const vector<string>& key
   for (const auto& key_name : key_names) {
     try {
       // delete the file
+      // note: we don't need to explicitly close the fd in WhisperArchive's file
+      // cache; there shouldn't be an open file for this series because it was
+      // closed in the WhisperArchive destructor
       string filename = this->filename_for_key(key_name);
       unlink(filename);
       this->stats[0].series_deletes++;
