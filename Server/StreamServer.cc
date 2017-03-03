@@ -148,10 +148,10 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
 
       // parse the payload and generate the data dict
       try {
-        JSONObject o = parse_pickle(payload);
+        shared_ptr<JSONObject> o = parse_pickle(payload);
 
         // expected format: [(key, (timestamp, value))...]
-        for (const auto& datapoint : o.as_list()) {
+        for (const auto& datapoint : o->as_list()) {
           const auto& datapoint_list = datapoint->as_list();
           if (datapoint_list.size() != 2) {
             continue;
