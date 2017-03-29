@@ -1,5 +1,8 @@
+#define _STDC_FORMAT_MACROS
+
 #include "JSONRenderer.hh"
 
+#include <inttypes.h>
 #include <math.h>
 
 #include <phosg/Strings.hh>
@@ -33,7 +36,7 @@ void JSONRenderer::render_data(const unordered_map<string, ReadResult>& results)
       if (num_points) {
         evbuffer_add(this->buf, ", ", 2);
       }
-      evbuffer_add_printf(this->buf, "[%g, %lld]", pt.value, pt.timestamp);
+      evbuffer_add_printf(this->buf, "[%g, %" PRId64 "]", pt.value, pt.timestamp);
       num_points++;
     }
 

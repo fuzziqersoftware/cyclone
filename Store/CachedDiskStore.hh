@@ -74,7 +74,7 @@ protected:
   struct CachedDirectoryContents {
     std::atomic<bool> list_complete;
 
-    std::unordered_map<std::string, CachedDirectoryContents> subdirectories;
+    std::unordered_map<std::string, std::unique_ptr<CachedDirectoryContents>> subdirectories;
     std::unordered_map<std::string, WhisperArchive> files;
     mutable rw_lock subdirectories_lock;
     mutable rw_lock files_lock;

@@ -3,6 +3,7 @@
 #include <event2/event.h>
 #include <stdint.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <thread>
