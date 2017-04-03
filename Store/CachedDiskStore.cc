@@ -90,9 +90,8 @@ CachedDiskStore::CachedDiskStore(const string& root_directory) :
     DiskStore(root_directory), cache_root(), stats(3), cache_directory_count(0),
     cache_file_count(0) { }
 
-bool CachedDiskStore::create_cache_subdirectory(CachedDirectoryContents* level,
+bool CachedDiskStore::create_cache_subdirectory_locked(CachedDirectoryContents* level,
     const string& item) {
-  rw_guard g(level->subdirectories_lock, true);
   if (level->subdirectories.emplace(piecewise_construct,
       forward_as_tuple(item), forward_as_tuple(new CachedDirectoryContents())).second) {
     this->cache_directory_count++;
@@ -106,9 +105,8 @@ bool CachedDiskStore::create_cache_subdirectory(CachedDirectoryContents* level,
   }
 }
 
-bool CachedDiskStore::create_cache_file(CachedDirectoryContents* level,
+bool CachedDiskStore::create_cache_file_locked(CachedDirectoryContents* level,
     const string& item, const string& filesystem_path) {
-  rw_guard g(level->files_lock, true);
   if (level->files.emplace(item, filesystem_path).second) {
     this->cache_file_count++;
     this->stats[0].cache_file_creates++;
@@ -241,7 +239,8 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
 
         file_exists = isfile(t.filesystem_path);
         if (file_exists) {
-          this->create_cache_file(t.level, p.basename, t.filesystem_path);
+          rw_guard g(t.level->files_lock, true);
+          this->create_cache_file_locked(t.level, p.basename, t.filesystem_path);
         }
       }
 
@@ -499,7 +498,8 @@ unordered_map<string, FindResult> CachedDiskStore::find(
               if (!level->list_complete) {
                 string new_level_path = path_join(current_level_path, item);
                 if (isdir(this->filename_for_key(new_level_path, false))) {
-                  this->create_cache_subdirectory(level, item);
+                  rw_guard g(level->subdirectories_lock, true);
+                  this->create_cache_subdirectory_locked(level, item);
                 }
 
                 // it's possible that a delete occurred between the emplace above
@@ -565,7 +565,8 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             r.results.emplace_back(path_join(level_path, p.basename) + ".*");
           } else if (!level->list_complete && isdir(this->filename_for_key(path_join(level_path, p.basename), false))) {
             r.results.emplace_back(path_join(level_path, p.basename) + ".*");
-            this->create_cache_subdirectory(level, p.basename);
+            rw_guard g(level->subdirectories_lock, true);
+            this->create_cache_subdirectory_locked(level, p.basename);
           }
 
           {
@@ -582,7 +583,8 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             string filename = this->filename_for_key(path_join(level_path, p.basename));
             if (isfile(filename)) {
               r.results.emplace_back(path_join(level_path, p.basename));
-              this->create_cache_file(level, p.basename, filename);
+              rw_guard g(level->files_lock, true);
+              this->create_cache_file_locked(level, p.basename, filename);
             }
           }
         }
@@ -715,10 +717,11 @@ void CachedDiskStore::populate_cache_level(CachedDirectoryContents* level,
     string item_filesystem_path = filesystem_path + "/" + item;
 
     auto st = stat(item_filesystem_path);
+    // note that we already hold both locks for writing
     if (ends_with(item, ".wsp") && isfile(st)) {
-      this->create_cache_file(level, item, item_filesystem_path);
+      this->create_cache_file_locked(level, item, item_filesystem_path);
     } else if (isdir(st)) {
-      this->create_cache_subdirectory(level, item);
+      this->create_cache_subdirectory_locked(level, item);
     }
   }
 
@@ -798,7 +801,10 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
 
       // if we get here, then the directory exists on the filesystem but not in
       // the cache - create a cache node for it and move there
-      this->create_cache_subdirectory(t.level, item);
+      {
+        rw_guard g(t.level->subdirectories_lock, true);
+        this->create_cache_subdirectory_locked(t.level, item);
+      }
       t.move_to_level(item);
     }
   }
@@ -830,7 +836,10 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
     // if the list isn't complete and the file exists, populate it in the cache
     // and return it
     if (!t.level->list_complete && isfile(t.filesystem_path)) {
-      this->create_cache_file(t.level, p.basename, t.filesystem_path);
+      {
+        rw_guard g(t.level->files_lock, true);
+        this->create_cache_file_locked(t.level, p.basename, t.filesystem_path);
+      }
       t.guards.add(t.level->files_lock, false);
       t.archive = &t.level->files.at(p.basename);
       return t;

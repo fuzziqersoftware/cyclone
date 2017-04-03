@@ -98,9 +98,9 @@ protected:
   };
   CachedDirectoryContents cache_root;
 
-  bool create_cache_subdirectory(CachedDirectoryContents* level,
+  bool create_cache_subdirectory_locked(CachedDirectoryContents* level,
       const std::string& item);
-  bool create_cache_file(CachedDirectoryContents* level,
+  bool create_cache_file_locked(CachedDirectoryContents* level,
       const std::string& item, const std::string& filesystem_path);
   void check_and_delete_cache_path(const KeyPath& path);
   void populate_cache_level(CachedDirectoryContents* level,
