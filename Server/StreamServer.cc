@@ -196,7 +196,12 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
   }
 
   if (!data.empty()) {
-    this->store->write(data);
+    for (const auto& it : this->store->write(data)) {
+      if (it.second.empty()) {
+        continue;
+      }
+      log(WARNING, "write failed: %s\n", it.second.c_str());
+    }
   }
 }
 

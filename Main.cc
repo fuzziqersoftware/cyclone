@@ -332,7 +332,11 @@ int main(int argc, char **argv) {
       string key = string_printf("cyclone.%s.open_file_cache_size",
           hostname.c_str(), WhisperArchive::get_files_lru_size());
 
-      opt.store->write(data_to_write);
+      try {
+        opt.store->write(data_to_write);
+      } catch (const exception& e) {
+        log(INFO, "failed to report stats: %s\n", e.what());
+      }
 
       next_stats_report_time += opt.stats_report_usecs;
     }

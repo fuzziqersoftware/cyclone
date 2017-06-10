@@ -1,5 +1,9 @@
 #include "Store.hh"
 
+#include <phosg/Strings.hh>
+
+#include "Whisper.hh"
+
 using namespace std;
 
 
@@ -117,4 +121,16 @@ bool Store::name_matches_pattern(const string& name, const string& pattern,
   // if we get to the end of the name, then it's a match if we also got to the
   // end of the pattern
   return pattern_offset == pattern.size();
+}
+
+void Store::validate_autocreate_rules(
+    const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules) {
+  for (const auto& it : autocreate_rules) {
+    try {
+      WhisperArchive::validate_archive_args(it.second.archive_args);
+    } catch (const invalid_argument& e) {
+      throw invalid_argument(string_printf("Autocreate rule %s is invalid: %s",
+          it.first.c_str(), e.what()));
+    }
+  }
 }

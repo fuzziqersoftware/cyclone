@@ -41,6 +41,7 @@ DiskStore::DiskStore(const string& root_directory) :
 
 void DiskStore::set_autocreate_rules(
     const vector<pair<string, SeriesMetadata>> autocreate_rules) {
+  this->validate_autocreate_rules(autocreate_rules);
   auto new_rules = autocreate_rules;
   {
     rw_guard g(this->autocreate_rules_lock, true);
@@ -64,8 +65,12 @@ unordered_map<string, string> DiskStore::update_metadata(
       if (create_new) {
         string dirname = filename;
         for (size_t p = dirname.find('/'); p != string::npos; p = dirname.find('/', p + 1)) {
+          if (p == 0) {
+            continue; // don't try to create the root directory
+          }
+
           dirname[p] = 0;
-          if (mkdir(dirname.c_str(), S_IRWXU) == -1) {
+          if (mkdir(dirname.c_str(), 0755) == -1) {
             if (errno != EEXIST) {
               throw runtime_error("can\'t create directory " + dirname);
             }

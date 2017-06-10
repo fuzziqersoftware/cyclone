@@ -36,6 +36,7 @@ WriteBufferStore::~WriteBufferStore() {
 
 void WriteBufferStore::set_autocreate_rules(
     const vector<pair<string, SeriesMetadata>> autocreate_rules) {
+  this->validate_autocreate_rules(autocreate_rules);
   this->store->set_autocreate_rules(autocreate_rules);
 }
 

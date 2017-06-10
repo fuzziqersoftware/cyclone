@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <phosg/Strings.hh>
+#include <phosg/Time.hh>
 
 #include "../Renderer/Renderer.hh"
 #include "../Renderer/ImageRenderer.hh"
@@ -80,6 +81,40 @@ unique_ptr<Renderer> CycloneHTTPServer::create_renderer(const string& format,
 }
 
 
+static int64_t parse_relative_time(const string& s) {
+  if (s == "now") {
+    return now() / 1000000;
+  }
+
+  size_t bytes_parsed;
+  int64_t int_part = stoll(s, &bytes_parsed, 0);
+  if (bytes_parsed == s.size()) {
+    return int_part; // it's an absolute timestamp
+  }
+
+  if (s[bytes_parsed] == 's') {
+    return (now() / 1000000) + int_part;
+  }
+  if (s[bytes_parsed] == 'm') {
+    return (now() / 1000000) + (int_part * 60);
+  }
+  if (s[bytes_parsed] == 'h') {
+    return (now() / 1000000) + (int_part * 60 * 60);
+  }
+  if (s[bytes_parsed] == 'd') {
+    return (now() / 1000000) + (int_part * 60 * 60 * 24);
+  }
+  if (s[bytes_parsed] == 'w') {
+    return (now() / 1000000) + (int_part * 60 * 60 * 24 * 7);
+  }
+  if (s[bytes_parsed] == 'y') {
+    return (now() / 1000000) + (int_part * 60 * 60 * 365);
+  }
+
+  throw invalid_argument("can\'t parse relative time: " + s);
+}
+
+
 string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,
     struct evhttp_request* req, struct evbuffer* out_buffer) {
 
@@ -96,13 +131,15 @@ string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,
 
   for (auto it : params) {
     if (it.first.compare("from") == 0) {
-      start_time = atoi(it.second.c_str());
+      start_time = parse_relative_time(it.second.c_str());
     } else if (it.first.compare("until") == 0) {
-      end_time = atoi(it.second.c_str());
+      end_time = parse_relative_time(it.second.c_str());
     } else if (it.first.compare("format") == 0) {
       format = it.second;
     } else if (it.first.compare("target") == 0) {
       targets.push_back(it.second);
+    } else if ((it.first.compare("now") == 0) || (it.first.compare("local") == 0)) {
+      // ignore these; graphite sends them but cyclone doesn't use them
     } else {
       throw http_error(400, string_printf("unknown argument: %s", it.first.c_str()));
     }

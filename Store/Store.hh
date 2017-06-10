@@ -57,4 +57,7 @@ public:
 
 protected:
   Store() = default;
+
+  static void validate_autocreate_rules(
+      const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules);
 };

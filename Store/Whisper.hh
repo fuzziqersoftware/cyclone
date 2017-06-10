@@ -69,6 +69,7 @@ public:
   size_t get_file_size() const;
 
   static std::vector<ArchiveArg> parse_archive_args(const std::string& s);
+  static void validate_archive_args(const std::vector<ArchiveArg>& args);
 
   static size_t get_files_lru_size();
   static void set_files_lru_max_size(size_t max);

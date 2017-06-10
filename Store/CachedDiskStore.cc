@@ -779,9 +779,11 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
         // the subdirectory doesn't exist - we'll have to create it. first try
         // to create it on the filesystem, so other threads don't see the cache
         // entry and assume the directory exists
-        if (mkdir(t.filesystem_path.c_str(), S_IRWXU) == -1) {
+        if (mkdir(t.filesystem_path.c_str(), 0755) == -1) {
           if (errno != EEXIST) {
-            throw runtime_error("can\'t create directory " + t.filesystem_path);
+            string error_str = string_for_error(errno);
+            throw runtime_error(string_printf("can\'t create directory \"%s\" (%s)",
+                t.filesystem_path.c_str(), error_str));
           }
         }
         this->stats[0].directory_creates++;

@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include <phosg/Filesystem.hh>
+
 using namespace std;
 
 
@@ -24,6 +26,7 @@ ConsistentHashMultiStore::ConsistentHashMultiStore(
     hosts.emplace_back(it.first, "", 0); // host/port are ignored
   }
   this->ring = shared_ptr<ConsistentHashRing>(new ConsistentHashRing(hosts));
+  dump_hash_ring(this->ring);
 }
 
 unordered_map<string, string> ConsistentHashMultiStore::update_metadata(

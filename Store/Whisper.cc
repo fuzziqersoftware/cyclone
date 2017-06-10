@@ -18,7 +18,7 @@
 using namespace std;
 
 
-static int64_t parse_time_length(const string& s) {
+static int64_t parse_time_length(const string& s, int64_t default_unit_factor = 1) {
 
   int negative = 1;
   int64_t num_units = 0;
@@ -49,7 +49,7 @@ static int64_t parse_time_length(const string& s) {
         return negative * num_units;
     }
   }
-  return num_units;
+  return num_units * default_unit_factor;
 }
 
 
@@ -122,11 +122,48 @@ vector<ArchiveArg> WhisperArchive::parse_archive_args(const string& s) {
 
     ArchiveArg a;
     a.precision = parse_time_length(params[0]);
-    a.points = parse_time_length(params[1]) / a.precision;
+    a.points = parse_time_length(params[1], a.precision) / a.precision;
     ret.push_back(a);
   }
 
   return ret;
+}
+
+void WhisperArchive::validate_archive_args(const vector<ArchiveArg>& args) {
+  // make sure the archive_args are valid
+  if (args.empty()) {
+    throw invalid_argument("no archives present");
+  }
+
+  uint32_t previous_precision = 0;
+  uint32_t previous_points = 0;
+  for (size_t x = 0; x < args.size(); x++) {
+    const auto& arg = args[x];
+
+    if (arg.precision <= 0) {
+      throw invalid_argument(string_printf("archive %zu has a precision of zero or less", x));
+    }
+    if (arg.precision == previous_precision) {
+      throw invalid_argument(string_printf("archive %zu has the same precision as a previous archive", x));
+    }
+
+    if (previous_precision) {
+      if (previous_precision && arg.precision < previous_precision) {
+        throw invalid_argument(string_printf("archive %zu is out of order", x));
+      }
+      if (previous_precision && (arg.precision % previous_precision != 0)) {
+        throw invalid_argument(string_printf("archive %zu does not divide higher precisions", x));
+      }
+      if (previous_precision * previous_points >= arg.precision * arg.points) {
+        throw invalid_argument(string_printf("archive %zu covers shorter time than higher precisions", x));
+      }
+      if (previous_points < arg.precision / previous_precision) {
+        throw invalid_argument(string_printf("archive %zu can\'t consolidate higher precisions", x));
+      }
+    }
+    previous_precision = arg.precision;
+    previous_points = arg.points;
+  }
 }
 
 void WhisperArchive::print(FILE* stream, bool print_data) {
@@ -296,57 +333,21 @@ void WhisperArchive::truncate() {
   this->create_file(lease.fd);
 }
 
-void WhisperArchive::update_metadata(const std::vector<ArchiveArg>& archive_args,
+void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
     float x_files_factor, uint32_t agg_method, bool truncate) {
   if (truncate) {
+    this->validate_archive_args(archive_args);
+
     if (x_files_factor < 0 || x_files_factor > 1) {
       x_files_factor = 0;
-    }
-
-    // make sure the archive_args are valid
-    if (archive_args.empty()) {
-      throw invalid_argument("No archive configurations given");
-    }
-
-    uint32_t max_retention = 0;
-    uint32_t previous_precision = 0;
-    uint32_t previous_points = 0;
-    for (const auto& it : archive_args) {
-      if (it.precision <= 0) {
-        throw invalid_argument("Archive has a precision of zero or less");
-      }
-      if (it.precision == previous_precision) {
-        throw invalid_argument("Multiple archives with the same precision");
-      }
-
-      if (previous_precision) {
-        if (previous_precision && it.precision < previous_precision) {
-          throw invalid_argument("Archives in incorrect order");
-        }
-        if (previous_precision && (it.precision % previous_precision != 0)) {
-          throw invalid_argument("Low-precision archive does not divide higher precisions");
-        }
-        if (previous_precision * previous_points >= it.precision * it.points) {
-          throw invalid_argument("Low-precision archive covers shorter time than higher precisions");
-        }
-        if (previous_points < it.precision / previous_precision) {
-          throw invalid_argument("High-precision archive can\'t consolidate to lower precision");
-        }
-      }
-      previous_precision = it.precision;
-      previous_points = it.points;
-
-      uint32_t this_retention = it.precision * it.points;
-      if (this_retention > max_retention) {
-        max_retention = this_retention;
-      }
     }
 
     // create metadata
     this->metadata = shared_ptr<Metadata>((Metadata*)malloc(sizeof(Metadata) + archive_args.size() * sizeof(ArchiveMetadata)), free);
 
+    const auto& last_archive_args = archive_args.back();
     this->metadata->aggregation_method = (AggregationMethod)agg_method;
-    this->metadata->max_retention = max_retention;
+    this->metadata->max_retention = last_archive_args.precision * last_archive_args.points;
     this->metadata->x_files_factor = x_files_factor;
     this->metadata->num_archives = archive_args.size();
 
