@@ -117,7 +117,7 @@ unordered_map<string, string> WriteBufferStore::delete_series(
   return this->store->delete_series(key_names);
 }
 
-unordered_map<string, ReadResult> WriteBufferStore::read(
+unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time) {
   // TODO: merge with writes in progress somehow, so data in the process of
   // being written isn't temporarily invisible. this will be nontrivial since we
@@ -133,100 +133,107 @@ unordered_map<string, ReadResult> WriteBufferStore::read(
 
   uint32_t range_secs = time(NULL) - start_time;
 
-  for (auto& it : ret) {
-    map<uint32_t, double> data_to_insert;
-    try {
-      rw_guard g(this->queue_lock, false);
-      auto& item = this->queue.at(it.first);
+  for (auto& it : ret) { // (pattern, key_to_result)
+    for (auto& it2 : it.second) { // (key, result)
+      const auto& key_name = it2.first;
+      auto& result = it2.second;
 
-      // if archive_args isn't blank and there's a Recreate request, behave as
-      // if the archive is blank (the Recreate will truncate it, so it's
-      // equivalent to enqueueing a write that deletes all existing datapoints)
-      // TODO: can we skip the substore read in this case? might not be worth it
-      // since this is probably pretty rare
-      if (!item.metadata.archive_args.empty() && 
-          ((item.update_behavior == UpdateMetadataBehavior::Recreate) ||
-           (item.create_new && it.second.metadata.archive_args.empty()))) {
-        it.second.metadata = item.metadata;
+      map<uint32_t, double> data_to_insert;
+      try {
+        rw_guard g(this->queue_lock, false);
+        auto& item = this->queue.at(key_name);
 
-        // if there's data, reduce its resolution to that of the first archive
-        it.second.data.clear();
-        if (!item.data.empty()) {
-          uint32_t precision = item.metadata.archive_args[0].precision;
-          uint32_t current_ts = 0;
-          for (const auto& queue_data_it : item.data) {
-            uint32_t effective_ts = (queue_data_it.first / precision) * precision;
-            if (!current_ts || (effective_ts != current_ts)) {
-              it.second.data.emplace_back();
-              it.second.data.back().timestamp = effective_ts;
-              current_ts = effective_ts;
+        // if archive_args isn't blank and there's a Recreate request, behave as
+        // if the archive is blank (the Recreate will truncate it, so it's
+        // equivalent to enqueueing a write that deletes all existing datapoints)
+        // TODO: can we skip the substore read in this case? might not be worth it
+        // since this is probably pretty rare
+        if (!item.metadata.archive_args.empty() && 
+            ((item.update_behavior == UpdateMetadataBehavior::Recreate) ||
+             (item.create_new && result.metadata.archive_args.empty()))) {
+          result.metadata = item.metadata;
+
+          // if there's data, reduce its resolution to that of the first archive
+          result.data.clear();
+          if (!item.data.empty()) {
+            uint32_t precision = item.metadata.archive_args[0].precision;
+            uint32_t current_ts = 0;
+            for (const auto& queue_data_it : item.data) {
+              uint32_t effective_ts = (queue_data_it.first / precision) * precision;
+              if (!current_ts || (effective_ts != current_ts)) {
+                result.data.emplace_back();
+                result.data.back().timestamp = effective_ts;
+                current_ts = effective_ts;
+              }
+              result.data.back().value = queue_data_it.second;
             }
-            it.second.data.back().value = queue_data_it.second;
+          }
+          continue;
+        }
+
+        auto dp_it = item.data.lower_bound(start_time);
+        if (dp_it == item.data.end()) {
+          continue;
+        }
+        auto dp_end_it = item.data.upper_bound(end_time);
+        if (dp_end_it == dp_it) {
+          continue;
+        }
+
+        // note: we round the timestamps to the right interval based on the
+        // archive metadata returned by the read result, disregarding any pending
+        // update_metadata commands. if no usable archives are found, skip the
+        // merge step for that series
+        uint32_t archive_index;
+        uint32_t precision = 0;
+        for (archive_index = 0;
+             (precision == 0) && (archive_index < result.metadata.archive_args.size());
+             archive_index++) {
+          const auto& archive = result.metadata.archive_args[archive_index];
+          if (archive.points * archive.precision >= range_secs) {
+            precision = archive.precision;
           }
         }
-        continue;
-      }
+        if (precision) {
+          for (; dp_it != dp_end_it; dp_it++) {
+            data_to_insert[(dp_it->first / precision) * precision] = dp_it->second;
+          }
+        }
 
-      auto dp_it = item.data.lower_bound(start_time);
-      if (dp_it == item.data.end()) {
-        continue;
-      }
-      auto dp_end_it = item.data.upper_bound(end_time);
-      if (dp_end_it == dp_it) {
-        continue;
-      }
+      } catch (const out_of_range& e) { }
 
-      // note: we round the timestamps to the right interval based on the
-      // archive metadata returned by the read result, disregarding any pending
-      // update_metadata commands. if no usable archives are found, skip the
-      // merge step for that series
-      uint32_t archive_index;
-      uint32_t precision = 0;
-      for (archive_index = 0;
-           (precision == 0) && (archive_index < it.second.metadata.archive_args.size());
-           archive_index++) {
-        const auto& archive = it.second.metadata.archive_args[archive_index];
-        if (archive.points * archive.precision >= range_secs) {
-          precision = archive.precision;
+      // if we get here, then data_to_insert cannot be empty
+      if (!data_to_insert.empty()) {
+        size_t ret_dp_index = 0;
+        size_t ret_dp_check_count = result.data.size();
+        bool needs_sort = false;
+        for (const auto& dp : data_to_insert) {
+          for (; (ret_dp_index < ret_dp_check_count) &&
+                 (result.data[ret_dp_index].timestamp < dp.first); ret_dp_index++);
+
+          if ((ret_dp_index < ret_dp_check_count) &&
+              (result.data[ret_dp_index].timestamp == dp.first)) {
+            result.data[ret_dp_index].value = dp.second;
+
+          } else {
+            result.data.emplace_back();
+            auto& ret_dp = result.data.back();
+            ret_dp.timestamp = dp.first;
+            ret_dp.value = dp.second;
+            // we only have to sort if there are datapoints after this one
+            if (ret_dp_index < ret_dp_check_count) {
+              needs_sort = true;
+            }
+          }
+        }
+
+        // sort by timestamp if needed
+        if (needs_sort) {
+          sort(result.data.begin(), result.data.end(), [](const Datapoint& a, const Datapoint& b) {
+            return a.timestamp < b.timestamp;
+          });
         }
       }
-      if (precision) {
-        for (; dp_it != dp_end_it; dp_it++) {
-          data_to_insert[(dp_it->first / precision) * precision] = dp_it->second;
-        }
-      }
-
-    } catch (const out_of_range& e) { }
-
-    // if we get here, then data_to_insert cannot be empty
-    size_t ret_dp_index = 0;
-    size_t ret_dp_check_count = it.second.data.size();
-    bool needs_sort = false;
-    for (const auto& dp : data_to_insert) {
-      for (; (ret_dp_index < ret_dp_check_count) &&
-             (it.second.data[ret_dp_index].timestamp < dp.first); ret_dp_index++);
-
-      if ((ret_dp_index < ret_dp_check_count) &&
-          (it.second.data[ret_dp_index].timestamp == dp.first)) {
-        it.second.data[ret_dp_index].value = dp.second;
-
-      } else {
-        it.second.data.emplace_back();
-        auto& ret_dp = it.second.data.back();
-        ret_dp.timestamp = dp.first;
-        ret_dp.value = dp.second;
-        // we only have to sort if there are datapoints after this one
-        if (ret_dp_index < ret_dp_check_count) {
-          needs_sort = true;
-        }
-      }
-    }
-
-    // sort by timestamp if needed
-    if (needs_sort) {
-      sort(it.second.data.begin(), it.second.data.end(), [](const Datapoint& a, const Datapoint& b) {
-        return a.timestamp < b.timestamp;
-      });
     }
   }
 
@@ -476,6 +483,10 @@ int64_t WriteBufferStore::delete_pending_writes(const string& pattern) {
   this->queued_datapoints -= num_datapoints_deleted;
 
   return num_queue_items_deleted + this->store->delete_pending_writes(pattern);
+}
+
+string WriteBufferStore::str() const {
+  return "WriteBufferStore(" + this->store->str() + ")";
 }
 
 

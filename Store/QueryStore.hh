@@ -1,21 +1,22 @@
 #pragma once
 
 #include <memory>
-#include <mutex>
-#include <thread>
 #include <unordered_map>
 
 #include "Store.hh"
 
 
-class ReadOnlyStore : public Store {
+class QueryStore : public Store {
 public:
-  ReadOnlyStore() = delete;
-  ReadOnlyStore(const ReadOnlyStore& rhs) = delete;
-  ReadOnlyStore(std::shared_ptr<Store> store);
-  virtual ~ReadOnlyStore() = default;
+  QueryStore() = delete;
+  QueryStore(const QueryStore& rhs) = delete;
+  QueryStore(std::shared_ptr<Store> stores);
+  virtual ~QueryStore() = default;
 
-  const ReadOnlyStore& operator=(const ReadOnlyStore& rhs) = delete;
+  const QueryStore& operator=(const QueryStore& rhs) = delete;
+
+  virtual void set_autocreate_rules(
+      const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules);
 
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
@@ -36,9 +37,10 @@ public:
       bool rotate = false);
 
   virtual int64_t delete_from_cache(const std::string& path);
+  virtual int64_t delete_pending_writes(const std::string& pattern);
 
   virtual std::string str() const;
 
-private:
+protected:
   std::shared_ptr<Store> store;
 };

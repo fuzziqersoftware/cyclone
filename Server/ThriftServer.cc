@@ -7,7 +7,17 @@
 #include <thrift/transport/TServerSocket.h>
 #include <thrift/transport/TBufferTransports.h>
 
+#ifdef _THRIFT_STDCXX_H_
+#include <thrift/transport/TNonblockingServerSocket.h>
+#endif
+
 #include "../gen-cpp/Cyclone.h"
+
+#ifdef _THRIFT_STDCXX_H_
+#define thrift_ptr apache::thrift::stdcxx::shared_ptr
+#else
+#define thrift_ptr boost::shared_ptr
+#endif
 
 using namespace std;
 
@@ -19,7 +29,7 @@ public:
   void update_metadata(unordered_map<string, string>& _return,
       const SeriesMetadataMap& metadata, bool create_new,
       bool skip_existing_series, bool truncate_existing_series) {
- 
+
     Store::UpdateMetadataBehavior update_behavior;
     if (skip_existing_series) {
       update_behavior = Store::UpdateMetadataBehavior::Ignore;
@@ -38,12 +48,14 @@ public:
     _return = this->store->delete_series(key_names);
   }
 
-  void read_metadata(unordered_map<string, ReadResult>& _return,
+  void read_metadata(
+      unordered_map<string, unordered_map<string, ReadResult>>& _return,
       const vector<string>& targets) {
     _return = this->store->read(targets, 0, 0);
   }
 
-  void read(unordered_map<string, ReadResult>& _return,
+  void read(
+      unordered_map<string, unordered_map<string, ReadResult>>& _return,
       const vector<string>& targets, const int64_t start_time,
       const int64_t end_time) {
     _return = this->store->read(targets, start_time, end_time);
@@ -98,21 +110,29 @@ void ThriftServer::serve_thread_routine() {
 
   // oh god the namespaces... dat 80-char limit whyyyy
 
-  boost::shared_ptr<apache::thrift::concurrency::ThreadManager> thread_manager =
+  thrift_ptr<apache::thrift::concurrency::ThreadManager> thread_manager =
       apache::thrift::concurrency::ThreadManager::newSimpleThreadManager(num_threads);
-  boost::shared_ptr<apache::thrift::concurrency::PosixThreadFactory> thread_factory(
+  thrift_ptr<apache::thrift::concurrency::PosixThreadFactory> thread_factory(
       new apache::thrift::concurrency::PosixThreadFactory());
   thread_manager->threadFactory(thread_factory);
   thread_manager->start();
 
-  boost::shared_ptr<apache::thrift::protocol::TProtocolFactory> protocol_factory(
+  thrift_ptr<apache::thrift::protocol::TProtocolFactory> protocol_factory(
       new apache::thrift::protocol::TBinaryProtocolFactory());
 
-  boost::shared_ptr<CycloneHandler> handler(new CycloneHandler(this->store));
-  boost::shared_ptr<CycloneProcessor::TProcessor> processor(new CycloneProcessor(handler));
+  thrift_ptr<CycloneHandler> handler(new CycloneHandler(this->store));
+  thrift_ptr<CycloneProcessor::TProcessor> processor(new CycloneProcessor(handler));
 
+  // TODO: unify these implementations
+#ifdef _THRIFT_STDCXX_H_
+  shared_ptr<apache::thrift::transport::TNonblockingServerSocket> socket(
+      new apache::thrift::transport::TNonblockingServerSocket(this->port));
+  this->server.reset(new apache::thrift::server::TNonblockingServer(
+      processor, protocol_factory, socket, thread_manager));
+#else
   this->server.reset(new apache::thrift::server::TNonblockingServer(
       processor, protocol_factory, port, thread_manager));
+#endif
   this->server->setNumIOThreads(num_threads);
   this->server->serve();
 }

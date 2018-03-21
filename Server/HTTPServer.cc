@@ -88,8 +88,27 @@ unordered_multimap<string, string> HTTPServer::parse_url_params(
   for (auto it : split(query, '&')) {
     size_t first_equals = it.find('=');
     if (first_equals != string::npos) {
-      params.emplace(piecewise_construct, make_tuple(it, 0, first_equals),
-          make_tuple(it, first_equals + 1));
+      string value(it, first_equals + 1);
+
+      size_t write_offset = 0, read_offset = 0;
+      for (; read_offset < value.size(); write_offset++) {
+        if ((value[read_offset] == '%') && (read_offset < value.size() - 2)) {
+          value[write_offset] =
+              static_cast<char>(value_for_hex_char(value[read_offset + 1]) << 4) |
+              static_cast<char>(value_for_hex_char(value[read_offset + 2]));
+              read_offset += 3;
+        } else if (value[write_offset] == '+') {
+          value[write_offset] = ' ';
+          read_offset++;
+        } else {
+          value[write_offset] = value[read_offset];
+          read_offset++;
+        }
+      }
+      value.resize(write_offset);
+
+      params.emplace(piecewise_construct, forward_as_tuple(it, 0, first_equals),
+          forward_as_tuple(value));
     } else {
       params.emplace(it, "");
     }

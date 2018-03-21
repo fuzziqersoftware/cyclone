@@ -13,7 +13,8 @@ public:
   ConsistentHashMultiStore() = delete;
   ConsistentHashMultiStore(const ConsistentHashMultiStore& rhs) = delete;
   ConsistentHashMultiStore(
-      const std::unordered_map<std::string, std::shared_ptr<Store>>& stores);
+      const std::unordered_map<std::string, std::shared_ptr<Store>>& stores,
+      int64_t precision);
   virtual ~ConsistentHashMultiStore() = default;
 
   const ConsistentHashMultiStore& operator=(const ConsistentHashMultiStore& rhs) = delete;
@@ -24,7 +25,7 @@ public:
   virtual std::unordered_map<std::string, std::string> delete_series(
       const std::vector<std::string>& key_names);
 
-  virtual std::unordered_map<std::string, ReadResult> read(
+  virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
       int64_t end_time);
   virtual std::unordered_map<std::string, std::string> write(

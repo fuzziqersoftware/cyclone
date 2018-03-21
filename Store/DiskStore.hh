@@ -30,7 +30,7 @@ public:
   virtual std::unordered_map<std::string, std::string> delete_series(
       const std::vector<std::string>& key_names);
 
-  virtual std::unordered_map<std::string, ReadResult> read(
+  virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
       int64_t end_time);
   virtual std::unordered_map<std::string, std::string> write(
@@ -41,6 +41,8 @@ public:
 
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
+
+  virtual std::string str() const;
 
 protected:
   static SeriesMetadata convert_metadata_to_thrift(
@@ -91,7 +93,7 @@ protected:
 
     void report_directory_delete(size_t directories, size_t files);
     void report_read_request(
-        const std::unordered_map<std::string, ReadResult>& ret);
+        const std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>>& ret);
     void report_write_request(
         const std::unordered_map<std::string, std::string>& ret,
         const std::unordered_map<std::string, Series>& data);

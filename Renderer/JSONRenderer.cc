@@ -16,32 +16,40 @@ const char* JSONRenderer::content_type() const {
   return "application/json";
 }
 
-void JSONRenderer::render_data(const unordered_map<string, ReadResult>& results) const {
+void JSONRenderer::render_data(
+    const unordered_map<string, unordered_map<string, ReadResult>>& results) const {
 
   evbuffer_add(this->buf, "[", 1);
 
   int num_series = 0;
   for (const auto& it : results) {
-    if (num_series) {
-      evbuffer_add(this->buf, ", ", 2);
-    }
-    evbuffer_add_printf(this->buf, "{\"target\": \"%s\", \"datapoints\": [", it.first.c_str());
-
-    int num_points = 0;
-    for (const auto& pt : it.second.data) {
-      if (isnan(pt.value)) {
+    for (const auto& it2 : it.second) {
+      if (!it2.second.error.empty()) {
         continue;
       }
 
-      if (num_points) {
-        evbuffer_add(this->buf, ", ", 2);
+      if (num_series) {
+        evbuffer_add(this->buf, ",", 2);
       }
-      evbuffer_add_printf(this->buf, "[%g, %" PRId64 "]", pt.value, pt.timestamp);
-      num_points++;
-    }
+      evbuffer_add_printf(this->buf, "{\"target\":\"%s\",\"datapoints\":[",
+          it2.first.c_str());
 
-    evbuffer_add(this->buf, "]}", 2);
-    num_series++;
+      int num_points = 0;
+      for (const auto& pt : it2.second.data) {
+        if (isnan(pt.value)) {
+          continue;
+        }
+
+        if (num_points) {
+          evbuffer_add(this->buf, ",", 2);
+        }
+        evbuffer_add_printf(this->buf, "[%g,%" PRId64 "]", pt.value, pt.timestamp);
+        num_points++;
+      }
+
+      evbuffer_add(this->buf, "]}", 2);
+      num_series++;
+    }
   }
 
   evbuffer_add(this->buf, "]", 1);

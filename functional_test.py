@@ -44,11 +44,13 @@ def write_config(store_type='disk'):
   }
   conf = {
     'http_listen': [5050],
-    'line_listen': [2003],
+    'line_stream_listen': [2003],
+    'line_datagram_listen': [2003],
     'pickle_listen': [2004],
     'thrift_port': 2000,
     'http_threads': 1,
     'stream_threads': 1,
+    'datagram_threads': 1,
     'thrift_threads': 1,
     'exit_check_usecs': 100000,
     'stats_report_usecs': 5000000,
@@ -77,6 +79,7 @@ def run_functional_test(store_type):
 
     now = time.time()
 
+    print('-- [%s] connecting thrift' % store_type)
     cyclone_thrift = CycloneThriftClient('localhost', 2000)
     cyclone_http_json = CycloneHTTPClient('localhost', 5050, format='json')
     cyclone_http_pickle = CycloneHTTPClient('localhost', 5050, format='pickle')
@@ -305,4 +308,4 @@ if __name__ == '__main__':
   run_functional_test(store_type='disk')
   run_functional_test(store_type='cached_disk')
   run_functional_test(store_type='buffered_cached_disk')
-  print 'all tests passed'
+  print('all tests passed')

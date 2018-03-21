@@ -160,12 +160,19 @@ unordered_map<string, string> DiskStore::delete_series(const vector<string>& key
   return ret;
 }
 
-unordered_map<string, ReadResult> DiskStore::read(const vector<string>& key_names,
-    int64_t start_time, int64_t end_time) {
+unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
+    const vector<string>& key_names, int64_t start_time, int64_t end_time) {
 
-  unordered_map<string, ReadResult> ret;
-  for (const auto& key_name : key_names) {
-    ReadResult& r = ret[key_name];
+  auto key_to_pattern = this->resolve_patterns(key_names);
+
+  unordered_map<string, unordered_map<string, ReadResult>> ret;
+  for (const auto& it : key_to_pattern) {
+    const string& key_name = it.first;
+    const string& pattern = it.second;
+
+    unordered_map<string, ReadResult>& read_results = ret[pattern];
+    ReadResult& r = read_results[key_name];
+
     try {
       WhisperArchive d(this->filename_for_key(key_name));
       if (start_time && end_time) {
@@ -174,9 +181,9 @@ unordered_map<string, ReadResult> DiskStore::read(const vector<string>& key_name
       r.metadata = this->convert_metadata_to_thrift(*d.get_metadata());
 
     } catch (const cannot_open_file& e) {
-      // only return an error if the file exists (or we couldn't open it for
-      // some other reason) - a missing series is not an error
-      if (e.error != ENOENT) {
+      if (e.error == ENOENT) {
+        r.error = "series does not exist";
+      } else {
         r.error = e.what();
       }
 
@@ -306,6 +313,10 @@ unordered_map<string, int64_t> DiskStore::get_stats(bool rotate) {
   return current_stats.to_map();
 }
 
+string DiskStore::str() const {
+  return "DiskStore(" + this->root_directory + ")";
+}
+
 string DiskStore::filename_for_key(const string& key_name, bool is_file) {
   // input: a.b.c.d
   // output: /root/directory/a/b/c/d.wsp
@@ -421,14 +432,16 @@ void DiskStore::Stats::report_directory_delete(size_t directories,
 }
 
 void DiskStore::Stats::report_read_request(
-    const unordered_map<string, ReadResult>& ret) {
+    const unordered_map<string, unordered_map<string, ReadResult>>& ret) {
   size_t datapoints = 0;
   size_t errors = 0;
-  for (const auto& it : ret) {
-    if (!it.second.error.empty()) {
-      errors++;
+  for (const auto& it : ret) { // (pattern, key_to_result)
+    for (const auto& it2 : it.second) { // (key_name, result)
+      if (!it2.second.error.empty()) {
+        errors++;
+      }
+      datapoints += it2.second.data.size();
     }
-    datapoints += it.second.data.size();
   }
 
   this->read_requests++;

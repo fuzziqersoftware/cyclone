@@ -134,3 +134,32 @@ void Store::validate_autocreate_rules(
     }
   }
 }
+
+unordered_map<string, string> Store::resolve_patterns(
+    const vector<string>& key_names) {
+
+  // if some of the key names are patterns, execute find queries on them to get
+  // the actual key names
+  unordered_map<string, string> key_to_pattern;
+  vector<string> patterns;
+  for (const string& key_name : key_names) {
+    if (this->token_is_pattern(key_name)) {
+      patterns.emplace_back(key_name);
+    } else {
+      key_to_pattern.emplace(key_name, key_name);
+    }
+  }
+
+  if (!patterns.empty()) {
+    for (auto it : this->find(patterns)) {
+      if (!it.second.error.empty()) {
+        continue;
+      }
+      for (auto& k : it.second.results) {
+        key_to_pattern.emplace(k, it.first);
+      }
+    }
+  }
+
+  return key_to_pattern;
+}

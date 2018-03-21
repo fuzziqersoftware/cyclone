@@ -51,12 +51,12 @@ unordered_map<string, string> MultiStore::delete_series(
   return ret;
 }
 
-unordered_map<string, ReadResult> MultiStore::read(
+unordered_map<string, unordered_map<string, ReadResult>> MultiStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time) {
-  unordered_map<string, ReadResult> ret;
+  unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : this->stores) {
     auto results = it.second->read(key_names, start_time, end_time);
-    this->merge_maps(ret, move(results), this->combine_read_results);
+    this->merge_maps(ret, move(results), this->combine_read_pattern_maps);
   }
   return ret;
 }
@@ -108,6 +108,21 @@ int64_t MultiStore::delete_pending_writes(const std::string& pattern) {
   return ret;
 }
 
+string MultiStore::str() const {
+  string ret = "MultiStore(";
+  for (const auto& it : this->stores) {
+    if (ret.size() > 11) {
+      ret += ", ";
+    }
+    ret += it.first;
+    ret += '=';
+    ret += it.second->str();
+  }
+  ret += ')';
+  return ret;
+}
+
+
 
 void MultiStore::combine_error_strings(const string& k, string& v1,
     string& v2) {
@@ -118,6 +133,11 @@ void MultiStore::combine_error_strings(const string& k, string& v1,
   } else if (!v2.empty()) {
     v1 = move(v2);
   }
+}
+
+void MultiStore::combine_read_pattern_maps(const string& k,
+    unordered_map<string, ReadResult>& v1, unordered_map<string, ReadResult>& v2) {
+  MultiStore::merge_maps(v1, move(v2), MultiStore::combine_read_results);
 }
 
 void MultiStore::combine_read_results(const string& k, ReadResult& v1,

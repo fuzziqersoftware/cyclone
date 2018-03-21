@@ -8,6 +8,7 @@
 #include <phosg/Time.hh>
 
 #include "../Renderer/Renderer.hh"
+#include "../Renderer/GraphiteRenderer.hh"
 #include "../Renderer/ImageRenderer.hh"
 #include "../Renderer/JSONRenderer.hh"
 #include "../Renderer/PickleRenderer.hh"
@@ -30,8 +31,12 @@ void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* 
 
     const char* uri = evhttp_request_get_uri(req);
 
+    // default
+    if (!strcmp(uri, "/") || !strncmp(uri, "/?", 2)) {
+      content_type = this->handle_index_request(t, req, out_buffer.get());
+
     // graphite api
-    if (!strncmp(uri, "/render/?", 9) || !strncmp(uri, "/render?", 8)) {
+    } else if (!strncmp(uri, "/render/?", 9) || !strncmp(uri, "/render?", 8)) {
       content_type = this->handle_graphite_render_request(t, req, out_buffer.get());
     } else if (!strncmp(uri, "/metrics/find/?", 15) || !strncmp(uri, "/metrics/find?", 14)) {
       content_type = this->handle_graphite_find_request(t, req, out_buffer.get());
@@ -71,7 +76,9 @@ void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* 
 
 unique_ptr<Renderer> CycloneHTTPServer::create_renderer(const string& format,
     struct evbuffer* buf) {
-  if (format == "json") {
+  if (format.empty()) {
+    return unique_ptr<Renderer>(new GraphiteRenderer(buf));
+  } else if (format == "json") {
     return unique_ptr<Renderer>(new JSONRenderer(buf));
   } else if (format == "pickle") {
     return unique_ptr<Renderer>(new PickleRenderer(buf));
@@ -114,6 +121,23 @@ static int64_t parse_relative_time(const string& s) {
   throw invalid_argument("can\'t parse relative time: " + s);
 }
 
+
+string CycloneHTTPServer::handle_index_request(struct Thread& t,
+    struct evhttp_request* req, struct evbuffer* out_buffer) {
+  evbuffer_add(out_buffer, "stats:\n", 7);
+
+  auto stats = this->store->get_stats();
+  map<string, int64_t> sorted_stats;
+  for (const auto& it : stats) {
+    sorted_stats.emplace(it);
+  }
+  for (const auto& it : sorted_stats) {
+    evbuffer_add_printf(out_buffer, "%s = %" PRId64 "\n", it.first.c_str(),
+        it.second);
+  }
+
+  return "text/plain";
+}
 
 string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,
     struct evhttp_request* req, struct evbuffer* out_buffer) {

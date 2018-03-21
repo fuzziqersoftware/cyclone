@@ -31,7 +31,7 @@ public:
   virtual std::unordered_map<std::string, std::string> delete_series(
       const std::vector<std::string>& key_names) = 0;
 
-  virtual std::unordered_map<std::string, ReadResult> read(
+  virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
       int64_t end_time) = 0;
   virtual std::unordered_map<std::string, std::string> write(
@@ -48,6 +48,8 @@ public:
   virtual int64_t delete_from_cache(const std::string& paths);
   virtual int64_t delete_pending_writes(const std::string& paths);
 
+  virtual std::string str() const = 0;
+
   static bool token_is_pattern(const std::string& token);
   static bool pattern_is_basename(const std::string& token);
   static bool pattern_is_indeterminate(const std::string& pattern);
@@ -60,4 +62,6 @@ protected:
 
   static void validate_autocreate_rules(
       const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules);
+  std::unordered_map<std::string, std::string> resolve_patterns(
+      const std::vector<std::string>& key_names);
 };

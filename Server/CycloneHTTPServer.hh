@@ -21,6 +21,9 @@ protected:
 
   virtual void handle_request(struct Thread& t, struct evhttp_request* req);
 
+  std::string handle_index_request(struct Thread& t, struct evhttp_request* req,
+      struct evbuffer* out_buffer);
+
   std::string handle_graphite_render_request(struct Thread& t,
       struct evhttp_request* req, struct evbuffer* out_buffer);
   std::string handle_graphite_find_request(struct Thread& t,

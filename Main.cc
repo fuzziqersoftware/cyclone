@@ -14,10 +14,12 @@
 #include "Store/WriteBufferStore.hh"
 #include "Store/EmptyStore.hh"
 #include "Store/ReadOnlyStore.hh"
+#include "Store/QueryStore.hh"
 
 #include "Server/CycloneHTTPServer.hh"
 #include "Server/ThriftServer.hh"
 #include "Server/StreamServer.hh"
+#include "Server/DatagramServer.hh"
 
 using namespace std;
 
@@ -26,11 +28,13 @@ struct Options {
   string filename;
 
   vector<pair<string, int>> http_listen_addrs;
-  vector<pair<string, int>> line_listen_addrs;
+  vector<pair<string, int>> line_stream_listen_addrs;
+  vector<pair<string, int>> line_datagram_listen_addrs;
   vector<pair<string, int>> pickle_listen_addrs;
   int thrift_port;
   size_t http_threads;
   size_t stream_threads;
+  size_t datagram_threads;
   size_t thrift_threads;
   uint64_t exit_check_usecs;
   uint64_t stats_report_usecs;
@@ -61,13 +65,16 @@ struct Options {
     if (!is_reload) {
       this->http_listen_addrs = this->parse_listen_addrs_list(
           (*json)["http_listen"]);
-      this->line_listen_addrs = this->parse_listen_addrs_list(
-          (*json)["line_listen"]);
+      this->line_stream_listen_addrs = this->parse_listen_addrs_list(
+          (*json)["line_stream_listen"]);
+      this->line_datagram_listen_addrs = this->parse_listen_addrs_list(
+          (*json)["line_datagram_listen"]);
       this->pickle_listen_addrs = this->parse_listen_addrs_list(
           (*json)["pickle_listen"]);
       this->thrift_port = (*json)["thrift_port"]->as_int();
       this->http_threads = (*json)["http_threads"]->as_int();
       this->stream_threads = (*json)["stream_threads"]->as_int();
+      this->datagram_threads = (*json)["datagram_threads"]->as_int();
       this->thrift_threads = (*json)["thrift_threads"]->as_int();
       try {
         this->exit_check_usecs = (*json)["exit_check_usecs"]->as_int();
@@ -106,12 +113,21 @@ struct Options {
 
     string type = (*store_config)["type"]->as_string();
 
+    if (!type.compare("query")) {
+      shared_ptr<Store> substore = parse_store_config((*store_config)["substore"]);
+      return shared_ptr<Store>(new QueryStore(substore));
+    }
+
     if (!type.compare("hash")) {
       unordered_map<string, shared_ptr<Store>> stores;
       for (auto& it : (*store_config)["stores"]->as_dict()) {
         stores.emplace(it.first, parse_store_config(it.second));
       }
-      return shared_ptr<Store>(new ConsistentHashMultiStore(stores));
+      int64_t precision = -100;
+      try {
+        precision = (*store_config)["precision"]->as_int();
+      } catch (const JSONObject::key_error& e) { }
+      return shared_ptr<Store>(new ConsistentHashMultiStore(stores, precision));
     }
 
     if (!type.compare("multi")) {
@@ -246,10 +262,10 @@ int main(int argc, char **argv) {
     servers.emplace_back(s);
   }
 
-  if (!opt.line_listen_addrs.empty() || !opt.pickle_listen_addrs.empty()) {
+  if (!opt.line_stream_listen_addrs.empty() || !opt.pickle_listen_addrs.empty()) {
     shared_ptr<StreamServer> s(new StreamServer(opt.store, opt.stream_threads,
         opt.exit_check_usecs));
-    for (const auto& addr : opt.line_listen_addrs) {
+    for (const auto& addr : opt.line_stream_listen_addrs) {
       if (addr.second == 0) {
         s->listen(addr.first, false);
       } else {
@@ -261,6 +277,19 @@ int main(int argc, char **argv) {
         s->listen(addr.first, true);
       } else {
         s->listen(addr.first, addr.second, true);
+      }
+    }
+    servers.emplace_back(s);
+  }
+
+  if (!opt.line_datagram_listen_addrs.empty()) {
+    shared_ptr<DatagramServer> s(new DatagramServer(opt.store,
+        opt.datagram_threads, opt.exit_check_usecs));
+    for (const auto& addr : opt.line_datagram_listen_addrs) {
+      if (addr.second == 0) {
+        s->listen(addr.first);
+      } else {
+        s->listen(addr.first, addr.second);
       }
     }
     servers.emplace_back(s);

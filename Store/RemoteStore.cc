@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <iostream>
+#include <phosg/Strings.hh>
 #include <stdexcept>
 #include <string>
 #include <thrift/protocol/TBinaryProtocol.h>
@@ -15,9 +16,11 @@
 #include <thrift/transport/TSocket.h>
 #include <vector>
 
-using namespace apache::thrift;
-using namespace apache::thrift::protocol;
-using namespace apache::thrift::transport;
+#ifdef _THRIFT_STDCXX_H_
+#define thrift_ptr apache::thrift::stdcxx::shared_ptr
+#else
+#define thrift_ptr boost::shared_ptr
+#endif
 
 using namespace std;
 
@@ -49,9 +52,9 @@ unordered_map<string, string> RemoteStore::delete_series(
   return ret;
 }
 
-unordered_map<string, ReadResult> RemoteStore::read(
+unordered_map<string, unordered_map<string, ReadResult>> RemoteStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time) {
-  unordered_map<string, ReadResult> ret;
+  unordered_map<string, unordered_map<string, ReadResult>> ret;
   auto c = this->get_client();
   c->read(ret, key_names, start_time, end_time);
   this->return_client(c);
@@ -95,6 +98,11 @@ int64_t RemoteStore::delete_pending_writes(const std::string& pattern) {
   return ret;
 }
 
+string RemoteStore::str() const {
+  return string_printf("RemoteStore(hostname=%s, port=%d, connection_cache_count=%zu)",
+      this->hostname.c_str(), this->port, this->connection_cache_count);
+}
+
 shared_ptr<CycloneClient> RemoteStore::get_client() {
   {
     lock_guard<mutex> g(this->clients_lock);
@@ -107,9 +115,12 @@ shared_ptr<CycloneClient> RemoteStore::get_client() {
   }
 
   // there are no clients; make a new one
-  boost::shared_ptr<TSocket> socket(new TSocket(this->hostname, this->port));
-  boost::shared_ptr<TTransport> trans(new TFramedTransport(socket));
-  boost::shared_ptr<TProtocol> proto(new TBinaryProtocol(trans));
+  thrift_ptr<apache::thrift::transport::TSocket> socket(
+      new apache::thrift::transport::TSocket(this->hostname, this->port));
+  thrift_ptr<apache::thrift::transport::TTransport> trans(
+      new apache::thrift::transport::TFramedTransport(socket));
+  thrift_ptr<apache::thrift::protocol::TProtocol> proto(
+      new apache::thrift::protocol::TBinaryProtocol(trans));
   trans->open();
   return shared_ptr<CycloneClient>(new CycloneClient(proto));
 }

@@ -69,13 +69,15 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
   FileHeader* header = (FileHeader*)data.data();
   uint32_t archive_count = bswap32(header->archive_count);
   this->base_intervals.resize(archive_count, -1);
-  this->metadata = shared_ptr<Metadata>((Metadata*)malloc(sizeof(Metadata) + archive_count * sizeof(ArchiveMetadata)), free);
 
+  // fill in the base metadata structure
+  this->metadata = shared_ptr<Metadata>((Metadata*)malloc(sizeof(Metadata) + archive_count * sizeof(ArchiveMetadata)), free);
   this->metadata->aggregation_method = (AggregationMethod)bswap32(header->aggregation_type);
   this->metadata->max_retention = bswap32(header->max_retention);
   this->metadata->x_files_factor = bswap32f(header->x_files_factor);
   this->metadata->num_archives = archive_count;
 
+  // if there were more than 10 archives, read the rest of their headers
   if (this->metadata->num_archives > archives_read) {
     data.resize(sizeof(FileHeader) + this->metadata->num_archives * sizeof(ArchiveMetadata));
     off_t off = sizeof(FileHeader) + archives_read * sizeof(ArchiveMetadata);
@@ -83,11 +85,24 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
     preadx(lease.fd, &data[off], size, off);
   }
 
+  // convert the archive headers into a usable format
   for (uint32_t x = 0; x < archive_count; x++) {
     ArchiveMetadata* sw_archive_metadata = (ArchiveMetadata*)&data[sizeof(FileHeader) + x * sizeof(ArchiveMetadata)];
     this->metadata->archives[x].offset = bswap32(sw_archive_metadata->offset);
     this->metadata->archives[x].seconds_per_point = bswap32(sw_archive_metadata->seconds_per_point);
     this->metadata->archives[x].points = bswap32(sw_archive_metadata->points);
+  }
+
+  // if there were fewer than 10 archives, then we also got the base interval
+  // for the first archive in the initial read; might as well populate it
+  // TODO: re-enable this later
+  if (this->metadata->num_archives && (this->metadata->num_archives < 10)) {
+    for (uint32_t x = 0; x < this->metadata->num_archives; x++) {
+      if (this->metadata->archives[x].offset <= data.size() - sizeof(FilePoint)) {
+        const FilePoint* first_pt = (const FilePoint*)(&data[this->metadata->archives[x].offset]);
+        this->base_intervals[x] = bswap32(first_pt->time);
+      }
+    }
   }
 }
 
@@ -259,6 +274,7 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
   } else {
     start_offset = archive.offset + (((archive.points - (archive_start_time - start_interval) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
   }
+
   if (end_interval >= archive_start_time) {
     end_offset = archive.offset + ((((end_interval - archive_start_time) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
   } else {
@@ -288,7 +304,8 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
   Series data;
   uint64_t current_interval = start_interval;
   for (uint32_t x = 0; x < num_points; x++) {
-    if (current_interval == bswap32(raw_points[x].time)) {
+    uint32_t point_time = bswap32(raw_points[x].time);
+    if (current_interval == point_time) {
       data.emplace_back();
       auto& point = data.back();
       point.timestamp = current_interval;
@@ -408,7 +425,7 @@ void WhisperArchive::create_file(int fd) {
   ftruncate(fd, this->get_file_size());
 
   this->base_intervals.clear();
-  this->base_intervals.resize(this->metadata->num_archives, 0);
+  this->base_intervals.resize(this->metadata->num_archives, -1);
 }
 
 void WhisperArchive::write_header(int fd) {
@@ -433,11 +450,12 @@ void WhisperArchive::write_header(int fd) {
 
 uint32_t WhisperArchive::get_base_interval(int fd, uint32_t archive_index) {
   int64_t base_interval = this->base_intervals[archive_index];
-  if (base_interval == (uint32_t)-1) {
+  if (base_interval == -1) {
     FilePoint first_point;
     preadx(fd, &first_point, sizeof(first_point),
         this->metadata->archives[archive_index].offset);
-    this->base_intervals[archive_index] = bswap32(first_point.time);
+    base_interval = bswap32(first_point.time);
+    this->base_intervals[archive_index] = base_interval;
   }
   return base_interval;
 }
@@ -448,10 +466,12 @@ void WhisperArchive::write_archive(int fd, uint32_t archive_index,
   const ArchiveMetadata& archive = this->metadata->archives[archive_index];
   int32_t archive_size = archive.points * sizeof(FilePoint);
 
-  // get the base interval
+  // get the base interval. if it's not set, pretend it's equal to the first
+  // point's interval so we'll write at the beginning of the archive
   uint64_t archive_start_interval = this->get_base_interval(fd, archive_index);
   if (archive_start_interval == 0) {
-    archive_start_interval = data[start_index].timestamp;
+    int64_t first_ts = data[start_index].timestamp;
+    archive_start_interval = first_ts - (first_ts % archive.seconds_per_point);
   }
 
   // write all the points to the archive first
@@ -460,6 +480,10 @@ void WhisperArchive::write_archive(int fd, uint32_t archive_index,
     int64_t point_interval = pt.timestamp - (pt.timestamp % archive.seconds_per_point);
     int64_t time_distance = point_interval - archive_start_interval;
     int32_t point_distance = time_distance / archive.seconds_per_point;
+    // TODO: figure out negative modulus, you lazy bum
+    while (point_distance < 0) {
+      point_distance += archive.points;
+    }
     int32_t point_offset = archive.offset + ((point_distance * sizeof(FilePoint)) % archive_size);
 
     FilePoint sw_pt;

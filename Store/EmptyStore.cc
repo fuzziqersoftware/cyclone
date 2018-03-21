@@ -36,10 +36,10 @@ unordered_map<string, string> EmptyStore::delete_series(
   return ret;
 }
 
-unordered_map<string, ReadResult> EmptyStore::read(
+unordered_map<string, unordered_map<string, ReadResult>> EmptyStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time) {
 
-  unordered_map<string, ReadResult> ret;
+  unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : key_names) {
     ret.emplace(piecewise_construct, forward_as_tuple(it), forward_as_tuple());
   }
@@ -64,4 +64,8 @@ unordered_map<string, FindResult> EmptyStore::find(
     ret.emplace(piecewise_construct, forward_as_tuple(it), forward_as_tuple());
   }
   return ret;
+}
+
+string EmptyStore::str() const {
+  return "EmptyStore";
 }

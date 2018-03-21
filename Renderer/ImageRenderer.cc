@@ -17,38 +17,46 @@ const char* ImageRenderer::content_type() const {
   return Image::mime_type_for_format(this->image_format);
 }
 
-void ImageRenderer::render_data(const unordered_map<string, ReadResult>& results) const {
+void ImageRenderer::render_data(
+    const unordered_map<string, unordered_map<string, ReadResult>>& results) const {
 
-  // sanity checks
-  if (results.size() == 0) {
-    throw runtime_error("no data provided to renderer");
+  // find the first series
+  const ReadResult* first_series = NULL;
+  for (const auto& it : results) {
+    for (const auto& it2 : it.second) {
+      if (!it2.second.data.empty()) {
+        first_series = &it2.second;
+      }
+    }
   }
-  if (results.begin()->second.data.size() == 0) {
-    throw runtime_error("first series contains no data");
+  if (!first_series) {
+    throw runtime_error("no data provided to renderer");
   }
 
   // compute axis bounds
-  int64_t x_min = results.begin()->second.data.front().timestamp;
-  int64_t x_max = results.begin()->second.data.back().timestamp;
+  int64_t x_min = first_series->data.front().timestamp;
+  int64_t x_max = first_series->data.back().timestamp;
   double y_min = this->y_min_fixed;
   double y_max = this->y_max_fixed;
   bool compute_y_min = isnan(y_min_fixed), compute_y_max = isnan(y_max_fixed);
   for (const auto& it : results) {
-    const auto& data = it.second.data;
+    for (const auto& it2 : it.second) {
+      const auto& data = it2.second.data;
 
-    if (data.size() == 0) {
-      throw runtime_error("series [" + it.first + "] contains no data");
-    }
-
-    x_min = min(x_min, data[0].timestamp);
-    x_max = max(x_max, data[data.size() - 1].timestamp);
-
-    for (const auto& pt : data) {
-      if (compute_y_min && (isnan(y_min) || pt.value < y_min)) {
-        y_min = pt.value;
+      if (data.size() == 0) {
+        throw runtime_error("series [" + it2.first + "] contains no data");
       }
-      if (compute_y_max && (isnan(y_max) || pt.value > y_max)) {
-        y_max = pt.value;
+
+      x_min = min(x_min, data[0].timestamp);
+      x_max = max(x_max, data[data.size() - 1].timestamp);
+
+      for (const auto& pt : data) {
+        if (compute_y_min && (isnan(y_min) || pt.value < y_min)) {
+          y_min = pt.value;
+        }
+        if (compute_y_max && (isnan(y_max) || pt.value > y_max)) {
+          y_max = pt.value;
+        }
       }
     }
   }
@@ -89,18 +97,20 @@ void ImageRenderer::render_data(const unordered_map<string, ReadResult>& results
   // draw lines
   int current_color = 0;
   for (const auto& it : results) {
-    int prev_x = 0, prev_y = 0;
-    uint8_t* color = line_colors[current_color].data();
-    for (const auto& pt : it.second.data) {
-      int64_t this_x = (int64_t)(pt.timestamp - x_min) * graph_width / x_range + graph_left_edge;
-      int64_t this_y = (y_min + y_range - pt.value) * graph_height / y_range + graph_top_edge;
-      if (prev_x && prev_y) {
-        img.draw_line(prev_x, prev_y, this_x, this_y, color[0], color[1], color[2]);
+    for (const auto& it2 : it.second) {
+      int prev_x = 0, prev_y = 0;
+      uint8_t* color = line_colors[current_color].data();
+      for (const auto& pt : it2.second.data) {
+        int64_t this_x = (int64_t)(pt.timestamp - x_min) * graph_width / x_range + graph_left_edge;
+        int64_t this_y = (y_min + y_range - pt.value) * graph_height / y_range + graph_top_edge;
+        if (prev_x && prev_y) {
+          img.draw_line(prev_x, prev_y, this_x, this_y, color[0], color[1], color[2]);
+        }
+        prev_x = this_x;
+        prev_y = this_y;
       }
-      prev_x = this_x;
-      prev_y = this_y;
+      current_color = (current_color + 1) % line_colors.size();
     }
-    current_color = (current_color + 1) % line_colors.size();
   }
 
   // write image

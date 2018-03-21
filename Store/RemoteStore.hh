@@ -25,7 +25,7 @@ public:
   virtual std::unordered_map<std::string, std::string> delete_series(
       const std::vector<std::string>& key_names);
 
-  virtual std::unordered_map<std::string, ReadResult> read(
+  virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
       int64_t end_time);
   virtual std::unordered_map<std::string, std::string> write(
@@ -39,6 +39,8 @@ public:
 
   virtual int64_t delete_from_cache(const std::string& path);
   virtual int64_t delete_pending_writes(const std::string& pattern);
+
+  virtual std::string str() const;
 
 private:
   std::mutex clients_lock;

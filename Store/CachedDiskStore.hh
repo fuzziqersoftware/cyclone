@@ -31,7 +31,7 @@ public:
   virtual std::unordered_map<std::string, std::string> delete_series(
       const std::vector<std::string>& key_names);
 
-  virtual std::unordered_map<std::string, ReadResult> read(
+  virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
       int64_t end_time);
   virtual std::unordered_map<std::string, std::string> write(
@@ -43,6 +43,8 @@ public:
   virtual std::unordered_map<std::string, int64_t> get_stats(bool rotate);
 
   virtual int64_t delete_from_cache(const std::string& path);
+
+  virtual std::string str() const;
 
 protected:
   // TODO: eviction
@@ -95,6 +97,8 @@ protected:
     void touch_file(const std::string& item);
 
     std::pair<size_t, size_t> get_counts() const;
+
+    std::string str() const;
   };
   CachedDirectoryContents cache_root;
 

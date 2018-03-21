@@ -33,8 +33,8 @@ typedef map cpp_type 'std::unordered_map<std::string, Series>'
 typedef map cpp_type 'std::unordered_map<std::string, class SeriesMetadata>'
     <string, SeriesMetadata> SeriesMetadataMap;
 
-typedef map cpp_type 'std::unordered_map<std::string, class ReadResult>'
-    <string, ReadResult> ReadResultMap;
+typedef map cpp_type 'std::unordered_map<std::string, std::unordered_map<std::string, class ReadResult>>'
+    <string, map cpp_type 'std::unordered_map<std::string, class ReadResult>' <string, ReadResult>> ReadResultMap;
 
 typedef map cpp_type 'std::unordered_map<std::string, std::string>'
     <string, string> WriteResultMap;

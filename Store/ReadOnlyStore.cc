@@ -37,7 +37,7 @@ unordered_map<string, string> ReadOnlyStore::delete_series(
   return ret;
 }
 
-unordered_map<string, ReadResult> ReadOnlyStore::read(
+unordered_map<string, unordered_map<string, ReadResult>> ReadOnlyStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time) {
   return this->store->read(key_names, start_time, end_time);
 }
@@ -62,4 +62,8 @@ unordered_map<string, int64_t> ReadOnlyStore::get_stats(bool rotate) {
 
 int64_t ReadOnlyStore::delete_from_cache(const std::string& path) {
   return this->store->delete_from_cache(path);
+}
+
+string ReadOnlyStore::str() const {
+  return "ReadOnlyStore(" + this->store->str() + ")";
 }

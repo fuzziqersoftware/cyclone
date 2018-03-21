@@ -241,8 +241,7 @@ void StreamServer::run_thread(int worker_num) {
 
 StreamServer::StreamServer(shared_ptr<Store> store, size_t num_threads,
     uint64_t exit_check_usecs) : Server(), should_exit(false),
-    exit_check_usecs(exit_check_usecs), threads(), listen_fd_to_is_pickle(),
-    store(store) {
+    exit_check_usecs(exit_check_usecs), store(store) {
   for (int x = 0; x < num_threads; x++) {
     this->threads.emplace_back(this, x);
   }

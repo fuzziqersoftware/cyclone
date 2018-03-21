@@ -129,9 +129,10 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] read from nonexistent series\n", store_name.c_str());
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).error.empty());
-    expect(ret.at(key_name1).data.empty());
-    expect(ret.at(key_name1).metadata.archive_args.empty());
+    expect_eq(1, ret.at(key_name1).size());
+    expect_eq("series does not exist", ret.at(key_name1).at(key_name1).error);
+    expect(ret.at(key_name1).at(key_name1).data.empty());
+    expect(ret.at(key_name1).at(key_name1).metadata.archive_args.empty());
     expect(!isfile(key_filename1));
   }
 
@@ -230,9 +231,10 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] read from series with no data\n", store_name.c_str());
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).error.empty());
-    expect(ret.at(key_name1).data.empty());
-    expect_eq(metadata, ret.at(key_name1).metadata);
+    expect_eq(1, ret.at(key_name1).size());
+    expect(ret.at(key_name1).at(key_name1).error.empty());
+    expect(ret.at(key_name1).at(key_name1).data.empty());
+    expect_eq(metadata, ret.at(key_name1).at(key_name1).metadata);
     expect(isfile(key_filename1));
   }
 
@@ -240,7 +242,6 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] write datapoint to existing series\n", store_name.c_str());
     auto ret = s->write(write_data);
     expect_eq(1, ret.size());
-    fprintf(stderr, "%s\n", ret.at(key_name1).c_str());
     expect(ret.at(key_name1).empty());
     expect(isfile(key_filename1));
   }
@@ -252,11 +253,12 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     for (int x = 0; x < 2; x++) {
       auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
       expect_eq(1, ret.size());
-      expect(ret.at(key_name1).error.empty());
-      expect_eq(1, ret.at(key_name1).data.size());
-      expect_eq((test_now / 60) * 60, ret.at(key_name1).data[0].timestamp);
-      expect_eq(2.0, ret.at(key_name1).data[0].value);
-      expect_eq(metadata, ret.at(key_name1).metadata);
+      expect_eq(1, ret.at(key_name1).size());
+      expect(ret.at(key_name1).at(key_name1).error.empty());
+      expect_eq(1, ret.at(key_name1).at(key_name1).data.size());
+      expect_eq((test_now / 60) * 60, ret.at(key_name1).at(key_name1).data[0].timestamp);
+      expect_eq(2.0, ret.at(key_name1).at(key_name1).data[0].value);
+      expect_eq(metadata, ret.at(key_name1).at(key_name1).metadata);
       expect(isfile(key_filename1));
       s->flush();
     }
@@ -276,11 +278,12 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] read from series with data after metadata update\n", store_name.c_str());
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).error.empty());
-    expect_eq(1, ret.at(key_name1).data.size());
-    expect_eq((test_now / 60) * 60, ret.at(key_name1).data[0].timestamp);
-    expect_eq(2.0, ret.at(key_name1).data[0].value);
-    expect_eq(metadata, ret.at(key_name1).metadata);
+    expect_eq(1, ret.at(key_name1).size());
+    expect(ret.at(key_name1).at(key_name1).error.empty());
+    expect_eq(1, ret.at(key_name1).at(key_name1).data.size());
+    expect_eq((test_now / 60) * 60, ret.at(key_name1).at(key_name1).data[0].timestamp);
+    expect_eq(2.0, ret.at(key_name1).at(key_name1).data[0].value);
+    expect_eq(metadata, ret.at(key_name1).at(key_name1).metadata);
     expect(isfile(key_filename1));
   }
 
@@ -297,9 +300,10 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] read from series with no data\n", store_name.c_str());
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).error.empty());
-    expect(ret.at(key_name1).data.empty());
-    expect_eq(metadata, ret.at(key_name1).metadata);
+    expect_eq(1, ret.at(key_name1).size());
+    expect(ret.at(key_name1).at(key_name1).error.empty());
+    expect(ret.at(key_name1).at(key_name1).data.empty());
+    expect_eq(metadata, ret.at(key_name1).at(key_name1).metadata);
     expect(isfile(key_filename1));
   }
 
@@ -373,9 +377,10 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] read from nonexistent series (autocreate)\n", store_name.c_str());
     auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now);
     expect_eq(1, ret.size());
-    expect(ret.at(autocreate_key_name).error.empty());
-    expect(ret.at(autocreate_key_name).data.empty());
-    expect(ret.at(autocreate_key_name).metadata.archive_args.empty());
+    expect_eq(1, ret.at(autocreate_key_name).size());
+    expect_eq("series does not exist", ret.at(autocreate_key_name).at(autocreate_key_name).error);
+    expect(ret.at(autocreate_key_name).at(autocreate_key_name).data.empty());
+    expect(ret.at(autocreate_key_name).at(autocreate_key_name).metadata.archive_args.empty());
   }
 
   {
@@ -397,12 +402,13 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] read from series created by autocreate\n", store_name.c_str());
     auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now);
     expect_eq(1, ret.size());
-    expect(ret.at(autocreate_key_name).error.empty());
-    expect_eq(1, ret.at(autocreate_key_name).data.size());
-    expect_eq((test_now / 60) * 60, ret.at(autocreate_key_name).data[0].timestamp);
-    expect_eq(2.0, ret.at(autocreate_key_name).data[0].value);
+    expect_eq(1, ret.at(autocreate_key_name).size());
+    expect(ret.at(autocreate_key_name).at(autocreate_key_name).error.empty());
+    expect_eq(1, ret.at(autocreate_key_name).at(autocreate_key_name).data.size());
+    expect_eq((test_now / 60) * 60, ret.at(autocreate_key_name).at(autocreate_key_name).data[0].timestamp);
+    expect_eq(2.0, ret.at(autocreate_key_name).at(autocreate_key_name).data[0].value);
     metadata.x_files_factor = 0.0;
-    expect_eq(metadata, ret.at(autocreate_key_name).metadata);
+    expect_eq(metadata, ret.at(autocreate_key_name).at(autocreate_key_name).metadata);
   }
 
   {
@@ -502,7 +508,7 @@ int main(int argc, char* argv[]) {
   }
 
   if (isdir(data_directory)) {
-    unlink(data_directory, true);
+    //unlink(data_directory, true);
   }
   return retcode;
 }

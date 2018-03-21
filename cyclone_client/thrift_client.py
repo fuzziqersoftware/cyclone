@@ -48,7 +48,6 @@ class CycloneThriftClient(threading.local):
     self.socket = thrift.transport.TSocket.TSocket(self.host, self.port)
     if self.timeout is not None:
       self.socket.setTimeout(self.timeout)
-    # transport = TTransport.TBufferedTransport(self.socket)
     trans = thrift.transport.TTransport.TFramedTransport(self.socket)
     proto = thrift.protocol.TBinaryProtocol.TBinaryProtocolAccelerated(trans)
     self.client = cyclone_service.Client(proto)
