@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "QueryFunctions.hh"
 #include "QueryParser.hh"
 
 using namespace std;
@@ -22,6 +23,7 @@ QueryStore::QueryStore(shared_ptr<Store> store) : Store(), store(store) { }
 
 void QueryStore::set_autocreate_rules(
     const vector<pair<string, SeriesMetadata>> autocreate_rules) {
+  this->Store::set_autocreate_rules(autocreate_rules);
   this->store->set_autocreate_rules(autocreate_rules);
 }
 
@@ -39,17 +41,40 @@ unordered_map<string, string> QueryStore::delete_series(
 unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time) {
 
+  unordered_map<string, Query> parsed_queries;
+  unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& query : key_names) {
-    fprintf(stderr, "[QueryStore:%s] lexing query\n", query.c_str());
-    auto tokens = tokenize_query(query);
-    for (const auto& token : tokens) {
-      string token_str = token.str();
-      fprintf(stderr, "[QueryStore:%s] token: %s\n", query.c_str(), token_str.c_str());
+    try {
+      auto tokens = tokenize_query(query);
+      parsed_queries.emplace(query, parse_query(tokens));
+    } catch (const exception& e) {
+      ret[query][query].error = e.what();
     }
   }
 
-  // TODO
-  return this->store->read(key_names, start_time, end_time);
+  // find all the read patterns and execute them all
+  // TODO: we can probably do something better than this (copying the
+  // unordered_set to a vector)
+  vector<string> substore_reads;
+  {
+    unordered_set<string> substore_reads_set;
+    for (const auto& it : parsed_queries) {
+      this->extract_series_references_into(substore_reads_set, it.second);
+    }
+    substore_reads.insert(substore_reads.end(), substore_reads_set.begin(),
+        substore_reads_set.end());
+  }
+  auto substore_results = this->store->read(substore_reads, start_time, end_time);
+
+  // now apply the relevant functions on top of them
+  // TODO: if a series is only referenced once, we probably can move the data
+  // instead of copying
+  for (auto& it : parsed_queries) {
+    this->execute_query(it.second, substore_results);
+    ret.emplace(it.first, it.second.series_data);
+  }
+
+  return ret;
 }
 
 unordered_map<string, string> QueryStore::write(
@@ -76,4 +101,46 @@ int64_t QueryStore::delete_pending_writes(const std::string& pattern) {
 
 string QueryStore::str() const {
   return "QueryStore(" + this->store->str() + ")";
+}
+
+
+
+void QueryStore::extract_series_references_into(
+    unordered_set<string>& substore_reads_set, const Query& q) {
+  if (q.type == Query::Type::SeriesReference) {
+    substore_reads_set.emplace(q.string_data);
+  } else if (q.type == Query::Type::FunctionCall) {
+    for (const auto& subq : q.function_call_args) {
+      QueryStore::extract_series_references_into(substore_reads_set, subq);
+    }
+  }
+}
+
+void QueryStore::execute_query(Query& q,
+    const unordered_map<string, unordered_map<string, ReadResult>>& substore_results) {
+
+  if (q.type == Query::Type::SeriesReference) {
+    q.series_data = substore_results.at(q.string_data);
+    q.computed = true;
+
+  } else if (q.type == Query::Type::FunctionCall) {
+    auto fn = get_query_function(q.string_data);
+    if (!fn) {
+      q.series_data[q.str()].error = "function does not exist: " + q.string_data;
+    } else {
+      for (auto& subq : q.function_call_args) {
+        this->execute_query(subq, substore_results);
+      }
+      try {
+        q.series_data = fn(q.function_call_args);
+      } catch (const exception& e) {
+        q.series_data[q.str()].error = e.what();
+      }
+    }
+    q.computed = true;
+
+  } else {
+    q.series_data[q.str()].error = "incorrect query type: " + q.str();
+    q.computed = true;
+  }
 }

@@ -21,7 +21,7 @@ MultiStore::MultiStore(const unordered_map<string, shared_ptr<Store>>& stores) :
 
 void MultiStore::set_autocreate_rules(
     const vector<pair<string, SeriesMetadata>> autocreate_rules) {
-  this->validate_autocreate_rules(autocreate_rules);
+  this->Store::set_autocreate_rules(autocreate_rules);
   for (const auto& it : this->stores) {
     it.second->set_autocreate_rules(autocreate_rules);
   }

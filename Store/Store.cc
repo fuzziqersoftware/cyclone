@@ -8,7 +8,14 @@ using namespace std;
 
 
 void Store::set_autocreate_rules(
-    const vector<pair<string, SeriesMetadata>> autocreate_rules) { }
+    const vector<pair<string, SeriesMetadata>> autocreate_rules) {
+  this->validate_autocreate_rules(autocreate_rules);
+  auto new_rules = autocreate_rules;
+  {
+    rw_guard g(this->autocreate_rules_lock, true);
+    this->autocreate_rules.swap(new_rules);
+  }
+}
 
 void Store::flush()  { }
 
@@ -133,6 +140,19 @@ void Store::validate_autocreate_rules(
           it.first.c_str(), e.what()));
     }
   }
+}
+
+SeriesMetadata Store::get_autocreate_metadata_for_key(const string& key_name) {
+  {
+    rw_guard g(this->autocreate_rules_lock, false);
+    for (const auto& rule : this->autocreate_rules) {
+      if (this->name_matches_pattern(key_name, rule.first)) {
+        return rule.second;
+      }
+    }
+  }
+
+  return SeriesMetadata();
 }
 
 unordered_map<string, string> Store::resolve_patterns(

@@ -59,7 +59,9 @@ int main(int argc, char* argv[]) {
       expect_eq(AggregationMethod::Average, metadata->aggregation_method);
 
       auto x = a.read(test_now - 10 * 60, test_now);
-      expect(x.empty());
+      // step should be valid because the series exists
+      expect_eq(60, x.step);
+      expect(x.data.empty());
     }
 
     {
@@ -72,9 +74,13 @@ int main(int argc, char* argv[]) {
       a.write(data);
 
       auto x = a.read(test_now - 10 * 60, test_now);
-      expect_eq(1, x.size());
-      expect_eq((test_now / 60) * 60, x[0].timestamp);
-      expect_eq(1.0, x[0].value);
+      expect_eq(1, x.data.size());
+      // whisper shifts the intervals forward by 1
+      expect_eq(((test_now / 60) - 9) * 60, x.start_time);
+      expect_eq(((test_now / 60) + 1) * 60, x.end_time);
+      expect_eq(60, x.step);
+      expect_eq((test_now / 60) * 60, x.data[0].timestamp);
+      expect_eq(1.0, x.data[0].value);
     }
 
     {
@@ -90,9 +96,12 @@ int main(int argc, char* argv[]) {
       expect_eq(AggregationMethod::Average, metadata->aggregation_method);
 
       auto x = a.read(test_now - 10 * 60, test_now);
-      expect_eq(1, x.size());
-      expect_eq((test_now / 60) * 60, x[0].timestamp);
-      expect_eq(1.0, x[0].value);
+      expect_eq(1, x.data.size());
+      expect_eq(((test_now / 60) - 9) * 60, x.start_time);
+      expect_eq(((test_now / 60) + 1) * 60, x.end_time);
+      expect_eq(60, x.step);
+      expect_eq((test_now / 60) * 60, x.data[0].timestamp);
+      expect_eq(1.0, x.data[0].value);
     }
 
     {
@@ -116,13 +125,17 @@ int main(int argc, char* argv[]) {
 
         // the data read will be in increasing order of timestamp, and the
         // timestamp resolution is the archive resolution
-        auto expected_data = data;
-        for (auto& it : expected_data) {
+        WhisperArchive::ReadResult expected_data;
+        expected_data.data = data;
+        for (auto& it : expected_data.data) {
           it.timestamp = (it.timestamp / 60) * 60;
         }
-        sort(expected_data.begin(), expected_data.end(), [](const Datapoint& a, const Datapoint& b) {
+        sort(expected_data.data.begin(), expected_data.data.end(), [](const Datapoint& a, const Datapoint& b) {
           return a.timestamp < b.timestamp;
         });
+        expected_data.step = 60;
+        expected_data.start_time = ((test_now / 60) - 99) * 60;
+        expected_data.end_time = ((test_now / 60) + 1) * 60;
         expect_eq(expected_data, read_data);
       }
     }
@@ -147,7 +160,8 @@ int main(int argc, char* argv[]) {
       expect_eq(AggregationMethod::Average, metadata->aggregation_method);
 
       auto x = a.read(test_now - 10 * 60, test_now);
-      expect(x.empty());
+      expect_eq(60, x.step);
+      expect(x.data.empty());
     }
 
     printf("all tests passed\n");

@@ -38,6 +38,20 @@ public:
     uint32_t num_archives;
     ArchiveMetadata archives[0];
   };
+  struct ReadResult {
+    Series data;
+    uint64_t start_time;
+    uint64_t end_time;
+    uint64_t step;
+
+    ReadResult();
+    ~ReadResult() = default;
+
+    bool operator==(const ReadResult& other) const;
+    bool operator!=(const ReadResult& other) const;
+
+    std::string str() const;
+  };
 
   WhisperArchive() = delete;
   WhisperArchive(const WhisperArchive& rhs) = delete;
@@ -59,7 +73,7 @@ public:
   std::shared_ptr<const Metadata> get_metadata() const;
 
   void print(FILE* stream, bool print_data = false);
-  Series read(uint64_t start_time, uint64_t end_time);
+  ReadResult read(uint64_t start_time, uint64_t end_time);
   void write(const Series& data);
 
   void truncate();

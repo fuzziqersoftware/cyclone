@@ -130,9 +130,11 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
-    expect_eq("series does not exist", ret.at(key_name1).at(key_name1).error);
+    expect_eq("", ret.at(key_name1).at(key_name1).error);
     expect(ret.at(key_name1).at(key_name1).data.empty());
-    expect(ret.at(key_name1).at(key_name1).metadata.archive_args.empty());
+    expect_eq(ret.at(key_name1).at(key_name1).start_time, test_now - 10 * 60);
+    expect_eq(ret.at(key_name1).at(key_name1).end_time, test_now);
+    expect_eq(ret.at(key_name1).at(key_name1).step, 0);
     expect(!isfile(key_filename1));
   }
 
@@ -234,7 +236,8 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.at(key_name1).size());
     expect(ret.at(key_name1).at(key_name1).error.empty());
     expect(ret.at(key_name1).at(key_name1).data.empty());
-    expect_eq(metadata, ret.at(key_name1).at(key_name1).metadata);
+    fprintf(stderr, "%" PRIu64 " %" PRIu64 "\n", metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
+    expect_eq(metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
     expect(isfile(key_filename1));
   }
 
@@ -258,7 +261,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
       expect_eq(1, ret.at(key_name1).at(key_name1).data.size());
       expect_eq((test_now / 60) * 60, ret.at(key_name1).at(key_name1).data[0].timestamp);
       expect_eq(2.0, ret.at(key_name1).at(key_name1).data[0].value);
-      expect_eq(metadata, ret.at(key_name1).at(key_name1).metadata);
+      expect_eq(metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
       expect(isfile(key_filename1));
       s->flush();
     }
@@ -283,7 +286,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.at(key_name1).at(key_name1).data.size());
     expect_eq((test_now / 60) * 60, ret.at(key_name1).at(key_name1).data[0].timestamp);
     expect_eq(2.0, ret.at(key_name1).at(key_name1).data[0].value);
-    expect_eq(metadata, ret.at(key_name1).at(key_name1).metadata);
+    expect_eq(metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
     expect(isfile(key_filename1));
   }
 
@@ -303,7 +306,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.at(key_name1).size());
     expect(ret.at(key_name1).at(key_name1).error.empty());
     expect(ret.at(key_name1).at(key_name1).data.empty());
-    expect_eq(metadata, ret.at(key_name1).at(key_name1).metadata);
+    expect_eq(metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
     expect(isfile(key_filename1));
   }
 
@@ -378,9 +381,11 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now);
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(autocreate_key_name).size());
-    expect_eq("series does not exist", ret.at(autocreate_key_name).at(autocreate_key_name).error);
+    expect_eq("", ret.at(autocreate_key_name).at(autocreate_key_name).error);
     expect(ret.at(autocreate_key_name).at(autocreate_key_name).data.empty());
-    expect(ret.at(autocreate_key_name).at(autocreate_key_name).metadata.archive_args.empty());
+    expect_eq(ret.at(autocreate_key_name).at(autocreate_key_name).start_time, test_now - 10 * 60);
+    expect_eq(ret.at(autocreate_key_name).at(autocreate_key_name).end_time, test_now);
+    expect_eq(ret.at(autocreate_key_name).at(autocreate_key_name).step, 0);
   }
 
   {
@@ -408,7 +413,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq((test_now / 60) * 60, ret.at(autocreate_key_name).at(autocreate_key_name).data[0].timestamp);
     expect_eq(2.0, ret.at(autocreate_key_name).at(autocreate_key_name).data[0].value);
     metadata.x_files_factor = 0.0;
-    expect_eq(metadata, ret.at(autocreate_key_name).at(autocreate_key_name).metadata);
+    expect_eq(metadata.archive_args[0].precision, ret.at(autocreate_key_name).at(autocreate_key_name).step);
   }
 
   {

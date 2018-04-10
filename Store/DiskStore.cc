@@ -21,33 +21,8 @@
 using namespace std;
 
 
-SeriesMetadata DiskStore::convert_metadata_to_thrift(
-    const WhisperArchive::Metadata& m) {
-  SeriesMetadata sm;
-  for (size_t x = 0; x < m.num_archives; x++) {
-    sm.archive_args.emplace_back();
-    auto& arg = sm.archive_args.back();
-    arg.precision = m.archives[x].seconds_per_point;
-    arg.points = m.archives[x].points;
-  }
-  sm.x_files_factor = m.x_files_factor;
-  sm.agg_method = m.aggregation_method;
-  return sm;
-}
-
-
 DiskStore::DiskStore(const string& root_directory) :
     root_directory(root_directory), stats(3) { }
-
-void DiskStore::set_autocreate_rules(
-    const vector<pair<string, SeriesMetadata>> autocreate_rules) {
-  this->validate_autocreate_rules(autocreate_rules);
-  auto new_rules = autocreate_rules;
-  {
-    rw_guard g(this->autocreate_rules_lock, true);
-    this->autocreate_rules.swap(new_rules);
-  }
-}
 
 unordered_map<string, string> DiskStore::update_metadata(
     const SeriesMetadataMap& m, bool create_new,
@@ -176,13 +151,18 @@ unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
     try {
       WhisperArchive d(this->filename_for_key(key_name));
       if (start_time && end_time) {
-        r.data = d.read(start_time, end_time);
+        auto res = d.read(start_time, end_time);
+        r.data = move(res.data);
+        r.start_time = res.start_time;
+        r.end_time = res.end_time;
+        r.step = res.step;
       }
-      r.metadata = this->convert_metadata_to_thrift(*d.get_metadata());
 
     } catch (const cannot_open_file& e) {
       if (e.error == ENOENT) {
-        r.error = "series does not exist";
+        r.start_time = start_time;
+        r.end_time = end_time;
+        r.step = 0;
       } else {
         r.error = e.what();
       }
@@ -211,7 +191,7 @@ unordered_map<string, string> DiskStore::write(
         // the file doesn't exist - check if it can be autocreated
         auto m = this->get_autocreate_metadata_for_key(it.first);
         if (m.archive_args.empty()) {
-          ret.emplace(it.first, "key does not exist");
+          ret.emplace(it.first, "series does not exist");
 
         } else {
           auto update_metadata_ret = this->update_metadata({{it.first, m}}, true, UpdateMetadataBehavior::Ignore);
@@ -337,19 +317,6 @@ string DiskStore::filename_for_key(const string& key_name, bool is_file) {
     fname += ".wsp";
   }
   return fname;
-}
-
-SeriesMetadata DiskStore::get_autocreate_metadata_for_key(const string& key_name) {
-  {
-    rw_guard g(this->autocreate_rules_lock, false);
-    for (const auto& rule : this->autocreate_rules) {
-      if (this->name_matches_pattern(key_name, rule.first)) {
-        return rule.second;
-      }
-    }
-  }
-
-  return SeriesMetadata();
 }
 
 DiskStore::Stats::Stats() : start_time(now()), duration(0),

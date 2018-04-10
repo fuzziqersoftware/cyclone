@@ -19,7 +19,9 @@ struct SeriesMetadata {
 struct ReadResult {
   1: string error;
   2: Series data;
-  3: SeriesMetadata metadata;
+  4: i64 start_time;
+  5: i64 end_time;
+  6: i64 step;
 }
 
 struct FindResult {
@@ -52,8 +54,7 @@ service Cyclone {
   // deletes series. returns the number of series deleted.
   WriteResultMap delete_series(1: list<string> key_names);
 
-  // reads metadata and/or datapoints from multiple series.
-  ReadResultMap read_metadata(1: list<string> targets);
+  // reads datapoints from multiple series.
   ReadResultMap read(1: list<string> targets, 2:i64 start_time,
       3: i64 end_time);
 

@@ -53,6 +53,30 @@ static int64_t parse_time_length(const string& s, int64_t default_unit_factor = 
 }
 
 
+WhisperArchive::ReadResult::ReadResult() : start_time(0), end_time(0), step(0) { }
+
+bool WhisperArchive::ReadResult::operator==(const ReadResult& other) const {
+  return (this->start_time == other.start_time) &&
+         (this->end_time == other.end_time) &&
+         (this->step == other.step) &&
+         (this->data == other.data);
+}
+
+bool WhisperArchive::ReadResult::operator!=(const ReadResult& other) const {
+  return !this->operator==(other);
+}
+
+string WhisperArchive::ReadResult::str() const {
+  string s = string_printf("WhisperArchive::ReadResult(start_time=%" PRIu64 ", end_time=%" PRIu64
+      ", step=%" PRIu64 ", data=[", this->start_time, this->end_time, this->step);
+  for (const auto& dp : this->data) {
+    s += string_printf("(%g, %" PRIu64 "),", dp.value, dp.timestamp);
+  }
+  s += "])";
+  return s;
+}
+
+
 WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
   auto lease = WhisperArchive::file_cache.lease(filename, 0);
 
@@ -61,7 +85,7 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
   size_t archives_read = 10;
   vector<uint8_t> data(sizeof(FileHeader) + archives_read * sizeof(ArchiveMetadata));
   ssize_t bytes_read = pread(lease.fd, data.data(), data.size(), 0);
-  if (bytes_read < sizeof(FileHeader)) {
+  if (bytes_read < static_cast<ssize_t>(sizeof(FileHeader))) {
     throw runtime_error("can\'t read header for " + this->filename);
   }
   archives_read = (bytes_read - sizeof(FileHeader)) / sizeof(ArchiveMetadata);
@@ -150,8 +174,8 @@ void WhisperArchive::validate_archive_args(const vector<ArchiveArg>& args) {
     throw invalid_argument("no archives present");
   }
 
-  uint32_t previous_precision = 0;
-  uint32_t previous_points = 0;
+  int32_t previous_precision = 0;
+  int32_t previous_points = 0;
   for (size_t x = 0; x < args.size(); x++) {
     const auto& arg = args[x];
 
@@ -216,7 +240,7 @@ void WhisperArchive::print(FILE* stream, bool print_data) {
   fprintf(stream, "]\n");
 }
 
-Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
+WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
 
   if (start_time > end_time) {
     throw invalid_argument("invalid time interval");
@@ -227,10 +251,10 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
   // make sure the range covers even part of this database file
   uint32_t oldest_time = now - this->metadata->max_retention;
   if (start_time > now) {
-    return Series();
+    return ReadResult();
   }
   if (end_time < oldest_time) {
-    return Series();
+    return ReadResult();
   }
 
   // make sure the entire range is within the scope of this db file
@@ -250,7 +274,8 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
     }
   }
   if (archive_index >= this->metadata->num_archives) {
-    return Series();
+    // no archive applies to this query
+    return ReadResult();
   }
 
   const auto& archive = this->metadata->archives[archive_index];
@@ -264,7 +289,9 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
   if (archive_start_time == 0) {
     // archive is blank
     // TODO: we should read from multiple archives in this case
-    return Series();
+    ReadResult ret;
+    ret.step = archive.seconds_per_point;
+    return ret;
   }
 
   uint32_t start_offset, end_offset;
@@ -301,19 +328,23 @@ Series WhisperArchive::read(uint64_t start_time, uint64_t end_time) {
         sizeof(FilePoint) * num_points_second, archive.offset);
   }
 
-  Series data;
+  ReadResult ret;
+  ret.start_time = start_interval;
+  ret.end_time = end_interval;
+  ret.step = archive.seconds_per_point;
+
   uint64_t current_interval = start_interval;
   for (uint32_t x = 0; x < num_points; x++) {
     uint32_t point_time = bswap32(raw_points[x].time);
     if (current_interval == point_time) {
-      data.emplace_back();
-      auto& point = data.back();
+      ret.data.emplace_back();
+      auto& point = ret.data.back();
       point.timestamp = current_interval;
       point.value = bswap64f(raw_points[x].value);
     }
     current_interval += archive.seconds_per_point;
   }
-  return data;
+  return ret;
 }
 
 void WhisperArchive::write(const Series& data) {
@@ -390,8 +421,8 @@ void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
       const ArchiveMetadata* this_archives = &this->metadata->archives[0];
       const ArchiveArg* those_archives = archive_args.data();
       for (size_t x = 0; x < this->metadata->num_archives; x++) {
-        if ((this_archives[x].seconds_per_point != those_archives[x].precision) ||
-            (this_archives[x].points != those_archives[x].points)) {
+        if ((this_archives[x].seconds_per_point != static_cast<uint32_t>(those_archives[x].precision)) ||
+            (this_archives[x].points != static_cast<uint32_t>(those_archives[x].points))) {
           throw runtime_error("can\'t change archive config for existing files");
         }
       }
@@ -492,7 +523,7 @@ void WhisperArchive::write_archive(int fd, uint32_t archive_index,
     pwritex(fd, &sw_pt, sizeof(FilePoint), point_offset);
 
     // if the point is at the start of the archive, the base interval was changed
-    if (point_offset == archive.offset) {
+    if (point_offset == static_cast<int32_t>(archive.offset)) {
       this->base_intervals[archive_index] = point_interval;
     }
   }

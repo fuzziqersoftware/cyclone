@@ -21,9 +21,6 @@ public:
 
   const DiskStore& operator=(const DiskStore& rhs) = delete;
 
-  virtual void set_autocreate_rules(
-      const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules);
-
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
       UpdateMetadataBehavior update_behavior);
@@ -45,9 +42,6 @@ public:
   virtual std::string str() const;
 
 protected:
-  static SeriesMetadata convert_metadata_to_thrift(
-      const WhisperArchive::Metadata& m);
-
   void find_recursive(std::vector<std::string>& ret,
       const std::string& current_path_prefix,
       const std::string& current_key_prefix, size_t part_index,
@@ -55,12 +49,7 @@ protected:
 
   std::string filename_for_key(const std::string& key_name, bool is_file = true);
 
-  SeriesMetadata get_autocreate_metadata_for_key(const std::string& key_name);
-
   std::string root_directory;
-
-  std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules;
-  rw_lock autocreate_rules_lock;
 
   struct Stats {
     std::atomic<uint64_t> start_time;

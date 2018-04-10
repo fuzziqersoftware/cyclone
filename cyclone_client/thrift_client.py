@@ -1,9 +1,9 @@
 import socket
 import threading
 
-import thrift.transport
+import thrift.transport.TTransport
 import thrift.transport.TSocket
-import thrift.protocol
+import thrift.protocol.TBinaryProtocol
 
 from .cyclone_if import Cyclone as cyclone_service
 from .cyclone_if import ttypes as cyclone_types

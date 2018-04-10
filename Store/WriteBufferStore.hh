@@ -21,9 +21,6 @@ public:
 
   const WriteBufferStore& operator=(const WriteBufferStore& rhs) = delete;
 
-  virtual void set_autocreate_rules(
-      const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules);
-
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
       UpdateMetadataBehavior update_behavior);

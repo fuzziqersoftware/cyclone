@@ -1,4 +1,4 @@
-import cPickle
+import pickle
 import socket
 import struct
 
@@ -49,7 +49,7 @@ class CyclonePickleClient(object):
 
     """
     data = [(k, (ts, v)) for k, d in key_to_datapoints.iteritems() for ts, v in d]
-    payload = cPickle.dumps(data, protocol=cPickle.HIGHEST_PROTOCOL)
+    payload = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
     s = socket.create_connection((self.host, self.port))
     try:
       s.sendall(struct.pack("!L", len(payload)) + payload)

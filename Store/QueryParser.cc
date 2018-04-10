@@ -26,9 +26,9 @@ string QueryToken::str() const {
     case Type::Dynamic:
       return string_printf("Dynamic(%s)", this->string_data.c_str());
     case Type::Integer:
-      return string_printf("Integer(%s)", this->int_data);
+      return string_printf("Integer(%" PRId64 ")", this->int_data);
     case Type::Float:
-      return string_printf("Float(%s)", this->float_data);
+      return string_printf("Float(%g)", this->float_data);
     case Type::String:
       return string_printf("String(%s)", this->string_data.c_str());
     case Type::OpenParenthesis:
@@ -40,6 +40,46 @@ string QueryToken::str() const {
   }
   return "Unknown";
 }
+
+
+
+Query::Query(Type type, int64_t int_data) : type(type), int_data(int_data), computed(false) { }
+Query::Query(Type type, double float_data) : type(type), float_data(float_data), computed(false) { }
+Query::Query(Type type, const string& string_data) : type(type), string_data(string_data), computed(false) { }
+
+std::string Query::str() const {
+  switch (this->type) {
+    case Type::FunctionCall: {
+      string s = this->string_data + "(";
+      bool after_first_arg = false;
+      for (const auto& arg : this->function_call_args) {
+        if (after_first_arg) {
+          s += ',';
+        } else {
+          after_first_arg = true;
+        }
+        s += arg.str();
+      }
+      return s + ")";
+    }
+
+    case Type::SeriesReference:
+      return this->string_data;
+
+    case Type::Integer:
+      return string_printf("%" PRId64, this->int_data);
+
+    case Type::Float:
+      return string_printf("%g", this->float_data);
+
+    case Type::String:
+      // TODO: we should handle escape sequences here
+      return string_printf("\"%s\"", this->string_data.c_str());
+  }
+  return "<unknown query node>";
+}
+
+
 
 vector<QueryToken> tokenize_query(const string& query) {
   vector<QueryToken> ret;
@@ -61,6 +101,7 @@ vector<QueryToken> tokenize_query(const string& query) {
 
     // check for string constants
     } else if ((query[offset] == '\"') || (query[offset] == '\'')) {
+      // TODO: we should handle escape sequences here
       char quote = query[offset];
       size_t length = 0;
       for (; (offset + length + 1 < query.size()) && (query[offset + length + 1] != quote); length++);
@@ -87,15 +128,17 @@ vector<QueryToken> tokenize_query(const string& query) {
         }
       }
 
-      size_t pos = offset;
+      char* conv_end = NULL;
       if (is_float) {
-        ret.emplace_back(QueryToken::Type::Float, stod(query, &pos));
+        ret.emplace_back(QueryToken::Type::Float, strtod(query.data() + offset, &conv_end));
       } else {
-        ret.emplace_back(QueryToken::Type::Integer, stoll(query, &pos, 0));
+        ret.emplace_back(QueryToken::Type::Integer, static_cast<int64_t>(
+            strtoll(query.data() + offset, &conv_end, 0)));
       }
-      if (pos != offset + length) {
+      if (conv_end == query.data() + offset) {
         throw runtime_error("incomplete numeric conversion");
       }
+      offset += length;
 
     // check for dynamics
     // dynamics must begin with a letter or underscore, but after that, may
@@ -130,6 +173,7 @@ vector<QueryToken> tokenize_query(const string& query) {
 
     // skip whitespace
     } else if (isblank(query[offset])) {
+      offset++;
       continue;
 
     // anything else is a bad character
@@ -139,4 +183,78 @@ vector<QueryToken> tokenize_query(const string& query) {
     }
   }
   return ret;
+}
+
+static Query parse_query(const std::vector<QueryToken>& tokens, size_t offset,
+    size_t end_offset) {
+  if (end_offset <= offset) {
+    throw logic_error("query does not contain any tokens");
+  }
+
+  // queries must be of one of the following forms:
+  // Dynamic/Integer/Float/String
+  // Dynamic OpenParenthesis [arguments] CloseParenthesis
+  const QueryToken& head = tokens[offset];
+
+  if (end_offset - offset == 1) {
+    if (head.type == QueryToken::Type::Dynamic) {
+      return Query(Query::Type::SeriesReference, head.string_data);
+    } else if (head.type == QueryToken::Type::Integer) {
+      return Query(Query::Type::Integer, head.int_data);
+    } else if (head.type == QueryToken::Type::Float) {
+      return Query(Query::Type::Float, head.float_data);
+    } else if (head.type == QueryToken::Type::String) {
+      return Query(Query::Type::String, head.string_data);
+    } else {
+      throw runtime_error("unexpected token: " + head.str());
+    }
+  }
+
+  // for a function call, there must be at least three tokens
+  if (end_offset - offset < 3) {
+    throw runtime_error("function call segment is too short");
+  }
+
+  if (head.type != QueryToken::Type::Dynamic) {
+    throw runtime_error("expected function name: " + head.str());
+  }
+  if (tokens[offset + 1].type != QueryToken::Type::OpenParenthesis) {
+    throw runtime_error("expected open parenthesis: " + tokens[offset + 1].str());
+  }
+
+  Query ret(Query::Type::FunctionCall, head.string_data);
+  size_t argument_start_offset = offset + 2;
+  size_t paren_stack_size = 0;
+  for (offset = argument_start_offset; offset < end_offset; offset++) {
+    if (tokens[offset].type == QueryToken::Type::OpenParenthesis) {
+      paren_stack_size++;
+      continue;
+    }
+    if ((tokens[offset].type == QueryToken::Type::CloseParenthesis) &&
+        (paren_stack_size > 0)) {
+      paren_stack_size--;
+      continue;
+    }
+
+    if (((tokens[offset].type == QueryToken::Type::Comma) ||
+         (tokens[offset].type == QueryToken::Type::CloseParenthesis)) &&
+        (paren_stack_size == 0)) {
+      ret.function_call_args.emplace_back(parse_query(tokens, argument_start_offset, offset));
+      argument_start_offset = offset + 1;
+      if (tokens[offset].type == QueryToken::Type::CloseParenthesis) {
+        break;
+      }
+    }
+  }
+  if (offset != end_offset - 1) {
+    throw runtime_error("argument parsing is incomplete");
+  }
+  if (tokens[offset].type != QueryToken::Type::CloseParenthesis) {
+    throw runtime_error("final token was not a close parenthesis: " + tokens[offset].str());
+  }
+  return ret;
+}
+
+Query parse_query(const std::vector<QueryToken>& tokens) {
+  return parse_query(tokens, 0, tokens.size());
 }

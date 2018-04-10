@@ -2,6 +2,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <phosg/Concurrency.hh>
 #include <vector>
 
 #include "../gen-cpp/Cyclone.h"
@@ -60,8 +61,13 @@ public:
 protected:
   Store() = default;
 
+  std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules;
+  rw_lock autocreate_rules_lock;
+
   static void validate_autocreate_rules(
       const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules);
+  SeriesMetadata get_autocreate_metadata_for_key(const std::string& key_name);
+
   std::unordered_map<std::string, std::string> resolve_patterns(
       const std::vector<std::string>& key_names);
 };

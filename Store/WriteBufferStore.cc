@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <iostream>
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
@@ -32,12 +33,6 @@ WriteBufferStore::~WriteBufferStore() {
   for (auto& t : this->write_threads) {
     t.join();
   }
-}
-
-void WriteBufferStore::set_autocreate_rules(
-    const vector<pair<string, SeriesMetadata>> autocreate_rules) {
-  this->validate_autocreate_rules(autocreate_rules);
-  this->store->set_autocreate_rules(autocreate_rules);
 }
 
 unordered_map<string, string> WriteBufferStore::update_metadata(
@@ -131,8 +126,6 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
 
   auto ret = this->store->read(key_names, start_time, end_time);
 
-  uint32_t range_secs = time(NULL) - start_time;
-
   for (auto& it : ret) { // (pattern, key_to_result)
     for (auto& it2 : it.second) { // (key, result)
       const auto& key_name = it2.first;
@@ -143,19 +136,23 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
         rw_guard g(this->queue_lock, false);
         auto& item = this->queue.at(key_name);
 
-        // if archive_args isn't blank and there's a Recreate request, behave as
-        // if the archive is blank (the Recreate will truncate it, so it's
-        // equivalent to enqueueing a write that deletes all existing datapoints)
-        // TODO: can we skip the substore read in this case? might not be worth it
-        // since this is probably pretty rare
-        if (!item.metadata.archive_args.empty() && 
-            ((item.update_behavior == UpdateMetadataBehavior::Recreate) ||
-             (item.create_new && result.metadata.archive_args.empty()))) {
-          result.metadata = item.metadata;
+        bool series_exists_in_substore = (result.step != 0);
+        bool item_can_create_series = !item.metadata.archive_args.empty();
+        bool item_will_truncate_series = (item.update_behavior == UpdateMetadataBehavior::Recreate);
 
+        // if this item will truncate the series, then behave as if the substore
+        // read returned nothing, and apply the writes from the queue item only
+        // TODO: we can skip the substore read in this case but I'm lazy
+        if (item_can_create_series &&
+            (item_will_truncate_series ||
+             (item.create_new && !series_exists_in_substore))) {
           // if there's data, reduce its resolution to that of the first archive
           result.data.clear();
           if (!item.data.empty()) {
+            result.step = item.metadata.archive_args[0].precision;
+            result.start_time = 0;
+            result.end_time = 0;
+
             uint32_t precision = item.metadata.archive_args[0].precision;
             uint32_t current_ts = 0;
             for (const auto& queue_data_it : item.data) {
@@ -166,7 +163,17 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
                 current_ts = effective_ts;
               }
               result.data.back().value = queue_data_it.second;
+              if (!result.start_time || (effective_ts < result.start_time)) {
+                result.start_time = effective_ts;
+              }
+              if (effective_ts > result.end_time) {
+                result.end_time = effective_ts;
+              }
             }
+          } else {
+            result.step = item.metadata.archive_args[0].precision;
+            result.start_time = start_time + result.step - (start_time % result.step);
+            result.end_time = end_time + result.step - (end_time % result.step);
           }
           continue;
         }
@@ -180,24 +187,25 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
           continue;
         }
 
-        // note: we round the timestamps to the right interval based on the
-        // archive metadata returned by the read result, disregarding any pending
-        // update_metadata commands. if no usable archives are found, skip the
-        // merge step for that series
-        uint32_t archive_index;
-        uint32_t precision = 0;
-        for (archive_index = 0;
-             (precision == 0) && (archive_index < result.metadata.archive_args.size());
-             archive_index++) {
-          const auto& archive = result.metadata.archive_args[archive_index];
-          if (archive.points * archive.precision >= range_secs) {
-            precision = archive.precision;
+        // note: we round the timestamps to the right interval based on the step
+        // returned by the read result, disregarding any pending update_metadata
+        // commands. if there's no read result (step == 0) then we get the step
+        // from the first archive in the metadata (if this item can create the
+        // series), then from the autocreate metadata. if none of these work,
+        // return an error
+        if (!series_exists_in_substore) {
+          if (item_can_create_series && item.create_new) {
+            result.step = item.metadata.archive_args[0].precision;
+          }
+          if (!result.step) {
+            auto metadata = this->get_autocreate_metadata_for_key(it2.first);
+            if (!metadata.archive_args.empty()) {
+              result.step = metadata.archive_args[0].precision;
+            }
           }
         }
-        if (precision) {
-          for (; dp_it != dp_end_it; dp_it++) {
-            data_to_insert[(dp_it->first / precision) * precision] = dp_it->second;
-          }
+        for (; dp_it != dp_end_it; dp_it++) {
+          data_to_insert[(dp_it->first / result.step) * result.step] = dp_it->second;
         }
 
       } catch (const out_of_range& e) { }
@@ -229,10 +237,16 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
 
         // sort by timestamp if needed
         if (needs_sort) {
-          sort(result.data.begin(), result.data.end(), [](const Datapoint& a, const Datapoint& b) {
+          sort(result.data.begin(), result.data.end(), +[](const Datapoint& a, const Datapoint& b) {
             return a.timestamp < b.timestamp;
           });
         }
+
+        // set start_time and end_time appropriately
+        // note that results.data cannot be empty here because data_to_insert
+        // was not empty
+        result.start_time = result.data.begin()->timestamp;
+        result.end_time = result.data.rbegin()->timestamp;
       }
     }
   }

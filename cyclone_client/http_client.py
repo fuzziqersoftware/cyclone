@@ -1,4 +1,4 @@
-import cPickle
+import pickle
 import json
 import urllib
 import threading
@@ -52,7 +52,7 @@ class CycloneHTTPClient(threading.local):
     if format == 'json':
       return {d['target']: ReadResult(d['datapoints']) for d in json.loads(raw_data)}
     if format == 'pickle':
-      return {d['pathExpression']: ReadResult(d['values']) for d in cPickle.loads(raw_data)}
+      return {d['pathExpression']: ReadResult(d['values']) for d in pickle.loads(raw_data)}
     assert False, 'unknown format: %s' % format
 
   def find(self, patterns):
@@ -86,7 +86,7 @@ class CycloneHTTPClient(threading.local):
     if format == 'pickle':
       ret = {patterns[0]: []}
       ret_records = ret[patterns[0]]
-      for item in cPickle.loads(raw_data):
+      for item in pickle.loads(raw_data):
         if item['isLeaf']:
           ret_records.append(item['metric_path'])
         else:

@@ -381,19 +381,26 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
     try {
       CacheTraversal t = this->traverse_cache_tree(p);
       if (start_time && end_time) {
-        r.data = t.archive->read(start_time, end_time);
+        auto res = t.archive->read(start_time, end_time);
+        r.data = move(res.data);
+        r.start_time = res.start_time;
+        r.end_time = res.end_time;
+        r.step = res.step;
       }
-      r.metadata = this->convert_metadata_to_thrift(*t.archive->get_metadata());
 
     } catch (const out_of_range& e) {
       // one of the directories doesn't exist
-      r.error = "series does not exist";
+      r.start_time = start_time;
+      r.end_time = end_time;
+      r.step = 0;
 
     } catch (const cannot_open_file& e) {
       if (e.error == ENOENT) {
         // apparently the file was deleted; remove it from the cache
         this->check_and_delete_cache_path(p);
-        r.error = "series does not exist";
+        r.start_time = start_time;
+        r.end_time = end_time;
+        r.step = 0;
       } else {
         r.error = e.what();
       }

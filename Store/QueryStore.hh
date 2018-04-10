@@ -2,8 +2,10 @@
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "Store.hh"
+#include "QueryParser.hh"
 
 
 class QueryStore : public Store {
@@ -43,4 +45,9 @@ public:
 
 protected:
   std::shared_ptr<Store> store;
+
+  static void extract_series_references_into(
+      std::unordered_set<std::string>& substore_reads_set, const Query& q);
+  void execute_query(Query& q,
+      const std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>>& substore_results);
 };
