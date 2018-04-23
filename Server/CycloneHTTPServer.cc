@@ -43,6 +43,8 @@ void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* 
       content_type = this->handle_graphite_find_request(t, req, out_buffer.get());
 
     // cyclone api
+    } else if (!strncmp(uri, "/y/stats", 8)) {
+      content_type = this->handle_stats_request(t, req, out_buffer.get());
     // } else if (!strcmp(uri, "/create")) {
     //   content_type = this->handle_create_request(t, req, out_buffer.get());
     // } else if (!strcmp(uri, "/delete")) {
@@ -125,10 +127,22 @@ static int64_t parse_relative_time(const string& s) {
 }
 
 
+const string INDEX_HTML("\
+<!DOCTYPE html>\n\
+<html><head><title>cyclone</title></head><body>\n\
+<h3>cyclone</h3>\n\
+<a href=\"/metrics/find/?query=*&format=html\">browse</a> - <a href=\"/y/stats\">stats</a>\n\
+<form method=\"GET\" action=\"/metrics/find/\"><input name=\"query\" /><input type=\"hidden\" name=\"format\" value=\"html\" /><input type=\"submit\" value=\"find\" /></form><br />\n\
+</body></html>");
+
 string CycloneHTTPServer::handle_index_request(struct Thread& t,
     struct evhttp_request* req, struct evbuffer* out_buffer) {
-  evbuffer_add(out_buffer, "stats:\n", 7);
+  evbuffer_add_reference(out_buffer, INDEX_HTML.data(), INDEX_HTML.size(), NULL, NULL);
+  return "text/html";
+}
 
+string CycloneHTTPServer::handle_stats_request(struct Thread& t,
+    struct evhttp_request* req, struct evbuffer* out_buffer) {
   auto stats = this->store->get_stats();
   map<string, int64_t> sorted_stats;
   for (const auto& it : stats) {
