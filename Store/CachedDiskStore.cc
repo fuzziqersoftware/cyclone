@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <deque>
 #include <iostream>
 #include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
@@ -30,7 +31,7 @@ CachedDiskStore::KeyPath::KeyPath(const string& key_name) :
 }
 
 string CachedDiskStore::filename_for_path(const KeyPath& p) {
-  string filename = this->root_directory;
+  string filename = this->directory;
   for (const auto& dirname : p.directories) {
     filename += '/';
     filename += dirname;
@@ -44,29 +45,22 @@ string CachedDiskStore::filename_for_path(const KeyPath& p) {
 }
 
 CachedDiskStore::CacheTraversal::CacheTraversal(CachedDirectoryContents* root,
-    string root_directory, size_t expected_levels) : levels({root}),
-    level(root), archive(NULL), filesystem_path(root_directory),
-    guards(expected_levels) {
-  levels.reserve(expected_levels);
+    string directory, size_t expected_levels) : levels({root}), level(root),
+    archive(NULL), filesystem_path(directory) {
+  this->levels.reserve(expected_levels);
+  this->guards.reserve(expected_levels);
 }
 
 void CachedDiskStore::CacheTraversal::move_to_level(const string& item) {
   rw_guard g(this->level->subdirectories_lock, false);
   CachedDirectoryContents* new_level = this->level->subdirectories.at(item).get();
-  this->level->touch_subdirectory(item);
+  {
+    lock_guard<mutex> g2(this->level->subdirectories_lru_lock);
+    this->level->subdirectories_lru.touch(item);
+  }
   this->level = new_level;
   this->levels.emplace_back(level);
-  this->guards.add(move(g));
-}
-
-void CachedDiskStore::CachedDirectoryContents::touch_subdirectory(const string& item) {
-  lock_guard<mutex> g(this->subdirectories_lru_lock);
-  this->subdirectories_lru.touch(item);
-}
-
-void CachedDiskStore::CachedDirectoryContents::touch_file(const string& item) {
-  lock_guard<mutex> g(this->files_lru_lock);
-  this->files_lru.touch(item);
+  this->guards.emplace_back(move(g));
 }
 
 pair<size_t, size_t> CachedDiskStore::CachedDirectoryContents::get_counts() const {
@@ -113,16 +107,47 @@ string CachedDiskStore::CachedDirectoryContents::str() const {
   return ret;
 }
 
-CachedDiskStore::CachedDiskStore(const string& root_directory) :
-    DiskStore(root_directory), cache_root(), stats(3), cache_directory_count(0),
-    cache_file_count(0) { }
+CachedDiskStore::CachedDiskStore(const string& directory,
+    size_t directory_limit, size_t file_limit) : DiskStore(directory), stats(3),
+    directory_count(0), file_count(0), directory_limit(directory_limit),
+    file_limit(file_limit), should_exit(false),
+    evict_items_thread(&CachedDiskStore::evict_items_thread_routine, this) { }
 
-bool CachedDiskStore::create_cache_subdirectory_locked(CachedDirectoryContents* level,
+CachedDiskStore::~CachedDiskStore() {
+  this->should_exit = true;
+  this->evict_items_thread.join();
+}
+
+size_t CachedDiskStore::get_directory_limit() const {
+  return this->directory_limit;
+}
+
+size_t CachedDiskStore::get_file_limit() const {
+  return this->file_limit;
+}
+
+void CachedDiskStore::set_directory_limit(size_t new_value) {
+  this->directory_limit = new_value;
+}
+
+void CachedDiskStore::set_file_limit(size_t new_value) {
+  this->file_limit = new_value;
+}
+
+void CachedDiskStore::set_directory(const string& new_value) {
+  DiskStore::set_directory(new_value);
+  this->delete_from_cache("", true);
+}
+
+bool CachedDiskStore::create_cache_directory_locked(CachedDirectoryContents* level,
     const string& item) {
+  // note: we can mess with the lru here without locking because we expect
+  // subdirectories_lock to be already held for writing
+
   if (level->subdirectories.emplace(piecewise_construct,
       forward_as_tuple(item), forward_as_tuple(new CachedDirectoryContents())).second) {
-    this->cache_directory_count++;
-    this->stats[0].cache_directory_creates++;
+    this->directory_count++;
+    this->stats[0].directory_creates++;
     level->subdirectories_lru.insert(item, 0);
     return true;
 
@@ -134,9 +159,11 @@ bool CachedDiskStore::create_cache_subdirectory_locked(CachedDirectoryContents* 
 
 bool CachedDiskStore::create_cache_file_locked(CachedDirectoryContents* level,
     const string& item, const string& filesystem_path) {
+  // note: we can mess with the lru here without locking because we expect
+  // files_lru_lock to be already held for writing
   if (level->files.emplace(item, filesystem_path).second) {
-    this->cache_file_count++;
-    this->stats[0].cache_file_creates++;
+    this->file_count++;
+    this->stats[0].file_creates++;
     level->files_lru.insert(item, 0);
     return true;
   } else {
@@ -158,7 +185,7 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
     for (const auto& dirname : p.directories) {
       rw_guard g(levels.back()->subdirectories_lock, false);
       levels.emplace_back(levels.back()->subdirectories.at(dirname).get());
-      this->stats[0].cache_directory_hits++;
+      this->stats[0].directory_hits++;
       guards.emplace_back(move(g));
     }
 
@@ -168,13 +195,13 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
       rw_guard g(levels.back()->files_lock, true);
       if (!isfile(filename)) {
         if (levels.back()->files.erase(p.basename)) {
-          this->stats[0].cache_file_deletes++;
+          this->stats[0].file_deletes++;
         }
         levels.back()->files_lru.erase(p.basename);
       }
     }
   } catch (const out_of_range& e) {
-    this->stats[0].cache_directory_misses++;
+    this->stats[0].directory_misses++;
 
     // remove subdirectories we didn't visit
     assert(p.directories.size() >= levels.size() - 1);
@@ -191,7 +218,7 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
     assert(guards.size() == levels.size() - 1);
 
     // TODO: don't rebuild filename for each loop iteration
-    string filename = this->root_directory;
+    string filename = this->directory;
     for (const auto& dirname : p.directories) {
       filename += '/';
       filename += dirname;
@@ -210,18 +237,23 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
       // the write lock to protect against data races.
       CachedDirectoryContents* parent_level = levels[levels.size() - 2];
       guards.pop_back(); // unlock the parent level
+
+      // we create a reference to the cached object outside the lock scope so
+      // that its destructor is called after we've released the write lock
+      unique_ptr<CachedDirectoryContents> deleted_level;
       {
         rw_guard g(parent_level->subdirectories_lock, true);
         auto dir_it = parent_level->subdirectories.find(p.directories.back());
         if ((dir_it != parent_level->subdirectories.end()) && !isdir(filename)) {
-          auto counts = dir_it->second->get_counts();
-          this->stats[0].report_directory_delete(counts.first, counts.second);
-          this->cache_directory_count -= counts.first;
-          this->cache_file_count -= counts.second;
+          deleted_level = move(dir_it->second);
           parent_level->subdirectories.erase(dir_it);
           parent_level->subdirectories_lru.erase(p.directories.back());
         }
       }
+      auto counts = deleted_level->get_counts();
+      this->stats[0].report_directory_delete(counts.first, counts.second);
+      this->directory_count -= counts.first;
+      this->file_count -= counts.second;
 
       // we deleted a directory - move up to the previous one
       levels.pop_back();
@@ -232,7 +264,7 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
 
 unordered_map<string, string> CachedDiskStore::update_metadata(
     const SeriesMetadataMap& metadata_map, bool create_new,
-    UpdateMetadataBehavior update_behavior) {
+    UpdateMetadataBehavior update_behavior, bool local_only) {
 
   unordered_map<string, string> ret;
   for (auto& it : metadata_map) {
@@ -260,9 +292,9 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
       // if the file is missing from the cache, check if it exists on disk and add
       // it to the cache if necessary
       if (file_exists) {
-        this->stats[0].cache_file_hits++;
+        this->stats[0].file_hits++;
       } else {
-        this->stats[0].cache_file_misses++;
+        this->stats[0].file_misses++;
 
         file_exists = isfile(t.filesystem_path);
         if (file_exists) {
@@ -278,7 +310,10 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
         rw_guard g(t.level->files_lock, false);
         try {
           WhisperArchive& d = t.level->files.at(p.basename);
-          t.level->touch_file(p.basename);
+          {
+            lock_guard<mutex> g2(t.level->files_lru_lock);
+            t.level->files_lru.touch(p.basename);
+          }
 
           if (update_behavior == UpdateMetadataBehavior::Recreate) {
             d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method, true);
@@ -315,7 +350,7 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
 
           auto& s = this->stats[0];
           s.series_creates++;
-          s.cache_file_creates++;
+          s.file_creates++;
 
         } else {
           ret.emplace(key_name, "ignored");
@@ -333,17 +368,18 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, string> CachedDiskStore::delete_series(
-    const vector<string>& key_names) {
+unordered_map<string, int64_t> CachedDiskStore::delete_series(
+    const vector<string>& patterns, bool local_only) {
+  auto key_to_pattern = this->resolve_patterns(patterns, local_only);
 
-  unordered_map<string, string> ret;
-  for (auto key_name : key_names) {
+  unordered_map<string, int64_t> ret;
+  for (auto key_it : key_to_pattern) {
 
     try {
-      KeyPath p(key_name);
+      KeyPath p(key_it.first);
 
       // delete the file on disk
-      string filename = this->filename_for_key(key_name);
+      string filename = this->filename_for_key(key_it.first);
       try {
         unlink(filename);
         this->stats[0].series_deletes++;
@@ -354,20 +390,26 @@ unordered_map<string, string> CachedDiskStore::delete_series(
       // indirectly called in check_and_delete_cache_path
       this->check_and_delete_cache_path(p);
 
-      ret.emplace(key_name, "");
+      ret[key_it.second]++;
 
     } catch (const exception& e) {
-      ret.emplace(key_name, e.what());
+      log(INFO, "[CachedDiskStore] failed to delete series %s (%s)",
+          key_it.first.c_str(), e.what());
     }
   }
 
+  for (const string& pattern : patterns) {
+    ret.emplace(pattern, 0);
+  }
   return ret;
 }
 
 unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time) {
+    const vector<string>& key_names, int64_t start_time, int64_t end_time,
+    bool local_only) {
 
-  unordered_map<string, string> key_to_pattern = this->resolve_patterns(key_names);
+  unordered_map<string, string> key_to_pattern = this->resolve_patterns(
+      key_names, local_only);
 
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : key_to_pattern) {
@@ -415,7 +457,7 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
 }
 
 unordered_map<string, string> CachedDiskStore::write(
-    const unordered_map<string, Series>& data) {
+    const unordered_map<string, Series>& data, bool local_only) {
   unordered_map<string, string> ret;
   for (auto& it : data) {
     KeyPath p(it.first);
@@ -441,9 +483,11 @@ unordered_map<string, string> CachedDiskStore::write(
       // if we get here, then we should autocreate the cache path if applicable
       auto m = this->get_autocreate_metadata_for_key(it.first);
       if (m.archive_args.empty()) {
+        log(INFO, "[CachedDiskStore] no autocreate metadata for %s", it.first.c_str());
         ret.emplace(it.first, "series does not exist");
 
       } else {
+        log(INFO, "[CachedDiskStore] autocreating %s", it.first.c_str());
         CacheTraversal t = this->traverse_cache_tree(p, &m);
         t.archive->write(it.second);
         ret.emplace(it.first, "");
@@ -463,23 +507,19 @@ static string path_join(const string& a, const string& b) {
 }
 
 unordered_map<string, FindResult> CachedDiskStore::find(
-    const vector<string>& patterns) {
+    const vector<string>& patterns, bool local_only) {
 
   unordered_map<string, FindResult> ret;
   for (const auto& pattern : patterns) {
-    // fprintf(stderr, "[CachedDiskStore:find:%s] begin\n", pattern.c_str());
-
     auto emplace_ret = ret.emplace(piecewise_construct,
         forward_as_tuple(pattern), forward_as_tuple());
     if (!emplace_ret.second) {
-      // fprintf(stderr, "[CachedDiskStore:find:%s] duplicate\n", pattern.c_str());
       continue;
     }
     FindResult& r = emplace_ret.first->second;
 
     if (this->pattern_is_indeterminate(pattern)) {
       r.error = "pattern is indeterminate";
-      // fprintf(stderr, "[CachedDiskStore:find:%s] indeterminate\n", pattern.c_str());
       continue;
     }
 
@@ -488,21 +528,16 @@ unordered_map<string, FindResult> CachedDiskStore::find(
 
       unordered_map<CachedDirectoryContents*, string> current_levels, next_levels;
       current_levels.emplace(&this->cache_root, "");
-      rw_guard_multi guards;
+      vector<rw_guard> guards;
 
       for (const auto& item : p.directories) {
-        // fprintf(stderr, "[CachedDiskStore:find:%s] token: %s\n", pattern.c_str(), item.c_str());
-
         for (auto& level_it : current_levels) {
           CachedDirectoryContents* level = level_it.first;
           const auto& current_level_path = level_it.second;
 
-          // fprintf(stderr, "[CachedDiskStore:find:%s:%s] moving from level %p\n", pattern.c_str(), item.c_str(), level);
-
           // if the current token is a pattern, we'll have to scan the current level
           if (this->token_is_pattern(item)) {
             // make sure the current level is complete
-            // fprintf(stderr, "[CachedDiskStore:find:%s:%s] populating level %p\n", pattern.c_str(), item.c_str(), level);
             this->populate_cache_level(level, this->filename_for_key(current_level_path, false));
 
             // scan through its directories for the ones we want
@@ -513,8 +548,10 @@ unordered_map<string, FindResult> CachedDiskStore::find(
                 string next_level_path = path_join(current_level_path, it.first);
                 next_levels.emplace(piecewise_construct, forward_as_tuple(it.second.get()),
                     forward_as_tuple(next_level_path));
-                // fprintf(stderr, "[CachedDiskStore:find:%s:%s] %p -> %p\n", pattern.c_str(), item.c_str(), level, next_level_path.c_str());
-                level->touch_subdirectory(it.first);
+                {
+                  lock_guard<mutex> g2(level->subdirectories_lru_lock);
+                  level->subdirectories_lru.touch(it.first);
+                }
                 keep_lock = true;
               }
             }
@@ -522,31 +559,28 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             // if we found anything, keep the read lock so we can safely examine the
             // subtree
             if (keep_lock) {
-              guards.add(move(g));
+              guards.emplace_back(move(g));
             }
-
-            // fprintf(stderr, "[CachedDiskStore:find:%s:%s] %s lock on %p\n", pattern.c_str(), item.c_str(), keep_lock ? "holding" : "releasing", level);
 
           // this token isn't a pattern; we can directly look up the subdirectory
           // (and not populate + scan the current directory)
           } else {
-            // fprintf(stderr, "[CachedDiskStore:find:%s:%s] token is not a pattern\n", pattern.c_str(), item.c_str());
             try {
               rw_guard g(level->subdirectories_lock, false);
               CachedDirectoryContents* next_level = level->subdirectories.at(item).get();
 
-              // fprintf(stderr, "[CachedDiskStore:find:%s:%s] cache directory hit\n", pattern.c_str(), item.c_str());
-              level->touch_subdirectory(item);
-              guards.add(move(g));
+              {
+                lock_guard<mutex> g2(level->subdirectories_lru_lock);
+                level->subdirectories_lru.touch(item);
+              }
+              guards.emplace_back(move(g));
 
               string next_level_path = path_join(current_level_path, item);
-              // fprintf(stderr, "[CachedDiskStore:find:%s:%s] %p -> %p\n", pattern.c_str(), item.c_str(), level, next_level_path.c_str());
               next_levels.emplace(next_level, next_level_path);
-              this->stats[0].cache_directory_hits++;
+              this->stats[0].directory_hits++;
 
             } catch (const out_of_range& e) {
-              this->stats[0].cache_directory_misses++;
-              // fprintf(stderr, "[CachedDiskStore:find:%s:%s] cache directory miss\n", pattern.c_str(), item.c_str());
+              this->stats[0].directory_misses++;
 
               // if the subdirectory isn't in the cache and the list isn't complete
               // for this level, check the filesystem
@@ -554,17 +588,14 @@ unordered_map<string, FindResult> CachedDiskStore::find(
                 string new_level_path = path_join(current_level_path, item);
                 if (isdir(this->filename_for_key(new_level_path, false))) {
                   rw_guard g(level->subdirectories_lock, true);
-                  // fprintf(stderr, "[CachedDiskStore:find:%s:%s] creating cache directory %s\n", pattern.c_str(), item.c_str(), new_level_path.c_str());
-                  this->create_cache_subdirectory_locked(level, item);
-                } else {
-                  // fprintf(stderr, "[CachedDiskStore:find:%s:%s] cache directory %s exists\n", pattern.c_str(), item.c_str(), new_level_path.c_str());
+                  this->create_cache_directory_locked(level, item);
                 }
 
                 // it's possible that a delete occurred between the emplace above
                 // and this line - if so, just pretend it doesn't exist (since it
                 // was deleted anyway)
                 try {
-                  guards.add(level->subdirectories_lock, false);
+                  guards.emplace_back(level->subdirectories_lock, false);
                   next_levels.emplace(level->subdirectories.at(item).get(), new_level_path);
                 } catch (const out_of_range& e) { }
               }
@@ -584,21 +615,18 @@ unordered_map<string, FindResult> CachedDiskStore::find(
         CachedDirectoryContents* level = it.first;
         const string& level_path = it.second;
 
-        // fprintf(stderr, "[CachedDiskStore:find:%s] examining level %p with token %s\n", pattern.c_str(), level, p.basename.c_str());
-
         if (this->token_is_pattern(p.basename)) {
-          // fprintf(stderr, "[CachedDiskStore:find:%s] token is a pattern; populating level\n", pattern.c_str());
           this->populate_cache_level(level, this->filename_for_key(level_path, false));
 
           {
             rw_guard g(level->subdirectories_lock, false);
             for (const auto& it : level->subdirectories) {
               if (this->name_matches_pattern(it.first, p.basename)) {
-                // fprintf(stderr, "[CachedDiskStore:find:%s] check dir: %s (match)\n", pattern.c_str(), it.first.c_str());
-                level->touch_subdirectory(it.first);
+                {
+                  lock_guard<mutex> g2(level->subdirectories_lru_lock);
+                  level->subdirectories_lru.touch(it.first);
+                }
                 r.results.emplace_back(path_join(level_path, it.first) + ".*");
-              } else {
-                // fprintf(stderr, "[CachedDiskStore:find:%s] check dir: %s (no match)\n", pattern.c_str(), it.first.c_str());
               }
             }
           }
@@ -607,10 +635,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             rw_guard g(level->files_lock, false);
             for (const auto& it : level->files) {
               if (this->name_matches_pattern(it.first, p.basename)) {
-                // fprintf(stderr, "[CachedDiskStore:find:%s] check file: %s (match)\n", pattern.c_str(), it.first.c_str());
                 r.results.emplace_back(path_join(level_path, it.first));
-              } else {
-                // fprintf(stderr, "[CachedDiskStore:find:%s] check file: %s (no match)\n", pattern.c_str(), it.first.c_str());
               }
             }
           }
@@ -622,10 +647,12 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             rw_guard g(level->subdirectories_lock, false);
             directory_in_cache = level->subdirectories.count(p.basename);
             if (directory_in_cache) {
-              this->stats[0].cache_directory_hits++;
-              level->touch_subdirectory(p.basename);
+              this->stats[0].directory_hits++;
+
+              lock_guard<mutex> g2(level->subdirectories_lru_lock);
+              level->subdirectories_lru.touch(p.basename);
             } else {
-              this->stats[0].cache_directory_misses++;
+              this->stats[0].directory_misses++;
             }
           }
           if (directory_in_cache) {
@@ -633,7 +660,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
           } else if (!level->list_complete && isdir(this->filename_for_key(path_join(level_path, p.basename), false))) {
             r.results.emplace_back(path_join(level_path, p.basename) + ".*");
             rw_guard g(level->subdirectories_lock, true);
-            this->create_cache_subdirectory_locked(level, p.basename);
+            this->create_cache_directory_locked(level, p.basename);
           }
 
           {
@@ -641,11 +668,11 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             file_in_cache = level->files.count(p.basename);
           }
           if (file_in_cache) {
-            this->stats[0].cache_file_hits++;
+            this->stats[0].file_hits++;
             r.results.emplace_back(path_join(level_path, p.basename));
 
           } else if (!level->list_complete) {
-            this->stats[0].cache_file_misses++;
+            this->stats[0].file_misses++;
 
             string filename = this->filename_for_key(path_join(level_path, p.basename));
             if (isfile(filename)) {
@@ -677,23 +704,29 @@ unordered_map<string, int64_t> CachedDiskStore::get_stats(bool rotate) {
     this->stats[1].duration = n - this->stats[1].start_time;
   }
 
-  return current_stats.to_map();
+  auto ret = current_stats.to_map();
+  ret.emplace("directory_count", this->directory_count.load());
+  ret.emplace("file_count", this->file_count.load());
+  return ret;
 }
 
-int64_t CachedDiskStore::delete_from_cache(const string& path) {
+int64_t CachedDiskStore::delete_from_cache(const string& path, bool local_only) {
   // if the path is empty, delete the ENTIRE cache
   if (path.empty() || (path == "*")) {
     CachedDirectoryContents old_root;
 
     {
-      rw_guard_multi guards;
-      guards.add(this->cache_root.subdirectories_lock, true);
-      guards.add(this->cache_root.files_lock, true);
+      vector<rw_guard> guards;
+      guards.emplace_back(this->cache_root.subdirectories_lock, true);
+      guards.emplace_back(this->cache_root.files_lock, true);
 
       this->cache_root.subdirectories.swap(old_root.subdirectories);
       this->cache_root.files.swap(old_root.files);
       this->cache_root.subdirectories_lru.swap(old_root.subdirectories_lru);
       this->cache_root.files_lru.swap(old_root.files_lru);
+
+      this->directory_count = 0;
+      this->file_count = 0;
     }
 
     auto counts = old_root.get_counts();
@@ -702,7 +735,7 @@ int64_t CachedDiskStore::delete_from_cache(const string& path) {
 
   // path isn't empty - we're deleting only part of the cache
   KeyPath p(path);
-  rw_guard_multi guards;
+  vector<rw_guard> guards;
   CachedDirectoryContents* level = &this->cache_root;
 
   // move to the directory containing the key we want to delete
@@ -710,7 +743,7 @@ int64_t CachedDiskStore::delete_from_cache(const string& path) {
     try {
       rw_guard g(level->subdirectories_lock, false);
       level = level->subdirectories.at(item).get();
-      guards.add(move(g));
+      guards.emplace_back(move(g));
     } catch (const out_of_range& e) {
       return 0; // path already doesn't exist in the cache
     }
@@ -744,6 +777,8 @@ int64_t CachedDiskStore::delete_from_cache(const string& path) {
       }
     }
     auto counts = old_level.get_counts();
+    this->directory_count -= counts.first;
+    this->file_count -= counts.second;
     items_deleted += (counts.first + counts.second);
   }
 
@@ -759,6 +794,7 @@ int64_t CachedDiskStore::delete_from_cache(const string& path) {
     if (deleted) {
       level->files_lru.erase(p.basename);
       level->list_complete = false;
+      this->file_count--;
       items_deleted++;
     }
   }
@@ -767,7 +803,7 @@ int64_t CachedDiskStore::delete_from_cache(const string& path) {
 }
 
 string CachedDiskStore::str() const {
-  string s = "CachedDiskStore(" + this->root_directory + ", cache_state=" + this->cache_root.str() + ")";
+  string s = "CachedDiskStore(" + this->directory + ", cache_state=" + this->cache_root.str() + ")";
   return s;
 }
 
@@ -779,25 +815,21 @@ void CachedDiskStore::populate_cache_level(CachedDirectoryContents* level,
 
   // unfortunately we have to hold the write lock while listing the directory to
   // prevent create/delete races causing cache inconsistency
-  rw_guard_multi g(2);
-  g.add(level->subdirectories_lock, true);
-  g.add(level->files_lock, true);
+  rw_guard subdirectories_g(level->subdirectories_lock, true);
+  rw_guard files_g(level->files_lock, true);
 
   // add missing subdirectories and files
   auto filesystem_items = list_directory(filesystem_path);
   for (const auto& item : filesystem_items) {
     string item_filesystem_path = filesystem_path + "/" + item;
-    // fprintf(stderr, "[populate_cache_level:%p] examining %s\n", level, item_filesystem_path.c_str());
 
     auto st = stat(item_filesystem_path);
     // note that we already hold both locks for writing
     if (ends_with(item, ".wsp") && isfile(st)) {
       string key_name = item.substr(0, item.size() - 4);
-      // fprintf(stderr, "[populate_cache_level:%p] creating cache file %s -> %s\n", level, key_name.c_str(), item_filesystem_path.c_str());
       this->create_cache_file_locked(level, key_name, item_filesystem_path);
     } else if (isdir(st)) {
-      // fprintf(stderr, "[populate_cache_level:%p] creating cache directory %s\n", level, item.c_str());
-      this->create_cache_subdirectory_locked(level, item);
+      this->create_cache_directory_locked(level, item);
     }
   }
 
@@ -808,41 +840,37 @@ void CachedDiskStore::populate_cache_level(CachedDirectoryContents* level,
   for (auto it = level->files.begin(); it != level->files.end();) {
     string filename = it->first + ".wsp";
     if (!filesystem_items.count(filename)) {
-      // fprintf(stderr, "[populate_cache_level:%p] file %s was deleted\n", level, filename.c_str());
       level->files_lru.erase(it->first);
       it = level->files.erase(it);
-      this->stats[0].cache_file_deletes++;
-      this->cache_file_count--;
+      this->stats[0].file_deletes++;
+      this->file_count--;
     } else {
-      // fprintf(stderr, "[populate_cache_level:%p] file %s still exists\n", level, filename.c_str());
       it++;
     }
   }
   for (auto it = level->subdirectories.begin(); it != level->subdirectories.end();) {
     if (!filesystem_items.count(it->first)) {
-      // fprintf(stderr, "[populate_cache_level:%p] directory %s was deleted\n", level, it->first.c_str());
       level->subdirectories_lru.erase(it->first);
       auto counts = it->second->get_counts();
       it = level->subdirectories.erase(it);
 
       this->stats[0].report_directory_delete(counts.first, counts.second);
-      this->cache_directory_count -= counts.first;
-      this->cache_file_count -= counts.second;
+      this->directory_count -= counts.first;
+      this->file_count -= counts.second;
     } else {
-      // fprintf(stderr, "[populate_cache_level:%p] directory %s still exists\n", level, it->first.c_str());
       it++;
     }
   }
 
   // we don't have to do this again
   level->list_complete = true;
-  this->stats[0].cache_directory_populates++;
+  this->stats[0].directory_populates++;
 }
 
 CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
     const vector<string>& cache_path, bool create) {
 
-  CacheTraversal t(&this->cache_root, this->root_directory, cache_path.size() + 1);
+  CacheTraversal t(&this->cache_root, this->directory, cache_path.size() + 1);
 
   // walk the cache layers to find the directory that contains this key
   for (const auto& item : cache_path) {
@@ -851,10 +879,10 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
 
     try {
       t.move_to_level(item);
-      this->stats[0].cache_directory_hits++;
+      this->stats[0].directory_hits++;
 
     } catch (const out_of_range& e) {
-      this->stats[0].cache_directory_misses++;
+      this->stats[0].directory_misses++;
 
       if (create) {
         // the subdirectory doesn't exist - we'll have to create it. first try
@@ -886,7 +914,7 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
       // the cache - create a cache node for it and move there
       {
         rw_guard g(t.level->subdirectories_lock, true);
-        this->create_cache_subdirectory_locked(t.level, item);
+        this->create_cache_directory_locked(t.level, item);
       }
       t.move_to_level(item);
     }
@@ -909,12 +937,15 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
     // lock
     rw_guard g(t.level->files_lock, false);
     t.archive = &t.level->files.at(p.basename);
-    t.level->touch_file(p.basename);
-    t.guards.add(move(g));
-    this->stats[0].cache_file_hits++;
+    {
+      lock_guard<mutex> g2(t.level->files_lru_lock);
+      t.level->files_lru.touch(p.basename);
+    }
+    t.guards.emplace_back(move(g));
+    this->stats[0].file_hits++;
 
   } catch (const out_of_range& e) {
-    this->stats[0].cache_file_misses++;
+    this->stats[0].file_misses++;
 
     // if the list isn't complete and the file exists, populate it in the cache
     // and return it
@@ -923,7 +954,7 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
         rw_guard g(t.level->files_lock, true);
         this->create_cache_file_locked(t.level, p.basename, t.filesystem_path);
       }
-      t.guards.add(t.level->files_lock, false);
+      t.guards.emplace_back(t.level->files_lock, false);
       t.archive = &t.level->files.at(p.basename);
       return t;
     }
@@ -942,15 +973,15 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
       if (t.level->files.emplace(piecewise_construct, forward_as_tuple(p.basename),
           forward_as_tuple(t.filesystem_path, metadata_to_create->archive_args,
               metadata_to_create->x_files_factor, metadata_to_create->agg_method)).second) {
-        this->cache_file_count++;
-        this->stats[0].cache_file_creates++;
+        this->file_count++;
+        this->stats[0].file_creates++;
         this->stats[0].series_autocreates++;
         t.level->files_lru.insert(p.basename, 0);
       } else {
         t.level->files_lru.touch(p.basename);
       }
     }
-    t.guards.add(t.level->files_lock, false);
+    t.guards.emplace_back(t.level->files_lock, false);
     t.archive = &t.level->files.at(p.basename);
   }
 
@@ -958,43 +989,184 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
 }
 
 CachedDiskStore::CacheStats::CacheStats() : Stats(),
-    cache_directory_hits(0),
-    cache_directory_misses(0),
-    cache_directory_creates(0),
-    cache_directory_deletes(0),
-    cache_directory_populates(0),
-    cache_file_hits(0),
-    cache_file_misses(0),
-    cache_file_creates(0),
-    cache_file_deletes(0) { }
+    directory_hits(0),
+    directory_misses(0),
+    directory_creates(0),
+    directory_deletes(0),
+    directory_populates(0),
+    file_hits(0),
+    file_misses(0),
+    file_creates(0),
+    file_deletes(0) { }
 
 CachedDiskStore::CacheStats& CachedDiskStore::CacheStats::operator=(
       const CachedDiskStore::CacheStats& other) {
   Stats::operator=(other);
 
-  this->cache_directory_hits = other.cache_directory_hits.load();
-  this->cache_directory_misses = other.cache_directory_misses.load();
-  this->cache_directory_creates = other.cache_directory_creates.load();
-  this->cache_directory_deletes = other.cache_directory_deletes.load();
-  this->cache_directory_populates = other.cache_directory_populates.load();
-  this->cache_file_hits = other.cache_file_hits.load();
-  this->cache_file_misses = other.cache_file_misses.load();
-  this->cache_file_creates = other.cache_file_creates.load();
-  this->cache_file_deletes = other.cache_file_deletes.load();
+  this->directory_hits = other.directory_hits.load();
+  this->directory_misses = other.directory_misses.load();
+  this->directory_creates = other.directory_creates.load();
+  this->directory_deletes = other.directory_deletes.load();
+  this->directory_populates = other.directory_populates.load();
+  this->file_hits = other.file_hits.load();
+  this->file_misses = other.file_misses.load();
+  this->file_creates = other.file_creates.load();
+  this->file_deletes = other.file_deletes.load();
 
   return *this;
 }
 
 unordered_map<string, int64_t> CachedDiskStore::CacheStats::to_map() const {
   auto ret = this->Stats::to_map();
-  ret.emplace("cache_directory_hits", this->cache_directory_hits.load());
-  ret.emplace("cache_directory_misses", this->cache_directory_misses.load());
-  ret.emplace("cache_directory_creates", this->cache_directory_creates.load());
-  ret.emplace("cache_directory_deletes", this->cache_directory_deletes.load());
-  ret.emplace("cache_directory_populates", this->cache_directory_populates.load());
-  ret.emplace("cache_file_hits", this->cache_file_hits.load());
-  ret.emplace("cache_file_misses", this->cache_file_misses.load());
-  ret.emplace("cache_file_creates", this->cache_file_creates.load());
-  ret.emplace("cache_file_deletes", this->cache_file_deletes.load());
+  ret.emplace("directory_hits", this->directory_hits.load());
+  ret.emplace("directory_misses", this->directory_misses.load());
+  ret.emplace("directory_creates", this->directory_creates.load());
+  ret.emplace("directory_deletes", this->directory_deletes.load());
+  ret.emplace("directory_populates", this->directory_populates.load());
+  ret.emplace("file_hits", this->file_hits.load());
+  ret.emplace("file_misses", this->file_misses.load());
+  ret.emplace("file_creates", this->file_creates.load());
+  ret.emplace("file_deletes", this->file_deletes.load());
   return ret;
+}
+
+
+
+bool CachedDiskStore::evict_items() {
+  ssize_t evict_directories = (this->directory_limit == 0) ? 0 :
+      (static_cast<ssize_t>(this->directory_count) -
+       static_cast<ssize_t>(this->directory_limit));
+  ssize_t evict_files = (this->file_limit == 0) ? 0 :
+      (static_cast<ssize_t>(this->file_count) -
+       static_cast<ssize_t>(this->file_limit));
+  if ((evict_directories <= 0) && (evict_files <= 0)) {
+    return false;
+  }
+
+  vector<string> directory_names;
+  vector<CachedDirectoryContents*> levels({&this->cache_root});
+  vector<rw_guard> guards;
+
+  // basic idea: go to the leaf directory based on the lrus and delete stuff
+  // from it
+  for (;;) {
+    // if this directory has subdirectories, don't delete it (yet). instead
+    // move into it to find something else to delete
+    CachedDirectoryContents* level = levels.back();
+    rw_guard g(level->subdirectories_lock, false);
+    if (level->subdirectories.empty()) {
+      break;
+    }
+
+    string subdir_name;
+    {
+      lock_guard<mutex> g2(level->subdirectories_lru_lock);
+      subdir_name = level->subdirectories_lru.peek().first;
+    }
+    level = level->subdirectories.at(subdir_name).get();
+    directory_names.emplace_back(subdir_name);
+    levels.emplace_back(level);
+    guards.emplace_back(move(g));
+  }
+
+  // the current level has no subdirectories at this point. delete files out
+  // of it first (and we may delete the entire directory later if it becomes
+  // empty)
+  bool delete_current_directory = false;
+  if (evict_files > 0) {
+    // delete N files out of the current directory. note that this may still
+    // be all of them; some files may have been deleted between the time we
+    // checked above and now
+    CachedDirectoryContents* level = levels.back();
+
+    unordered_map<string, WhisperArchive> deleted_files;
+    LRUSet<string> deleted_files_lru;
+    {
+      rw_guard g(level->files_lock, true);
+      ssize_t target_size = level->files.size() - evict_files;
+      if (target_size <= 0) {
+        level->files.swap(deleted_files);
+        level->files_lru.swap(deleted_files_lru);
+        delete_current_directory = true;
+      } else {
+        while (level->files.size() > static_cast<size_t>(target_size)) {
+          string filename = level->files_lru.evict_object().first;
+          level->files.erase(filename);
+        }
+      }
+      level->list_complete = false;
+    }
+  }
+
+  // if we need to delete directories, delete this one
+  if (delete_current_directory || (evict_directories > 0)) {
+    if (levels.empty() || directory_names.empty() || guards.empty()) {
+      log(ERROR, "[CachedDiskStore] cannot evict directories: path is empty");
+      return false;
+    }
+
+    while (!directory_names.empty()) {
+      assert(directory_names.size() == levels.size() - 1);
+      assert(guards.size() == levels.size() - 1);
+
+      // move up a directory, and remember which subdirectory we're going to
+      // delete
+      levels.pop_back();
+      CachedDirectoryContents* level = levels.back();
+      string dir_to_delete = directory_names.back();
+      directory_names.pop_back();
+      guards.pop_back(); // this is the read lock on the parent dir
+
+      // we create a reference to the cached object outside the lock scope so
+      // that its destructor is called after we've released the write lock
+      unique_ptr<CachedDirectoryContents> deleted_level;
+      {
+        rw_guard g(level->subdirectories_lock, true);
+        auto dir_it = level->subdirectories.find(dir_to_delete);
+        if (dir_it != level->subdirectories.end()) {
+          deleted_level = move(dir_it->second);
+          level->subdirectories.erase(dir_it);
+          level->subdirectories_lru.erase(dir_to_delete);
+          level->list_complete = false;
+        }
+      }
+      auto counts = deleted_level->get_counts();
+      this->stats[0].report_directory_delete(counts.first, counts.second);
+      this->directory_count -= counts.first;
+      this->file_count -= counts.second;
+
+      // if we're at the root, we're done (the root is allowed to be empty)
+      if (level == &this->cache_root) {
+        break;
+      }
+
+      // if the directory we just deleted from is not empty, we're done
+      bool is_empty;
+      {
+        rw_guard g(level->files_lock, false);
+        is_empty = level->files.empty();
+      }
+      if (is_empty) {
+        rw_guard g(level->subdirectories_lock, false);
+        is_empty = level->subdirectories.empty();
+      }
+      if (!is_empty) {
+        break;
+      }
+    }
+  }
+
+  return true;
+}
+
+void CachedDiskStore::evict_items_thread_routine() {
+  while (!this->should_exit) {
+    try {
+      if (!this->evict_items()) {
+        usleep(100000);
+      }
+    } catch (const exception& e) {
+      log(ERROR, "[CachedDiskStore] failure in eviction: %s", e.what());
+    }
+  }
 }

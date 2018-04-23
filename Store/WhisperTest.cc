@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
 #include <phosg/Filesystem.hh>
 #include <phosg/UnitTest.hh>
 #include <string>

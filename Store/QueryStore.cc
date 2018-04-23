@@ -21,25 +21,31 @@ using namespace std;
 
 QueryStore::QueryStore(shared_ptr<Store> store) : Store(), store(store) { }
 
+shared_ptr<Store> QueryStore::get_substore() const {
+  return this->store;
+}
+
 void QueryStore::set_autocreate_rules(
-    const vector<pair<string, SeriesMetadata>> autocreate_rules) {
+    const vector<pair<string, SeriesMetadata>>& autocreate_rules) {
   this->Store::set_autocreate_rules(autocreate_rules);
   this->store->set_autocreate_rules(autocreate_rules);
 }
 
 unordered_map<string, string> QueryStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
-    UpdateMetadataBehavior update_behavior) {
-  return this->store->update_metadata(metadata, create_new, update_behavior);
+    UpdateMetadataBehavior update_behavior, bool local_only) {
+  return this->store->update_metadata(metadata, create_new, update_behavior,
+      local_only);
 }
 
-unordered_map<string, string> QueryStore::delete_series(
-    const vector<string>& key_names) {
-  return this->store->delete_series(key_names);
+unordered_map<string, int64_t> QueryStore::delete_series(
+    const vector<string>& patterns, bool local_only) {
+  return this->store->delete_series(patterns, local_only);
 }
 
 unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time) {
+    const vector<string>& key_names, int64_t start_time, int64_t end_time,
+    bool local_only) {
 
   unordered_map<string, Query> parsed_queries;
   unordered_map<string, unordered_map<string, ReadResult>> ret;
@@ -64,7 +70,8 @@ unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
     substore_reads.insert(substore_reads.end(), substore_reads_set.begin(),
         substore_reads_set.end());
   }
-  auto substore_results = this->store->read(substore_reads, start_time, end_time);
+  auto substore_results = this->store->read(substore_reads, start_time,
+      end_time, local_only);
 
   // now apply the relevant functions on top of them
   // TODO: if a series is only referenced once, we probably can move the data
@@ -78,25 +85,25 @@ unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
 }
 
 unordered_map<string, string> QueryStore::write(
-    const unordered_map<string, Series>& data) {
-  return this->store->write(data);
+    const unordered_map<string, Series>& data, bool local_only) {
+  return this->store->write(data, local_only);
 }
 
 unordered_map<string, FindResult> QueryStore::find(
-    const vector<string>& patterns) {
-  return this->store->find(patterns);
+    const vector<string>& patterns, bool local_only) {
+  return this->store->find(patterns, local_only);
 }
 
 unordered_map<string, int64_t> QueryStore::get_stats(bool rotate) {
   return this->store->get_stats();
 }
 
-int64_t QueryStore::delete_from_cache(const std::string& path) {
-  return this->store->delete_from_cache(path);
+int64_t QueryStore::delete_from_cache(const std::string& path, bool local_only) {
+  return this->store->delete_from_cache(path, local_only);
 }
 
-int64_t QueryStore::delete_pending_writes(const std::string& pattern) {
-  return this->store->delete_pending_writes(pattern);
+int64_t QueryStore::delete_pending_writes(const std::string& pattern, bool local_only) {
+  return this->store->delete_pending_writes(pattern, local_only);
 }
 
 string QueryStore::str() const {

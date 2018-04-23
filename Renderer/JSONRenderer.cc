@@ -29,7 +29,7 @@ void JSONRenderer::render_data(
       }
 
       if (num_series) {
-        evbuffer_add(this->buf, ",", 2);
+        evbuffer_add(this->buf, ",", 1);
       }
       evbuffer_add_printf(this->buf, "{\"target\":\"%s\",\"datapoints\":[",
           it2.first.c_str());
@@ -41,7 +41,7 @@ void JSONRenderer::render_data(
         }
 
         if (num_points) {
-          evbuffer_add(this->buf, ",", 2);
+          evbuffer_add(this->buf, ",", 1);
         }
         evbuffer_add_printf(this->buf, "[%g,%" PRId64 "]", pt.value, pt.timestamp);
         num_points++;

@@ -77,7 +77,7 @@ void DatagramServer::on_client_input(int fd, short events) {
     series.back().value = stod(tokens[1]);
 
     // send it to the store
-    for (const auto& it : this->store->write(data)) {
+    for (const auto& it : this->store->write(data, false)) {
       if (it.second.empty()) {
         continue;
       }

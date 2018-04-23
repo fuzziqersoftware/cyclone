@@ -8,7 +8,7 @@ using namespace std;
 
 
 void Store::set_autocreate_rules(
-    const vector<pair<string, SeriesMetadata>> autocreate_rules) {
+    const vector<pair<string, SeriesMetadata>>& autocreate_rules) {
   this->validate_autocreate_rules(autocreate_rules);
   auto new_rules = autocreate_rules;
   {
@@ -17,17 +17,17 @@ void Store::set_autocreate_rules(
   }
 }
 
-void Store::flush()  { }
+void Store::flush() { }
 
 unordered_map<string, int64_t> Store::get_stats(bool rotate) {
   return unordered_map<string, int64_t>();
 }
 
-int64_t Store::delete_from_cache(const std::string& paths) {
+int64_t Store::delete_from_cache(const std::string& paths, bool local_only) {
   return 0;
 }
 
-int64_t Store::delete_pending_writes(const std::string& paths) {
+int64_t Store::delete_pending_writes(const std::string& paths, bool local_only) {
   return 0;
 }
 
@@ -156,7 +156,7 @@ SeriesMetadata Store::get_autocreate_metadata_for_key(const string& key_name) {
 }
 
 unordered_map<string, string> Store::resolve_patterns(
-    const vector<string>& key_names) {
+    const vector<string>& key_names, bool local_only) {
 
   // if some of the key names are patterns, execute find queries on them to get
   // the actual key names
@@ -171,7 +171,7 @@ unordered_map<string, string> Store::resolve_patterns(
   }
 
   if (!patterns.empty()) {
-    for (auto it : this->find(patterns)) {
+    for (auto it : this->find(patterns, local_only)) {
       if (!it.second.error.empty()) {
         continue;
       }

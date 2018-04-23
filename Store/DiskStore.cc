@@ -21,12 +21,23 @@
 using namespace std;
 
 
-DiskStore::DiskStore(const string& root_directory) :
-    root_directory(root_directory), stats(3) { }
+DiskStore::DiskStore(const string& directory) :
+    directory(directory), stats(3) { }
+
+std::string DiskStore::get_directory() const {
+  return this->directory;
+}
+
+void DiskStore::set_directory(const std::string& new_value) {
+  // TODO: this isn't thread-safe!
+  this->directory = new_value;
+  // close all open file descriptors
+  WhisperArchive::clear_files_lru();
+}
 
 unordered_map<string, string> DiskStore::update_metadata(
     const SeriesMetadataMap& m, bool create_new,
-    UpdateMetadataBehavior update_behavior) {
+    UpdateMetadataBehavior update_behavior, bool local_only) {
 
   unordered_map<string, string> ret;
   for (auto& it : m) {
@@ -94,28 +105,31 @@ unordered_map<string, string> DiskStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, string> DiskStore::delete_series(const vector<string>& key_names) {
-  unordered_map<string, string> ret;
-  for (const auto& key_name : key_names) {
+unordered_map<string, int64_t> DiskStore::delete_series(
+    const vector<string>& patterns, bool local_only) {
+  auto key_to_pattern = this->resolve_patterns(patterns, local_only);
+
+  unordered_map<string, int64_t> ret;
+  for (const auto& key_it : key_to_pattern) {
     try {
       // delete the file
       // note: we don't need to explicitly close the fd in WhisperArchive's file
       // cache; there shouldn't be an open file for this series because it was
       // closed in the WhisperArchive destructor
-      string filename = this->filename_for_key(key_name);
+      string filename = this->filename_for_key(key_it.first);
       unlink(filename);
       this->stats[0].series_deletes++;
 
       // then delete any empty directories in which the file resided. stop when
       // we reach the data directory or any directory isn't empty
-      while (filename.size() > this->root_directory.size()) {
+      while (filename.size() > this->directory.size()) {
         size_t slash_pos = filename.rfind('/');
         if (slash_pos == string::npos) {
           break;
         }
         filename.resize(slash_pos);
 
-        if (filename.size() <= this->root_directory.size()) {
+        if (filename.size() <= this->directory.size()) {
           break;
         }
         if (rmdir(filename.c_str())) {
@@ -127,18 +141,25 @@ unordered_map<string, string> DiskStore::delete_series(const vector<string>& key
         this->stats[0].directory_deletes++;
       }
 
-      ret.emplace(key_name, "");
+      ret[key_it.second]++;
     } catch (const exception& e) {
-      ret.emplace(key_name, e.what());
+      log(INFO, "[DiskStore] failed to delete series %s (%s)",
+          key_it.first.c_str(), e.what());
     }
+  }
+
+  // make sure we return zeroes for patterns that didn't match anything
+  for (const auto& pattern : patterns) {
+    ret.emplace(pattern, 0);
   }
   return ret;
 }
 
 unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time) {
+    const vector<string>& key_names, int64_t start_time, int64_t end_time,
+    bool local_only) {
 
-  auto key_to_pattern = this->resolve_patterns(key_names);
+  auto key_to_pattern = this->resolve_patterns(key_names, local_only);
 
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : key_to_pattern) {
@@ -177,7 +198,7 @@ unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
 }
 
 unordered_map<string, string> DiskStore::write(
-    const unordered_map<string, Series>& data) {
+    const unordered_map<string, Series>& data, bool local_only) {
   unordered_map<string, string> ret;
   for (const auto& it : data) {
     try {
@@ -194,7 +215,8 @@ unordered_map<string, string> DiskStore::write(
           ret.emplace(it.first, "series does not exist");
 
         } else {
-          auto update_metadata_ret = this->update_metadata({{it.first, m}}, true, UpdateMetadataBehavior::Ignore);
+          auto update_metadata_ret = this->update_metadata({{it.first, m}},
+              true, UpdateMetadataBehavior::Ignore, local_only);
           auto series_ret = update_metadata_ret.at(it.first);
 
           if (series_ret.empty() || (series_ret == "ignored")) {
@@ -259,7 +281,8 @@ void DiskStore::find_recursive(vector<string>& ret,
   }
 }
 
-unordered_map<string, FindResult> DiskStore::find(const vector<string>& patterns) {
+unordered_map<string, FindResult> DiskStore::find(
+    const vector<string>& patterns, bool local_only) {
   unordered_map<string, FindResult> ret;
   for (const auto& pattern : patterns) {
     FindResult& r = ret[pattern];
@@ -269,7 +292,7 @@ unordered_map<string, FindResult> DiskStore::find(const vector<string>& patterns
     }
     try {
       vector<string> pattern_parts = split(pattern, '.');
-      this->find_recursive(r.results, this->root_directory + "/", "", 0, pattern_parts);
+      this->find_recursive(r.results, this->directory + "/", "", 0, pattern_parts);
     } catch (const exception& e) {
       r.error = e.what();
     }
@@ -294,7 +317,7 @@ unordered_map<string, int64_t> DiskStore::get_stats(bool rotate) {
 }
 
 string DiskStore::str() const {
-  return "DiskStore(" + this->root_directory + ")";
+  return "DiskStore(" + this->directory + ")";
 }
 
 string DiskStore::filename_for_key(const string& key_name, bool is_file) {
@@ -303,9 +326,9 @@ string DiskStore::filename_for_key(const string& key_name, bool is_file) {
   // normally we'd just use string_printf but we need to modify key_name too
 
   string fname;
-  fname.reserve(key_name.size() + this->root_directory.size() + (is_file ? 5 : 1));
+  fname.reserve(key_name.size() + this->directory.size() + (is_file ? 5 : 1));
 
-  fname += this->root_directory;
+  fname += this->directory;
   fname += '/';
 
   // replace periods in key_name with slashes

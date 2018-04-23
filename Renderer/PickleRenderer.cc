@@ -40,24 +40,16 @@ void PickleRenderer::render_data(
       const auto& key = it2.first;
       const auto& result = it2.second;
 
-      if (!result.error.empty()) {
+      // if there was a read error or the series doesn't exist (step==0), don't
+      // render it
+      if (!result.error.empty() || !result.step) {
         continue;
       }
 
-      uint32_t start = 0;
-      uint32_t end = 0;
-      uint32_t step = 0;
-      if (!result.data.empty()) {
-        start = result.data.front().timestamp;
-        end = result.data.back().timestamp;
-        step = start - end;
-        for (size_t x = 1; x < result.data.size(); x++) {
-          uint32_t this_step = result.data[x].timestamp - result.data[x - 1].timestamp;
-          if (step > this_step) {
-            step = this_step;
-          }
-        }
-      }
+      // the fields in result are i64s, we need to write u32s instead
+      uint32_t start = result.start_time;
+      uint32_t end = result.end_time;
+      uint32_t step = result.step;
 
       evbuffer_add(this->buf, "(U\x0EpathExpression", 17);
       write_pickle_string(this->buf, pattern);
@@ -70,22 +62,22 @@ void PickleRenderer::render_data(
       evbuffer_add(this->buf, "U\x04stepJ", 7);
       evbuffer_add(this->buf, &step, sizeof(step));
       evbuffer_add(this->buf, "U\x06values(", 9);
+
       size_t offset = 0;
-      for (uint32_t ts = start; end && (ts <= end); ts += step) {
-        while (result.data[offset].timestamp < ts) {
+      for (int64_t ts = result.start_time; result.end_time && (ts <= result.end_time); ts += result.step) {
+        while ((offset < result.data.size()) && (result.data[offset].timestamp < ts)) {
           offset++;
         }
+        if (offset >= result.data.size()) {
+          break;
+        }
+
         if ((result.data[offset].timestamp != ts) || isnan(result.data[offset].value)) {
           evbuffer_add(this->buf, "N", 1); // None
         } else {
           uint64_t v = bswap64f(result.data[offset].value);
           evbuffer_add(this->buf, "G", 1);
           evbuffer_add(this->buf, &v, sizeof(v));
-        }
-
-        // step can be zero if we're reading only one datapoint
-        if (!step) {
-          break;
         }
       }
       evbuffer_add(this->buf, "ld", 2);

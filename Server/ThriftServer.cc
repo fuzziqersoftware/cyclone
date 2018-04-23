@@ -28,7 +28,7 @@ public:
 
   void update_metadata(unordered_map<string, string>& _return,
       const SeriesMetadataMap& metadata, bool create_new,
-      bool skip_existing_series, bool truncate_existing_series) {
+      bool skip_existing_series, bool truncate_existing_series, bool local_only) {
 
     Store::UpdateMetadataBehavior update_behavior;
     if (skip_existing_series) {
@@ -40,42 +40,37 @@ public:
         update_behavior = Store::UpdateMetadataBehavior::Update;
       }
     }
-    _return = this->store->update_metadata(metadata, create_new, update_behavior);
+    _return = this->store->update_metadata(metadata, create_new, update_behavior, local_only);
   }
 
-  void delete_series(unordered_map<string, string>& _return,
-      const vector<string>& key_names) {
-    _return = this->store->delete_series(key_names);
-  }
-
-  void read_metadata(
-      unordered_map<string, unordered_map<string, ReadResult>>& _return,
-      const vector<string>& targets) {
-    _return = this->store->read(targets, 0, 0);
+  void delete_series(unordered_map<string, int64_t>& _return,
+      const vector<string>& key_names, bool local_only) {
+    _return = this->store->delete_series(key_names, local_only);
   }
 
   void read(
       unordered_map<string, unordered_map<string, ReadResult>>& _return,
       const vector<string>& targets, const int64_t start_time,
-      const int64_t end_time) {
-    _return = this->store->read(targets, start_time, end_time);
+      const int64_t end_time, bool local_only) {
+    _return = this->store->read(targets, start_time, end_time, local_only);
   }
 
   void write(unordered_map<string, string>& _return,
-      const unordered_map<string, Series>& data) {
-    _return = this->store->write(data);
+      const unordered_map<string, Series>& data, bool local_only) {
+    _return = this->store->write(data, local_only);
   }
 
-  void find(unordered_map<string, FindResult>& _return, const vector<string>& patterns) {
-    _return = this->store->find(patterns);
+  void find(unordered_map<string, FindResult>& _return,
+      const vector<string>& patterns, bool local_only) {
+    _return = this->store->find(patterns, local_only);
   }
 
-  int64_t delete_from_cache(const std::string& path) {
-    return this->store->delete_from_cache(path);
+  int64_t delete_from_cache(const std::string& path, bool local_only) {
+    return this->store->delete_from_cache(path, local_only);
   }
 
-  int64_t delete_pending_writes(const std::string& pattern) {
-    return this->store->delete_pending_writes(pattern);
+  int64_t delete_pending_writes(const std::string& pattern, bool local_only) {
+    return this->store->delete_pending_writes(pattern, local_only);
   }
 
 private:

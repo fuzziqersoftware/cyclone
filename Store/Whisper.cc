@@ -20,7 +20,7 @@ using namespace std;
 
 static int64_t parse_time_length(const string& s, int64_t default_unit_factor = 1) {
 
-  int negative = 1;
+  int64_t negative = 1;
   int64_t num_units = 0;
 
   unsigned offset = 0;
@@ -349,7 +349,7 @@ WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time, uint64_t en
 
 void WhisperArchive::write(const Series& data) {
   // assumption: points are provided in decreasing order of time
-  uint32_t t = time(NULL);
+  int64_t t = time(NULL);
   uint32_t archive_index = 0;
   uint32_t next_commit_point = 0;
 
@@ -359,10 +359,11 @@ void WhisperArchive::write(const Series& data) {
 
   uint32_t x;
   for (x = 0; (x < data.size()) && (archive_index < this->metadata->num_archives); x++) {
-    uint32_t pt_age = t - data.at(x).timestamp;
+    int64_t pt_age = t - static_cast<int64_t>(data.at(x).timestamp);
 
     // while we can't fit any more points into the current archive, commit
-    while (archive_index < this->metadata->num_archives && (this->metadata->archives[archive_index].points * this->metadata->archives[archive_index].seconds_per_point) < pt_age) {
+    while (archive_index < this->metadata->num_archives &&
+        (this->metadata->archives[archive_index].points * this->metadata->archives[archive_index].seconds_per_point) < pt_age) {
       if (next_commit_point != x) {
         this->write_archive(lease.fd, archive_index, data, next_commit_point, x);
         next_commit_point = x;
@@ -677,6 +678,10 @@ size_t WhisperArchive::get_files_lru_size() {
 
 void WhisperArchive::set_files_lru_max_size(size_t max) {
   WhisperArchive::file_cache.set_max_size(max);
+}
+
+void WhisperArchive::clear_files_lru() {
+  WhisperArchive::file_cache.clear();
 }
 
 FileCache WhisperArchive::file_cache(1024);

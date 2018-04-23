@@ -14,13 +14,20 @@
 
 
 class StreamServer : public Server {
+public:
+  enum class Protocol {
+    Line = 0,
+    Pickle,
+    Shell,
+  };
+
 private:
   struct Client {
     struct sockaddr remote_addr;
     int fd;
-    bool is_pickle;
+    Protocol protocol;
 
-    Client(int fd, const struct sockaddr& remote_addr, bool is_pickle);
+    Client(int fd, const struct sockaddr& remote_addr, Protocol protocol);
   };
 
   struct WorkerThread {
@@ -47,7 +54,7 @@ private:
   std::atomic<bool> should_exit;
   uint64_t exit_check_usecs;
   std::vector<WorkerThread> threads;
-  std::unordered_map<int, bool> listen_fd_to_is_pickle;
+  std::unordered_map<int, Protocol> listen_fd_to_protocol;
   std::shared_ptr<Store> store;
 
   void on_listen_accept(WorkerThread& wt, struct evconnlistener *listener,
@@ -56,6 +63,8 @@ private:
   void on_client_input(WorkerThread& wt, struct bufferevent *bev);
   void on_client_error(WorkerThread& wt, struct bufferevent *bev, short events);
   void check_for_thread_exit(WorkerThread& wt, evutil_socket_t fd, short what);
+
+  void execute_shell_command(const char* command, struct evbuffer* out_buffer);
 
   void run_thread(int thread_id);
 
@@ -67,10 +76,10 @@ public:
       uint64_t exit_check_usecs);
   virtual ~StreamServer() = default;
 
-  void listen(const std::string& socket_path, bool is_pickle);
-  void listen(const std::string& addr, int port, bool is_pickle);
-  void listen(int port, bool is_pickle);
-  void add_socket(int fd, bool is_pickle);
+  void listen(const std::string& socket_path, Protocol protocol);
+  void listen(const std::string& addr, int port, Protocol protocol);
+  void listen(int port, Protocol protocol);
+  void add_socket(int fd, Protocol protocol);
 
   virtual void start();
   virtual void schedule_stop();

@@ -9,11 +9,13 @@ Like most of my projects, this is only tested at a small scale (so far), so ther
 - Build and install phosg (https://github.com/fuzziqersoftware/phosg)
 - Run `make`.
 
-If it doesn't work on your system, let me know. I've built and tested it on Mac OS X 10.11.
+If it doesn't work on your system, let me know. I've built and tested it on Mac OS X 10.13 and Ubuntu 16.04.
 
 ## Running
 
-Cyclone is configured via a small JSON file. The comments in the example file (cyclone.conf.json) explain the details. Once that's all set up, just run `cyclone <config_filename>` (or use an init.d script to run it as a daemon).
+Cyclone is configured via a small JSON file. The comments in the example file (cyclone.conf.json) explain the details. Once that's all set up, just run `cyclone <config_filename>` (or use an appropriate daemonizer).
+
+Cyclone is compatible with the Graphite webapp. You can even run the Graphite webapp directly in front of Cyclone by setting Graphite's `CLUSTER_SERVERS = ['localhost:5050']` (or any port in `http_listen` from Cyclone's configuration). Cyclone will handle the clustering logic if applicable; the Graphite webapp only needs to talk to one of the Cyclone instances in the cluster.
 
 ## Testing
 
@@ -23,3 +25,5 @@ Python clients for all the interfaces are provided in the cyclone_client module.
 - `thrift_client.CycloneThriftClient` is compatible only with Cyclone servers. It supports read and write queries, and uses persistent connections.
 
 You can import cyclone_client and use the various client classes directly from there. See the docstrings on those classes for more information, or take a look at functional_test.py for usage examples.
+
+You can also use the shell interface by connecting to the shell port with telnet or nc.

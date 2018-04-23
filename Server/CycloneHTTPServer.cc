@@ -9,6 +9,7 @@
 
 #include "../Renderer/Renderer.hh"
 #include "../Renderer/GraphiteRenderer.hh"
+#include "../Renderer/HTMLRenderer.hh"
 #include "../Renderer/ImageRenderer.hh"
 #include "../Renderer/JSONRenderer.hh"
 #include "../Renderer/PickleRenderer.hh"
@@ -82,6 +83,8 @@ unique_ptr<Renderer> CycloneHTTPServer::create_renderer(const string& format,
     return unique_ptr<Renderer>(new JSONRenderer(buf));
   } else if (format == "pickle") {
     return unique_ptr<Renderer>(new PickleRenderer(buf));
+  } else if (format == "html") {
+    return unique_ptr<Renderer>(new HTMLRenderer(buf));
   } else {
     throw http_error(400, string_printf("unknown format: %s", format.c_str()));
   }
@@ -162,7 +165,7 @@ string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,
       format = it.second;
     } else if (it.first.compare("target") == 0) {
       targets.push_back(it.second);
-    } else if ((it.first.compare("now") == 0) || (it.first.compare("local") == 0)) {
+    } else if ((it.first.compare("now") == 0) || (it.first.compare("noCache") == 0) || (it.first.compare("local") == 0)) {
       // ignore these; graphite sends them but cyclone doesn't use them
     } else {
       throw http_error(400, string_printf("unknown argument: %s", it.first.c_str()));
@@ -178,7 +181,7 @@ string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,
   }
 
   auto r = this->create_renderer(format, out_buffer);
-  auto data = this->store->read(targets, start_time, end_time);
+  auto data = this->store->read(targets, start_time, end_time, false);
   r->render_data(data);
   return r->content_type();
 }
@@ -204,7 +207,7 @@ string CycloneHTTPServer::handle_graphite_find_request(struct Thread& t,
   }
 
   auto r = this->create_renderer(format, out_buffer);
-  auto ret = this->store->find(queries);
+  auto ret = this->store->find(queries, false);
   r->render_find_results(ret);
   return r->content_type();
 }

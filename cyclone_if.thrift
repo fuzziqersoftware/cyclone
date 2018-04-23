@@ -41,6 +41,9 @@ typedef map cpp_type 'std::unordered_map<std::string, std::unordered_map<std::st
 typedef map cpp_type 'std::unordered_map<std::string, std::string>'
     <string, string> WriteResultMap;
 
+typedef map cpp_type 'std::unordered_map<std::string, int64_t>'
+    <string, i64> DeleteResultMap;
+
 typedef map cpp_type 'std::unordered_map<std::string, class FindResult>'
     <string, FindResult> FindResultMap;
 
@@ -49,33 +52,30 @@ service Cyclone {
   // modified (including creates and updates).
   WriteResultMap update_metadata(1: SeriesMetadataMap metadata,
       2: bool create_new = true, 3: bool skip_existing_series = false,
-      4: bool truncate_existing_series = false);
+      4: bool truncate_existing_series = false, 5: bool local_only = false);
 
   // deletes series. returns the number of series deleted.
-  WriteResultMap delete_series(1: list<string> key_names);
+  DeleteResultMap delete_series(1: list<string> patterns,
+      2: bool local_only = false);
 
   // reads datapoints from multiple series.
   ReadResultMap read(1: list<string> targets, 2:i64 start_time,
-      3: i64 end_time);
+      3: i64 end_time, 4: bool local_only = false);
 
   // writes or deletes datapoints in a series. to delete datapoints, pass NaN as
   // the value.
-  WriteResultMap write(1: SeriesMap data);
-
-  // TODO
-  // SeriesMap execute_query(1: list<string> targets, 2:i64 start_time,
-  //     3: i64 end_time);
+  WriteResultMap write(1: SeriesMap data, 2: bool local_only = false);
 
   // searches for directory and key names matching the given patterns. if a
   // result ends with '.*', it's a directory; otherwise it's a key.
-  FindResultMap find(1: list<string> patterns);
+  FindResultMap find(1: list<string> patterns, 2: bool local_only = false);
 
   // if the server has a cache store, deletes the given path from the cache. if
   // the path is blank or "*", deletes everything in the cache.
-  i64 delete_from_cache(1: string path);
+  i64 delete_from_cache(1: string path, 2: bool local_only = false);
 
   // if the server has a write buffer store, deletes everything matching the
   // given pattern from the write buffer. if the pattern is blank, deletes
   // everything in the write buffer.
-  i64 delete_pending_writes(1: string pattern);
+  i64 delete_pending_writes(1: string pattern, 2: bool local_only = false);
 }

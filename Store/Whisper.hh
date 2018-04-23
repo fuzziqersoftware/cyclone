@@ -87,6 +87,7 @@ public:
 
   static size_t get_files_lru_size();
   static void set_files_lru_max_size(size_t max);
+  static void clear_files_lru();
 
 private:
 

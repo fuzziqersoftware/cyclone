@@ -16,25 +16,28 @@ class DiskStore : public Store {
 public:
   DiskStore() = delete;
   DiskStore(const DiskStore& rhs) = delete;
-  explicit DiskStore(const std::string& root_directory);
+  explicit DiskStore(const std::string& directory);
   virtual ~DiskStore() = default;
-
   const DiskStore& operator=(const DiskStore& rhs) = delete;
+
+  // note: CachedDiskStore overrides set_directory so it can clear the cache
+  std::string get_directory() const;
+  virtual void set_directory(const std::string& new_value);
 
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
-      UpdateMetadataBehavior update_behavior);
-  virtual std::unordered_map<std::string, std::string> delete_series(
-      const std::vector<std::string>& key_names);
+      UpdateMetadataBehavior update_behavior, bool local_only);
+  virtual std::unordered_map<std::string, int64_t> delete_series(
+      const std::vector<std::string>& patterns, bool local_only);
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
-      int64_t end_time);
+      int64_t end_time, bool local_only);
   virtual std::unordered_map<std::string, std::string> write(
-      const std::unordered_map<std::string, Series>& data);
+      const std::unordered_map<std::string, Series>& data, bool local_only);
 
   virtual std::unordered_map<std::string, FindResult> find(
-      const std::vector<std::string>& patterns);
+      const std::vector<std::string>& patterns, bool local_only);
 
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
@@ -49,7 +52,7 @@ protected:
 
   std::string filename_for_key(const std::string& key_name, bool is_file = true);
 
-  std::string root_directory;
+  std::string directory;
 
   struct Stats {
     std::atomic<uint64_t> start_time;

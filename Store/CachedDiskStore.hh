@@ -20,36 +20,42 @@ class CachedDiskStore : public DiskStore {
 public:
   CachedDiskStore() = delete;
   CachedDiskStore(const CachedDiskStore& rhs) = delete;
-  explicit CachedDiskStore(const std::string& root_directory);
-  virtual ~CachedDiskStore() = default;
-
+  explicit CachedDiskStore(const std::string& root_directory,
+      size_t directory_limit, size_t file_limit);
+  virtual ~CachedDiskStore();
   const CachedDiskStore& operator=(const CachedDiskStore& rhs) = delete;
+
+  size_t get_directory_limit() const;
+  size_t get_file_limit() const;
+  void set_directory_limit(size_t new_value);
+  void set_file_limit(size_t new_value);
+  virtual void set_directory(const std::string& new_value);
 
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
-      UpdateMetadataBehavior update_behavior);
-  virtual std::unordered_map<std::string, std::string> delete_series(
-      const std::vector<std::string>& key_names);
+      UpdateMetadataBehavior update_behavior, bool local_only);
+  virtual std::unordered_map<std::string, int64_t> delete_series(
+      const std::vector<std::string>& patterns, bool local_only);
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
-      int64_t end_time);
+      int64_t end_time, bool local_only);
   virtual std::unordered_map<std::string, std::string> write(
-      const std::unordered_map<std::string, Series>& data);
+      const std::unordered_map<std::string, Series>& data, bool local_only);
 
   virtual std::unordered_map<std::string, FindResult> find(
-      const std::vector<std::string>& patterns);
+      const std::vector<std::string>& patterns, bool local_only);
 
   virtual std::unordered_map<std::string, int64_t> get_stats(bool rotate);
 
-  virtual int64_t delete_from_cache(const std::string& path);
+  virtual int64_t delete_from_cache(const std::string& path, bool local_only);
 
   virtual std::string str() const;
 
 protected:
-  // TODO: eviction
   // TODO: cache data as well as metadata
 
+  // convenience object for splitting/representing a key path
   struct KeyPath {
     std::vector<std::string> directories;
     std::string basename;
@@ -80,12 +86,9 @@ protected:
     std::unordered_map<std::string, WhisperArchive> files;
     mutable rw_lock subdirectories_lock;
     mutable rw_lock files_lock;
-
-    // if one of the above locks is held for writing, the LRUs below can be
-    // modified without holding the appropriate lock
     LRUSet<std::string> subdirectories_lru;
-    LRUSet<std::string> files_lru;
     mutable std::mutex subdirectories_lru_lock;
+    LRUSet<std::string> files_lru;
     mutable std::mutex files_lru_lock;
 
     CachedDirectoryContents() = default;
@@ -102,7 +105,7 @@ protected:
   };
   CachedDirectoryContents cache_root;
 
-  bool create_cache_subdirectory_locked(CachedDirectoryContents* level,
+  bool create_cache_directory_locked(CachedDirectoryContents* level,
       const std::string& item);
   bool create_cache_file_locked(CachedDirectoryContents* level,
       const std::string& item, const std::string& filesystem_path);
@@ -111,13 +114,14 @@ protected:
       const std::string& filesystem_path);
 
 
+  // object representing a path down the cache tree
   struct CacheTraversal {
     std::vector<CachedDirectoryContents*> levels;
     CachedDirectoryContents* level;
     WhisperArchive* archive;
 
     std::string filesystem_path;
-    rw_guard_multi guards;
+    vector<rw_guard> guards;
 
     CacheTraversal(CachedDirectoryContents* root, std::string root_directory,
         size_t expected_levels);
@@ -130,16 +134,17 @@ protected:
       const SeriesMetadata* metadata_to_create = NULL);
 
 
+  // statistics tracking - these are rotated every minute
   struct CacheStats : public Stats { // Stats comes from DiskStore
-    std::atomic<size_t> cache_directory_hits;
-    std::atomic<size_t> cache_directory_misses;
-    std::atomic<size_t> cache_directory_creates;
-    std::atomic<size_t> cache_directory_deletes;
-    std::atomic<size_t> cache_directory_populates;
-    std::atomic<size_t> cache_file_hits;
-    std::atomic<size_t> cache_file_misses;
-    std::atomic<size_t> cache_file_creates;
-    std::atomic<size_t> cache_file_deletes;
+    std::atomic<size_t> directory_hits;
+    std::atomic<size_t> directory_misses;
+    std::atomic<size_t> directory_creates;
+    std::atomic<size_t> directory_deletes;
+    std::atomic<size_t> directory_populates;
+    std::atomic<size_t> file_hits;
+    std::atomic<size_t> file_misses;
+    std::atomic<size_t> file_creates;
+    std::atomic<size_t> file_deletes;
 
     CacheStats();
     CacheStats& operator=(const CacheStats& other);
@@ -147,6 +152,16 @@ protected:
     std::unordered_map<std::string, int64_t> to_map() const;
   };
   FixedAtomicRotator<CacheStats> stats;
-  std::atomic<size_t> cache_directory_count;
-  std::atomic<size_t> cache_file_count;
+  std::atomic<size_t> directory_count;
+  std::atomic<size_t> file_count;
+
+
+  // size limitation (eviction)
+  std::atomic<size_t> directory_limit;
+  std::atomic<size_t> file_limit;
+  std::atomic<bool> should_exit;
+  std::thread evict_items_thread;
+
+  bool evict_items();
+  void evict_items_thread_routine();
 };

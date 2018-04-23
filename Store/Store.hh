@@ -24,30 +24,30 @@ public:
   };
 
   virtual void set_autocreate_rules(
-      const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules);
+      const std::vector<std::pair<std::string, SeriesMetadata>>& autocreate_rules);
 
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
-      UpdateMetadataBehavior update_behavior) = 0;
-  virtual std::unordered_map<std::string, std::string> delete_series(
-      const std::vector<std::string>& key_names) = 0;
+      UpdateMetadataBehavior update_behavior, bool local_only) = 0;
+  virtual std::unordered_map<std::string, int64_t> delete_series(
+      const std::vector<std::string>& patterns, bool local_only) = 0;
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
-      int64_t end_time) = 0;
+      int64_t end_time, bool local_only) = 0;
   virtual std::unordered_map<std::string, std::string> write(
-      const std::unordered_map<std::string, Series>& data) = 0;
+      const std::unordered_map<std::string, Series>& data, bool local_only) = 0;
 
   virtual std::unordered_map<std::string, FindResult> find(
-      const std::vector<std::string>& patterns) = 0;
+      const std::vector<std::string>& patterns, bool local_only) = 0;
 
   virtual void flush();
 
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
 
-  virtual int64_t delete_from_cache(const std::string& paths);
-  virtual int64_t delete_pending_writes(const std::string& paths);
+  virtual int64_t delete_from_cache(const std::string& paths, bool local_only);
+  virtual int64_t delete_pending_writes(const std::string& paths, bool local_only);
 
   virtual std::string str() const = 0;
 
@@ -69,5 +69,5 @@ protected:
   SeriesMetadata get_autocreate_metadata_for_key(const std::string& key_name);
 
   std::unordered_map<std::string, std::string> resolve_patterns(
-      const std::vector<std::string>& key_names);
+      const std::vector<std::string>& key_names, bool local_only);
 };

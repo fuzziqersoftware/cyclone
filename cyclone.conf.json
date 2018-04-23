@@ -3,36 +3,48 @@
 
   // Most changes to this file are not reflected until the server is restarted.
   // Some fields can be updated automatically without restarting; these are
-  // explicitly noted below. Cyclone will notice changes in this file at most 10
-  // seconds after they're made.
+  // explicitly noted below. Cyclone will notice changes in this file within 10
+  // seconds of the file being written.
 
-  // List of addresses on which to listen for HTTP connections. Items in this
-  // list must be one of the following formats:
+  // List of addresses on which to listen for HTTP connections. Each item in
+  // this list must be one of the following formats:
   // - an int, to listen on that port on all interfaces.
   // - a string of "address:port", to listen on a specific interface.
   // - a string without a : in it, to listen on a Unix socket.
   // If no addresses are given, Cyclone will not run its HTTP server.
   "http_listen": [5050],
 
-  // List of addresses on which to listen for the Graphite line stream protocol.
-  // This field's semantics are the same as for http_listen above.
+  // List of addresses on which to listen for connections using the Graphite
+  // line stream protocol. This field's semantics are the same as for
+  // http_listen above.
   "line_stream_listen": [2003],
 
-  // List of addresses on which to listen for the Graphite line datagram
-  // protocol. This field's semantics are the same as for http_listen above.
+  // List of addresses on which to listen for connections using the Graphite
+  // line datagram protocol. This field's semantics are the same as for
+  // http_listen above.
   "line_datagram_listen": [2003],
 
-  // List of addresses on which to listen for the Graphite pickle protocol. This
-  // field's semantics are the same as for http_listen above.
+  // List of addresses on which to listen for connections using the Graphite
+  // pickle protocol. This field's semantics are the same as for http_listen
+  // above.
   "pickle_listen": [2004],
+
+  // List of addresses on which to listen for connections using the Cyclone
+  // shell protocol. This protocol is a way to interact with Cyclone from the
+  // terminal for manual changes (writing datapoints manually, creating or
+  // deleting series, etc.). This field's semantics are the same as for
+  // http_listen above.
+  "shell_listen": [2001],
 
   // Port on which to run the Thrift server. Unlike the other servers, only a
   // single port can be given here, and Unix sockets can't be used. If this is
-  // set to zero, Cyclone will not run its Thrift server.
+  // set to zero, Cyclone will not run its Thrift server. The remote store (see
+  // below) uses the Thrift interface, so this must not be zero if this node is
+  // part of a cluster.
   "thrift_port": 2000,
 
   // Number of threads to service requests for each type of server. The line
-  // receiver and pickle interfaces are both handled by the stream server.
+  // stream, pickle, and shell interfaces are all handled by the stream server.
   "http_threads": 4,
   "stream_threads": 4,
   "datagram_threads": 4,
@@ -50,24 +62,37 @@
   "stats_report_usecs": 60000000,
 
   // Maximum number of Whisper database files to keep open at once. This field
-  // can be changed without restarting the server.
+  // can be changed without restarting the server. If you decrease this field
+  // by a large amount, the server may block queries for a short time while
+  // evicting open files.
   "open_file_cache_size": 16384,
+
+  // Amount of information to write to stderr during operation. Larger numbers
+  // mean less verbosity. The levels are as follows:
+  // 0 - write everything, including debugging messages
+  // 1 - write informational messages (e.g. autocreations), warnings, and errors
+  // 2 - write warnings and errors only
+  // 3 - write errors only
+  // 4 - write nothing
+  "log_level": 1,
 
   // The store configuration specifies how data is accessed. Most setups
   // probably will want to use a write buffer store around a cached disk store,
   // which is what the default configuration uses. There are several types of
   // stores, which can be configured as follows:
   //
-  // -- Hash store: this store distributes data between multiple substores using
-  //    a consistent hashing algorithm. Each substore has a unique name which is
-  //    used as its hash key. The precision parameter must be a nonzero integer.
-  //    If the precision is positive, a constant-time hashing algorithm is used,
-  //    and the precision specifies the number of bits used in the consistent
-  //    hash ring. The ring will use 2^precision bytes of memory. If the
-  //    precision is negative, the Carbon consistent hashing algorithm is used,
-  //    and (-precision) specifies the replica count. Don't change the precision
-  //    after keys have been created - doing so will cause keys to exist in the
-  //    wrong stores. The default precision is -100.
+  // HASH STORE
+  // This store distributes data between multiple substores using a consistent
+  // hashing algorithm. Each substore has a unique name which is used as its
+  // hash key. The precision parameter must be a nonzero integer. If the
+  // precision is positive, a constant-time distribution algorithm is used, and
+  // the precision specifies the number of bits used in the ring. The ring will
+  // use 2^precision bytes of memory. If the precision is negative, the Carbon
+  // consistent hashing algorithm is used, and (-precision) specifies the
+  // replica count. Don't change the precision after keys have been created;
+  // doing so will cause keys to exist in the wrong stores. The default
+  // precision is -100. The precision can be changed without restarting the
+  // server.
   // {
   //   "store_type": "hash",
   //   "precision": 20,
@@ -78,8 +103,9 @@
   //   }
   // }
   //
-  // -- Multi store: this store replicates data between multiple substores. All
-  //    writes are sent to all stores.
+  // MULTI STORE
+  // This store replicates data between multiple substores. All queries are sent
+  // to all stores, and the results are merged before returning to the caller.
   // {
   //   "store_type": "multi",
   //   "stores": {
@@ -89,15 +115,18 @@
   //   }
   // }
   //
-  // -- Remote store: this store forwards all of its read and write requests to
-  //    a remote Cyclone server via the Thrift interface. This store uses
-  //    persistent connections, closing them only if the number of connections
-  //    exceeds connection_cache_count or when an error occurs. If
-  //    connection_cache_count is 0, the connection cache size is unlimited, and
-  //    connections are only closed on errors. At any time, the open connection
-  //    count will be at least the number of currently-executing remote queries.
-  //    This can be limited by wrapping a remote store in a write buffer store;
-  //    each thread of the write buffer store makes only one query at a time.
+  // REMOTE STORE
+  // This store forwards all of its read and write requests to a remote Cyclone
+  // server via the Thrift interface. This store uses persistent connections,
+  // closing them only if the number of connections exceeds
+  // connection_cache_count or when an error occurs. If connection_cache_count
+  // is 0, the connection cache size is unlimited, and connections are only
+  // closed on errors. At any time, the open connection count will be at least
+  // the number of currently-executing remote queries, which can exceed the
+  // connection cache limit. This can be limited by wrapping a remote store in a
+  // write buffer store; each thread of the write buffer store makes only one
+  // query at a time. All parameters for remote stores can be changed without
+  // restarting the server.
   // {
   //   "store_type": "remote",
   //   "hostname": "remote-server1",
@@ -105,31 +134,42 @@
   //   "port": 2000, // thrift port on the remote server
   // }
   //
-  // -- Disk store: this store reads and writes data in whisper files in a local
-  //    data directory. It caches open file descriptors, but does not cache any
-  //    file metadata, so files can be modified on disk by other processes in
-  //    the background and Cyclone won't get confused. However, if you delete
-  //    files, they may still be open in cyclone's cache, and won't get
-  //    recreated if new data is received that would be written to them. It's
-  //    recommended to delete entire series using the Thrift interface instead.
+  // DISK STORE
+  // This store reads and writes data in whisper files in a local data
+  // directory. It caches open file descriptors, but does not cache any file
+  // metadata, so files can be modified on disk by other processes in the
+  // background and Cyclone won't get confused. However, if you delete files,
+  // they may still be open in cyclone's cache, and won't get recreated if new
+  // data is received that would be written to them. It's recommended to delete
+  // entire series using the Thrift or shell interface instead. The directory
+  // can be changed without restarting the server.
   // {
   //   "store_type": "disk",
   //   "directory": "/path/to/cyclone/data",
   // }
   //
-  // -- Cached disk store: same as the disk store, but maintains a metadata
-  //    cache on top of the disk, reducing the number of reads on the underlying
-  //    disk. The cache is automatically populated and doesn't have config
-  //    options. Unlike the non-cached disk store, operating on the underlying
-  //    Whisper files in any way while the server is running is not recommended.
+  // CACHED DISK STORE
+  // Same as the disk store, but maintains a metadata cache on top of the disk,
+  // reducing the number of reads on the underlying disk. The cache is
+  // automatically populated and doesn't have any configuration options. Unlike
+  // the non-cached disk store, operating on the underlying Whisper files by
+  // other processes while the server is running may result in erroneous
+  // behavior. The directory and file limits control the maximum number of items
+  // of each type that will be kept in memory - when the item counts reach these
+  // limits, the cache will evict the least recently used files and directories.
+  // All parameters can be changed without restarting the server; note that
+  // the directory will delete everything from the cache.
   // {
   //   "store_type": "cached_disk",
   //   "directory": "/path/to/cyclone/data",
+  //   "directory_limit": 100000,
+  //   "file_limit": 10000000,
   // }
   //
-  // -- Write buffer: this store wraps another store and batches writes to the
-  //    underlying store. The writes are flushed asynchronously in a set of
-  //    background threads.
+  // WRITE BUFFER
+  // This store wraps another store and batches writes to the underlying store.
+  // The writes are flushed asynchronously in a set of background threads. The
+  // batch size can be changed without restarting the server.
   // {
   //   "store_type": "write_buffer",
   //   "num_write_threads": 4,
@@ -137,18 +177,64 @@
   //   "substore": {...}, // config for the wrapped store
   // }
   //
-  // -- Read only: this store wraps another store and prevents writes to the
-  //    underlying store.
+  // READ ONLY
+  // This store prevents writes to the underlying store.
   // {
   //   "store_type": "read_only",
   //   "substore": {...}, // config for the wrapped store
   // }
   //
-  // -- Empty store: this store discards all writes and returns empty results
-  //    for all reads, sort of like MySQL's BLACKHOLE and Linux's /dev/null.
+  // EMPTY STORE
+  // This store discards all writes and returns empty results for all reads,
+  // sort of like MySQL's BLACKHOLE and Linux's /dev/null.
   // {
   //   "store_type": "empty",
   // }
+  //
+  // When using Cyclone in a clustered setup, usually a hash store should be
+  // used to distribute work among the cluster. Each node should have a write
+  // buffer store wrapping a hash store, which contains a substore for each
+  // node. The substore corresponding to the local host should be some kind of
+  // disk store, and the others should be remove stores. For example, in a
+  // cluster consisting of node1, node2, node3, and node4, the store
+  // configuration on node2 may look something like this:
+  // {
+  //   "type": "write_buffer",
+  //   "num_write_threads": 4,
+  //   "batch_size": 100,
+  //   "substore": {
+  //     "type": "hash",
+  //     "precision": -100,
+  //     "stores": {
+  //       "node1": {
+  //         "type": "remote",
+  //         "hostname": "node1",
+  //         "connection_cache_count": 8,
+  //         "port": 2000,
+  //       },
+  //       "node2": {
+  //         "type": "cached_disk",
+  //         "directory": "/cyclone-data",
+  //       },
+  //       "node3": {
+  //         "type": "remote",
+  //         "hostname": "node3",
+  //         "connection_cache_count": 8,
+  //         "port": 2000,
+  //       },
+  //       "node4": {
+  //         "type": "remote",
+  //         "hostname": "node4",
+  //         "connection_cache_count": 8,
+  //         "port": 2000,
+  //       },
+  //     },
+  //   },
+  // }
+  //
+  // The default store configuration uses a cached disk store wrapped by a
+  // write buffer store. This configuration is generally sufficient for a
+  // standalone setup.
   "store_config": {
     "type": "write_buffer",
     "num_write_threads": 4,
@@ -159,10 +245,10 @@
     },
   },
 
-  // Rules for automatic series creation. When Cyclone receives writes for
-  // series that don't exist, it checks if the key name matches any of these
+  // Rules for automatic series creation. When Cyclone receives a write for
+  // a series that doesn't exist, it checks if the key name matches any of these
   // rules (in order) and automatically creates the series with the given
-  // parameters for the first rule that matches. If no rules match, the data is
+  // parameters for the first rule that matches. If no rules match, the write is
   // discarded.
   //
   // Rules are 4-tuples of this format:
@@ -176,7 +262,8 @@
   // -- Retentions are comma-separated pairs of "seconds_per_point:num_points".
   //    Either of these quantities may be expressed in a time length instead of
   //    a bare number; e.g. "1m:90d" means to retain one datapoint per minute
-  //    for 90 days.
+  //    for 90 days. This is equivalent to "60:129600" (there are 129600 minutes
+  //    in 90 days).
   // -- The x_files_factor is the proportion of datapoints that must be present
   //    in each interval for a propagation to occur to the next lower
   //    resolution.
@@ -186,8 +273,8 @@
   //
   // The autocreate rules can be changed without restarting the server.
   "autocreate_rules": [
-    ["cyclone.**", "60:30d,3600:120d", 0, "average"],
-    ["test_autocreate.**.autokey", "60:90d", 0, "average"],
+    ["cyclone.**", "1m:30d,1h:120d", 0, "average"],
+    ["test_autocreate.**.autokey", "1m:90d", 0, "average"],
     ["test_autocreate.*.autokey", "120:90d", 0, "average"],
     ["**.autokey", "1800:90d", 0, "average"],
     ["**", "3600:90d", 0, "average"],

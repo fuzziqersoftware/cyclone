@@ -17,7 +17,7 @@ using namespace std;
 
 unordered_map<string, string> EmptyStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
-    UpdateMetadataBehavior update_behavior) {
+    UpdateMetadataBehavior update_behavior, bool local_only) {
 
   unordered_map<string, string> ret;
   for (const auto& it : metadata) {
@@ -26,18 +26,18 @@ unordered_map<string, string> EmptyStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, string> EmptyStore::delete_series(
-    const vector<string>& key_names) {
-
-  unordered_map<string, string> ret;
-  for (const auto& it : key_names) {
-    ret.emplace(it, "");
+unordered_map<string, int64_t> EmptyStore::delete_series(
+    const vector<string>& patterns, bool local_only) {
+  unordered_map<string, int64_t> ret;
+  for (const auto& pattern : patterns) {
+    ret.emplace(pattern, 0);
   }
   return ret;
 }
 
 unordered_map<string, unordered_map<string, ReadResult>> EmptyStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time) {
+    const vector<string>& key_names, int64_t start_time, int64_t end_time,
+    bool local_only) {
 
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : key_names) {
@@ -47,7 +47,7 @@ unordered_map<string, unordered_map<string, ReadResult>> EmptyStore::read(
 }
 
 unordered_map<string, string> EmptyStore::write(
-    const unordered_map<string, Series>& data) {
+    const unordered_map<string, Series>& data, bool local_only) {
 
   unordered_map<string, string> ret;
   for (const auto& it : data) {
@@ -57,7 +57,7 @@ unordered_map<string, string> EmptyStore::write(
 }
 
 unordered_map<string, FindResult> EmptyStore::find(
-    const vector<string>& patterns) {
+    const vector<string>& patterns, bool local_only) {
 
   unordered_map<string, FindResult> ret;
   for (const auto& it : patterns) {

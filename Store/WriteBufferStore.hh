@@ -18,31 +18,38 @@ public:
   WriteBufferStore(std::shared_ptr<Store> store, size_t num_write_threads,
       size_t batch_size);
   virtual ~WriteBufferStore();
-
   const WriteBufferStore& operator=(const WriteBufferStore& rhs) = delete;
+
+  size_t get_batch_size() const;
+  void set_batch_size(size_t new_value);
+
+  std::shared_ptr<Store> get_substore() const;
+
+  virtual void set_autocreate_rules(
+      const std::vector<std::pair<std::string, SeriesMetadata>>& autocreate_rules);
 
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
-      UpdateMetadataBehavior update_behavior);
-  virtual std::unordered_map<std::string, std::string> delete_series(
-      const std::vector<std::string>& key_names);
+      UpdateMetadataBehavior update_behavior, bool local_only);
+  virtual std::unordered_map<std::string, int64_t> delete_series(
+      const std::vector<std::string>& patterns, bool local_only);
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
-      int64_t end_time);
+      int64_t end_time, bool local_only);
   virtual std::unordered_map<std::string, std::string> write(
-      const std::unordered_map<std::string, Series>& data);
+      const std::unordered_map<std::string, Series>& data, bool local_only);
 
   virtual std::unordered_map<std::string, FindResult> find(
-      const std::vector<std::string>& patterns);
+      const std::vector<std::string>& patterns, bool local_only);
 
   virtual void flush();
 
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
 
-  virtual int64_t delete_from_cache(const std::string& path);
-  virtual int64_t delete_pending_writes(const std::string& pattern);
+  virtual int64_t delete_from_cache(const std::string& path, bool local_only);
+  virtual int64_t delete_pending_writes(const std::string& pattern, bool local_only);
 
   virtual std::string str() const;
 

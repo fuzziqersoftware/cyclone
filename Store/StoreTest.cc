@@ -124,10 +124,11 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   string pattern2 = "test.NoSuchDirectory*";
   string pattern3 = "test.DiskStore.no_such_key*";
   string pattern4 = "test.DiskStore.*";
+  string pattern5 = "test.autocreate.**";
 
   {
     printf("-- [%s:basic_test] read from nonexistent series\n", store_name.c_str());
-    auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
+    auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false);
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
     expect_eq("", ret.at(key_name1).at(key_name1).error);
@@ -145,7 +146,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] write to nonexistent series (no autocreate)\n", store_name.c_str());
-    auto ret = s->write(write_data);
+    auto ret = s->write(write_data, false);
     expect_eq(1, ret.size());
     expect_eq(is_write_buffer, ret.at(key_name1).empty());
     s->flush();
@@ -154,7 +155,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] find with no results\n", store_name.c_str());
-    auto ret = s->find({pattern1});
+    auto ret = s->find({pattern1}, false);
     expect_eq(1, ret.size());
     expect(ret.at(pattern1).error.empty());
     expect(ret.at(pattern1).results.empty());
@@ -174,19 +175,19 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   // none of these should create the series
   {
     printf("-- [%s:basic_test] update_metadata (no-op) on nonexistent series\n", store_name.c_str());
-    auto ret1 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Ignore);
+    auto ret1 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Ignore, false);
     expect_eq(1, ret1.size());
     expect_eq(is_write_buffer, ret1.at(key_name1).empty());
     s->flush();
     expect(!isfile(key_filename1));
 
-    auto ret2 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Update);
+    auto ret2 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Update, false);
     expect_eq(1, ret2.size());
     expect_eq(is_write_buffer, ret2.at(key_name1).empty());
     s->flush();
     expect(!isfile(key_filename1));
 
-    auto ret3 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate);
+    auto ret3 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false);
     expect_eq(1, ret3.size());
     expect_eq(is_write_buffer, ret3.at(key_name1).empty());
     s->flush();
@@ -195,7 +196,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] update_metadata (create) on nonexistent series\n", store_name.c_str());
-    auto ret = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore);
+    auto ret = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     if (is_write_buffer) {
@@ -207,13 +208,13 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] update_metadata (no-op) on existing series\n", store_name.c_str());
-    auto ret1 = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore);
+    auto ret1 = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false);
     expect_eq(1, ret1.size());
     expect_eq(is_write_buffer, ret1.at(key_name1).empty());
     s->flush();
     expect(isfile(key_filename1));
 
-    auto ret2 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Ignore);
+    auto ret2 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Ignore, false);
     expect_eq(1, ret2.size());
     expect_eq(is_write_buffer, ret2.at(key_name1).empty());
     s->flush();
@@ -222,7 +223,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] update_metadata (recreate) on existing series\n", store_name.c_str());
-    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate);
+    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     s->flush();
@@ -231,19 +232,18 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] read from series with no data\n", store_name.c_str());
-    auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
+    auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false);
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
     expect(ret.at(key_name1).at(key_name1).error.empty());
     expect(ret.at(key_name1).at(key_name1).data.empty());
-    fprintf(stderr, "%" PRIu64 " %" PRIu64 "\n", metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
     expect_eq(metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
     expect(isfile(key_filename1));
   }
 
   {
     printf("-- [%s:basic_test] write datapoint to existing series\n", store_name.c_str());
-    auto ret = s->write(write_data);
+    auto ret = s->write(write_data, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     expect(isfile(key_filename1));
@@ -254,7 +254,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     // note: we repeat this read twice since the first time is before the flush
     // (return value should be the same before and after flushing)
     for (int x = 0; x < 2; x++) {
-      auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
+      auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false);
       expect_eq(1, ret.size());
       expect_eq(1, ret.at(key_name1).size());
       expect(ret.at(key_name1).at(key_name1).error.empty());
@@ -270,7 +270,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   {
     printf("-- [%s:basic_test] update_metadata (update) on existing series with data\n", store_name.c_str());
     metadata.x_files_factor = 1.0;
-    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Update);
+    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Update, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     expect(isfile(key_filename1));
@@ -279,7 +279,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] read from series with data after metadata update\n", store_name.c_str());
-    auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
+    auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false);
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
     expect(ret.at(key_name1).at(key_name1).error.empty());
@@ -293,7 +293,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   {
     printf("-- [%s:basic_test] update_metadata (recreate) on existing series with data\n", store_name.c_str());
     metadata.x_files_factor = 1.0;
-    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate);
+    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     expect(isfile(key_filename1));
@@ -301,7 +301,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] read from series with no data\n", store_name.c_str());
-    auto ret = s->read({key_name1}, test_now - 10 * 60, test_now);
+    auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false);
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
     expect(ret.at(key_name1).at(key_name1).error.empty());
@@ -312,7 +312,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] find with directory result\n", store_name.c_str());
-    auto ret = s->find({pattern1});
+    auto ret = s->find({pattern1}, false);
     expect_eq(1, ret.size());
     expect(ret.at(pattern1).error.empty());
     expect_eq(1, ret.at(pattern1).results.size());
@@ -321,7 +321,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] find with non-matching directory result\n", store_name.c_str());
-    auto ret = s->find({pattern2});
+    auto ret = s->find({pattern2}, false);
     expect_eq(1, ret.size());
     expect(ret.at(pattern2).error.empty());
     expect(ret.at(pattern2).results.empty());
@@ -329,7 +329,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] find with file result\n", store_name.c_str());
-    auto ret = s->find({pattern4});
+    auto ret = s->find({pattern4}, false);
     expect_eq(1, ret.size());
     expect(ret.at(pattern4).error.empty());
     expect_eq(1, ret.at(pattern4).results.size());
@@ -338,7 +338,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] find with non-matching file result\n", store_name.c_str());
-    auto ret = s->find({pattern3});
+    auto ret = s->find({pattern3}, false);
     expect_eq(1, ret.size());
     expect(ret.at(pattern3).error.empty());
     expect(ret.at(pattern3).results.empty());
@@ -348,7 +348,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] update_metadata mixed create and ignore\n", store_name.c_str());
     expect(!isfile(key_filename2));
     metadata_map[key_name2] = metadata_map.at(key_name1);
-    auto ret1 = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore);
+    auto ret1 = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false);
     expect_eq(2, ret1.size());
     expect(!ret1.at(key_name1).empty());
     expect(ret1.at(key_name2).empty());
@@ -360,7 +360,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] find with mixed directory and file results\n", store_name.c_str());
-    auto ret = s->find({pattern1, pattern4});
+    auto ret = s->find({pattern1, pattern4}, false);
     expect_eq(2, ret.size());
 
     auto& result1 = ret.at(pattern1);
@@ -378,7 +378,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] read from nonexistent series (autocreate)\n", store_name.c_str());
-    auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now);
+    auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now, false);
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(autocreate_key_name).size());
     expect_eq("", ret.at(autocreate_key_name).at(autocreate_key_name).error);
@@ -393,7 +393,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     unordered_map<string, Series> this_write_data;
     this_write_data.emplace(autocreate_key_name, write_data.at(key_name1));
     expect(!isfile(autocreate_key_name));
-    auto ret = s->write(this_write_data);
+    auto ret = s->write(this_write_data, false);
     expect_eq(1, ret.size());
     expect(ret.at(autocreate_key_name).empty());
     expect(isfile(key_filename1));
@@ -405,7 +405,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] read from series created by autocreate\n", store_name.c_str());
-    auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now);
+    auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now, false);
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(autocreate_key_name).size());
     expect(ret.at(autocreate_key_name).at(autocreate_key_name).error.empty());
@@ -418,9 +418,9 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] delete series\n", store_name.c_str());
-    auto ret = s->delete_series({key_name1, autocreate_key_name});
-    expect(ret.at(key_name1).empty());
-    expect(ret.at(autocreate_key_name).empty());
+    auto ret = s->delete_series({pattern4, autocreate_key_name}, false);
+    expect_eq(1, ret.at(pattern4));
+    expect_eq(1, ret.at(autocreate_key_name));
     expect_eq(2, ret.size());
     expect(!isfile(key_filename1));
     expect(isfile(key_filename2));
@@ -437,7 +437,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] find after deletion\n", store_name.c_str());
-    auto ret = s->find({pattern1, pattern4});
+    auto ret = s->find({pattern1, pattern4}, false);
     expect(ret.at(pattern1).error.empty());
     expect_eq(key_name2, ret.at(pattern1).results[0]);
     expect_eq(1, ret.at(pattern1).results.size());
@@ -492,14 +492,14 @@ int main(int argc, char* argv[]) {
     // cached_disk_store leaves files open.
 
     recreate_directory(data_directory);
-    shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory));
+    shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 100, 100));
     cached_disk_store->set_autocreate_rules(autocreate_rules);
     run_basic_test(cached_disk_store, "CachedDiskStore", data_directory);
 
     // have to recreate the CachedDiskStore for this test because it will
     // remember test.key2
     recreate_directory(data_directory);
-    cached_disk_store.reset(new CachedDiskStore(data_directory));
+    cached_disk_store.reset(new CachedDiskStore(data_directory, 100, 100));
     cached_disk_store->set_autocreate_rules(autocreate_rules);
     shared_ptr<Store> buffer_on_cached_disk_store(new WriteBufferStore(cached_disk_store, 0, 0));
     run_basic_test(buffer_on_cached_disk_store, "WriteBufferStore(CachedDiskStore)", data_directory, true);

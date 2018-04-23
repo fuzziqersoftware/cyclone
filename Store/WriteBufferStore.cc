@@ -21,8 +21,8 @@ using namespace std;
 
 WriteBufferStore::WriteBufferStore(shared_ptr<Store> store,
     size_t num_write_threads, size_t batch_size) : Store(), store(store),
-    queue(), queue_lock(), batch_size(batch_size), should_exit(false),
-    write_threads() {
+    queued_update_metadatas(0), queued_writes(0), queued_datapoints(0),
+    batch_size(batch_size), should_exit(false) {
   while (this->write_threads.size() < num_write_threads) {
     this->write_threads.emplace_back(&WriteBufferStore::write_thread_routine, this);
   }
@@ -35,9 +35,27 @@ WriteBufferStore::~WriteBufferStore() {
   }
 }
 
+size_t WriteBufferStore::get_batch_size() const {
+  return this->batch_size;
+}
+
+void WriteBufferStore::set_batch_size(size_t new_value) {
+  this->batch_size = new_value;
+}
+
+shared_ptr<Store> WriteBufferStore::get_substore() const {
+  return this->store;
+}
+
+void WriteBufferStore::set_autocreate_rules(
+    const vector<pair<string, SeriesMetadata>>& autocreate_rules) {
+  this->Store::set_autocreate_rules(autocreate_rules);
+  this->store->set_autocreate_rules(autocreate_rules);
+}
+
 unordered_map<string, string> WriteBufferStore::update_metadata(
       const SeriesMetadataMap& metadata_map, bool create_new,
-      UpdateMetadataBehavior update_behavior) {
+      UpdateMetadataBehavior update_behavior, bool local_only) {
 
   unordered_map<string, string> ret;
 
@@ -87,33 +105,37 @@ unordered_map<string, string> WriteBufferStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, string> WriteBufferStore::delete_series(
-    const vector<string>& key_names) {
+unordered_map<string, int64_t> WriteBufferStore::delete_series(
+    const vector<string>& patterns, bool local_only) {
   // remove any pending writes/creates
+
+  // we move the items out of the map so the destructors will be called
+  // outside of the lock context
+  // TODO: make patterns work here... currently we only match key names
+  vector<QueueItem> items_to_delete;
   {
-    // we move the items out of the map so the destructors will be called
-    // outside of the lock context
-    // TODO: make sure doing this doesn't call the copy constructor, lolz
-    vector<QueueItem> items_to_delete;
-    {
-      rw_guard g(this->queue_lock, true);
-      for (const auto& key_name : key_names) {
-        auto it = this->queue.find(key_name);
-        if (it == this->queue.end()) {
-          continue;
-        }
-        items_to_delete.emplace_back(move(it->second));
-        this->queue.erase(it);
+    rw_guard g(this->queue_lock, true);
+    for (const auto& key_name : patterns) {
+      auto it = this->queue.find(key_name);
+      if (it == this->queue.end()) {
+        continue;
       }
+      items_to_delete.emplace_back(move(it->second));
+      this->queue.erase(it);
     }
   }
 
   // issue the delete to the underlying store
-  return this->store->delete_series(key_names);
+  return this->store->delete_series(patterns, local_only);
+
+  // items_to_delete are deleted here. importantly, this is after we call
+  // delete_series on the substore to minimize the time between removing the
+  // pending writes from the queue and deleting the keys in the substore
 }
 
 unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time) {
+    const vector<string>& key_names, int64_t start_time, int64_t end_time,
+    bool local_only) {
   // TODO: merge with writes in progress somehow, so data in the process of
   // being written isn't temporarily invisible. this will be nontrivial since we
   // pop things from the queue in the write threads - there could be data on the
@@ -124,7 +146,7 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
   //    writes via ConsistentHashRing (will need a special case for
   //    num_threads=0)
 
-  auto ret = this->store->read(key_names, start_time, end_time);
+  auto ret = this->store->read(key_names, start_time, end_time, local_only);
 
   for (auto& it : ret) { // (pattern, key_to_result)
     for (auto& it2 : it.second) { // (key, result)
@@ -255,7 +277,7 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
 }
 
 unordered_map<string, string> WriteBufferStore::write(
-    const unordered_map<string, Series>& data) {
+    const unordered_map<string, Series>& data, bool local_only) {
   unordered_map<string, string> ret;
   for (const auto& it : data) {
     ret.emplace(it.first, "");
@@ -288,9 +310,9 @@ unordered_map<string, string> WriteBufferStore::write(
 }
 
 unordered_map<string, FindResult> WriteBufferStore::find(
-    const vector<string>& patterns) {
+    const vector<string>& patterns, bool local_only) {
   // the comment in read() about data temporarily disappearing applies here too
-  auto ret = this->store->find(patterns);
+  auto ret = this->store->find(patterns, local_only);
 
   // merge the find results with the create queue
   for (auto& it : ret) {
@@ -399,7 +421,7 @@ void WriteBufferStore::flush() {
       // if archive_args isn't empty, there was an update_metadata request
       if (!command.metadata.archive_args.empty()) {
         this->store->update_metadata({{key_name, command.metadata}},
-            command.create_new, command.update_behavior);
+            command.create_new, command.update_behavior, false);
       }
 
       // if data isn't empty, there was a write request
@@ -422,7 +444,7 @@ void WriteBufferStore::flush() {
   uint64_t lock_end_time = now();
 
   if (!write_batch.empty()) {
-    this->store->write(write_batch);
+    this->store->write(write_batch, false);
   }
 
   uint64_t end_time = now();
@@ -446,11 +468,13 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
   return ret;
 }
 
-int64_t WriteBufferStore::delete_from_cache(const std::string& path) {
-  return this->store->delete_from_cache(path);
+int64_t WriteBufferStore::delete_from_cache(const std::string& path,
+    bool local_only) {
+  return this->store->delete_from_cache(path, local_only);
 }
 
-int64_t WriteBufferStore::delete_pending_writes(const string& pattern) {
+int64_t WriteBufferStore::delete_pending_writes(const string& pattern,
+    bool local_only) {
 
   // if the pattern is '*' or empty, delete everything
   if (pattern.empty() || (pattern == "*")) {
@@ -465,7 +489,8 @@ int64_t WriteBufferStore::delete_pending_writes(const string& pattern) {
       this->queued_datapoints = 0;
     }
 
-    return local_queue.size() + this->store->delete_pending_writes(pattern);
+    return local_queue.size() + this->store->delete_pending_writes(
+        pattern, local_only);
   }
 
   // else, delete everything that matches the pattern
@@ -496,7 +521,8 @@ int64_t WriteBufferStore::delete_pending_writes(const string& pattern) {
   this->queued_writes -= num_writes_deleted;
   this->queued_datapoints -= num_datapoints_deleted;
 
-  return num_queue_items_deleted + this->store->delete_pending_writes(pattern);
+  return num_queue_items_deleted + this->store->delete_pending_writes(
+      pattern, local_only);
 }
 
 string WriteBufferStore::str() const {
@@ -546,9 +572,15 @@ void WriteBufferStore::write_thread_routine() {
 
       // if archive_args isn't empty, there was a create request
       if (!command.metadata.archive_args.empty()) {
-        this->store->update_metadata({{key_name, command.metadata}},
-            command.create_new, command.update_behavior);
-        this->queued_update_metadatas--;
+        try {
+          this->store->update_metadata({{key_name, command.metadata}},
+              command.create_new, command.update_behavior, false);
+          this->queued_update_metadatas--;
+        } catch (const exception& e) {
+          log(WARNING, "[WriteBufferStore] update_metadata failed on key=%s (%s)",
+              key_name.c_str(), e.what());
+          continue;
+        }
       }
 
       // if data isn't empty, there was a write request
@@ -566,9 +598,16 @@ void WriteBufferStore::write_thread_routine() {
     }
 
     if (!write_batch.empty()) {
-      this->store->write(write_batch);
+      try {
+        this->store->write(write_batch, false);
+        this->queued_datapoints -= write_batch_datapoints;
+      } catch (const exception& e) {
+        log(WARNING, "[WriteBufferStore] write failed for batch of %zu keys (%s)",
+            write_batch.size(), e.what());
+      }
     }
-    this->queued_datapoints -= write_batch_datapoints;
+
+    // TODO: if there were failed items, put them back in the queue
 
     // if there was nothing to do, wait a second
     if (commands.empty()) {
