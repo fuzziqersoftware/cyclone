@@ -292,6 +292,7 @@ unordered_map<string, string> WriteBufferStore::write(
           forward_as_tuple(it.first), forward_as_tuple(it.second));
       if (emplace_ret.second) {
         this->queued_writes++;
+        this->queued_datapoints += emplace_ret.first->second.data.size();
       } else {
         // there was already a queue for this key; need to merge the contents
         auto& existing_key_data = emplace_ret.first->second.data;
