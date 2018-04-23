@@ -61,6 +61,7 @@ protected:
     std::string basename;
 
     KeyPath(const std::string& key_name);
+    std::string str() const;
   };
 
   std::string filename_for_path(const KeyPath& p);

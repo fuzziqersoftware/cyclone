@@ -30,6 +30,16 @@ CachedDiskStore::KeyPath::KeyPath(const string& key_name) :
   this->directories.pop_back();
 }
 
+string CachedDiskStore::KeyPath::str() const {
+  string ret;
+  for (const string& dir : this->directories) {
+    ret += dir;
+    ret += '.';
+  }
+  ret += this->basename;
+  return ret;
+}
+
 string CachedDiskStore::filename_for_path(const KeyPath& p) {
   string filename = this->directory;
   for (const auto& dirname : p.directories) {
@@ -487,7 +497,6 @@ unordered_map<string, string> CachedDiskStore::write(
         ret.emplace(it.first, "series does not exist");
 
       } else {
-        log(INFO, "[CachedDiskStore] autocreating %s", it.first.c_str());
         CacheTraversal t = this->traverse_cache_tree(p, &m);
         t.archive->write(it.second);
         ret.emplace(it.first, "");
@@ -968,6 +977,10 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
     }
 
     // yay we can autocreate it
+    if (log_level() >= INFO) {
+      string key_path_str = p.str();
+      log(INFO, "[CachedDiskStore] autocreating %s", key_path_str.c_str());
+    }
     {
       rw_guard g(t.level->files_lock, true);
       if (t.level->files.emplace(piecewise_construct, forward_as_tuple(p.basename),
