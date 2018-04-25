@@ -66,7 +66,7 @@ class CycloneThriftClient(threading.local):
       return getattr(self.client, k)(*args)
 
   def update_metadata(self, key_name_to_metadata, create_new=True,
-      skip_existing=False, truncate_existing=False):
+      skip_existing=False, truncate_existing=False, local_only=False):
     """Updates series metadata, optionally creating the series.
 
     Arguments:
@@ -81,33 +81,33 @@ class CycloneThriftClient(threading.local):
     the operation succeeded for that key.
 
     """
-    x = {k: metadata_to_thrift(v) for k, v in key_name_to_metadata.iteritems()}
+    x = {k: metadata_to_thrift(v) for k, v in key_name_to_metadata.items()}
     return self._execute_command('update_metadata', x, create_new, skip_existing,
-        truncate_existing)
+        truncate_existing, local_only)
 
-  def delete_series(self, key_names):
+  def delete_series(self, key_names, local_only=False):
     """Deletes entire series.
 
     Returns a dict of {key_name: error_string}. An empty error string means that
     the operation succeeded for that key.
 
     """
-    return self._execute_command('delete_series', key_names)
+    return self._execute_command('delete_series', key_names, local_only)
 
-  def read_metadata(self, key_names):
+  def read_metadata(self, key_names, local_only=False):
     """Reads the metadata for the given keys.
 
     Returns a dict of {key_name: KeyMetadata}. Raises RuntimeError on failure.
 
     """
     results = {}
-    for k, v in self._execute_command('read_metadata', key_names).iteritems():
+    for k, v in self._execute_command('read_metadata', key_names, local_only).items():
       if v.error:
         raise RuntimeError(v)
       results[k] = metadata_from_thrift(v.metadata)
     return results
 
-  def read(self, key_names, start_time, end_time):
+  def read(self, key_names, start_time, end_time, local_only=False):
     """Reads data from the given keys.
 
     Returns a dict of {key_name: ReadResult}. ReadResult objects have these
@@ -118,10 +118,10 @@ class CycloneThriftClient(threading.local):
 
     """
     thrift_results = self._execute_command('read', key_names, start_time,
-        end_time)
+        end_time, local_only)
 
     results = {}
-    for k, v in thrift_results.iteritems():
+    for k, v in thrift_results.items():
       if v.error:
         raise RuntimeError(v)
       v.metadata = metadata_from_thrift(v.metadata)
@@ -129,19 +129,19 @@ class CycloneThriftClient(threading.local):
       results[k] = v
     return results
 
-  def write(self, key_name_to_datapoints):
+  def write(self, key_name_to_datapoints, local_only=False):
     """Sends datapoints to Cyclone.
 
     key_to_datapoints is a dict of {key_name: [(timestamp, value), ...]}.
 
     """
     thrift_args = {}
-    for key_name, datapoints in key_name_to_datapoints.iteritems():
+    for key_name, datapoints in key_name_to_datapoints.items():
       thrift_args[key_name] = [cyclone_types.Datapoint(timestamp=x[0], value=x[1]) for x in datapoints]
 
-    return self._execute_command('write', thrift_args)
+    return self._execute_command('write', thrift_args, local_only)
 
-  def find(self, patterns):
+  def find(self, patterns, local_only=False):
     """Searches for keys matching the given patterns.
 
     Patterns may include:
@@ -155,7 +155,7 @@ class CycloneThriftClient(threading.local):
 
     """
     results = {}
-    for k, v in self._execute_command('find', patterns).iteritems():
+    for k, v in self._execute_command('find', patterns, local_only).items():
       if v.error:
         raise RuntimeError(v)
       results[k] = v.results

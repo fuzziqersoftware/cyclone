@@ -27,7 +27,6 @@ $(EXECUTABLE): gen-cpp $(OBJECTS)
 test: Store/WhisperTest Store/StoreTest cyclone_client/cyclone_if
 	./Store/WhisperTest
 	./Store/StoreTest
-	python3 functional_test.py
 
 Store/WhisperTest: Store/WhisperTest.o Store/Whisper.o $(THRIFT_OBJECTS)
 	$(CXX) -std=c++14 -lstdc++ $^ -o $@ $(LDFLAGS)
