@@ -9,20 +9,21 @@
 
 #include "../gen-cpp/Cyclone.h"
 #include "Store.hh"
+#include "FixedAtomicRotator.hh"
 
 
 class RemoteStore : public Store {
 public:
   RemoteStore() = delete;
   RemoteStore(const RemoteStore& rhs) = delete;
-  RemoteStore(const std::string& hostname, int port, size_t connection_cache_count);
+  RemoteStore(const std::string& hostname, int port, size_t connection_limit);
   virtual ~RemoteStore() = default;
   const RemoteStore& operator=(const RemoteStore& rhs) = delete;
 
-  size_t get_connection_cache_count() const;
+  size_t get_connection_limit() const;
   int get_port() const;
   std::string get_hostname() const;
-  void set_connection_cache_count(size_t new_value);
+  void set_connection_limit(size_t new_value);
   void set_netloc(const std::string& new_hostname, int new_port);
 
   virtual std::unordered_map<std::string, std::string> update_metadata(
@@ -63,5 +64,25 @@ private:
 
   std::string hostname;
   int port;
-  std::atomic<size_t> connection_cache_count;
+  std::atomic<size_t> connection_limit;
+
+  struct Stats : public Store::Stats {
+    std::atomic<size_t> connects;
+    std::atomic<size_t> server_disconnects;
+    std::atomic<size_t> client_disconnects;
+    std::atomic<size_t> update_metadata_commands;
+    std::atomic<size_t> delete_series_commands;
+    std::atomic<size_t> read_commands;
+    std::atomic<size_t> write_commands;
+    std::atomic<size_t> find_commands;
+    std::atomic<size_t> delete_from_cache_commands;
+    std::atomic<size_t> delete_pending_writes_commands;
+
+    Stats();
+    Stats& operator=(const Stats& other);
+
+    std::unordered_map<std::string, int64_t> to_map() const;
+  };
+
+  FixedAtomicRotator<Stats> stats;
 };

@@ -703,7 +703,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
 }
 
 unordered_map<string, int64_t> CachedDiskStore::get_stats(bool rotate) {
-  const CacheStats& current_stats = this->stats[0];
+  const Stats& current_stats = this->stats[0];
 
   if (rotate) {
     this->stats.rotate();
@@ -714,8 +714,10 @@ unordered_map<string, int64_t> CachedDiskStore::get_stats(bool rotate) {
   }
 
   auto ret = current_stats.to_map();
-  ret.emplace("directory_count", this->directory_count.load());
-  ret.emplace("file_count", this->file_count.load());
+  ret.emplace("cache_directory_count", this->directory_count.load());
+  ret.emplace("cache_file_count", this->file_count.load());
+  ret.emplace("cache_directory_limit", this->directory_limit.load());
+  ret.emplace("cache_file_limit", this->file_limit.load());
   return ret;
 }
 
@@ -1001,7 +1003,7 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
   return t;
 }
 
-CachedDiskStore::CacheStats::CacheStats() : Stats(),
+CachedDiskStore::Stats::Stats() : DiskStore::Stats::Stats(),
     directory_hits(0),
     directory_misses(0),
     directory_creates(0),
@@ -1012,9 +1014,9 @@ CachedDiskStore::CacheStats::CacheStats() : Stats(),
     file_creates(0),
     file_deletes(0) { }
 
-CachedDiskStore::CacheStats& CachedDiskStore::CacheStats::operator=(
-      const CachedDiskStore::CacheStats& other) {
-  Stats::operator=(other);
+CachedDiskStore::Stats& CachedDiskStore::Stats::operator=(
+      const CachedDiskStore::Stats& other) {
+  DiskStore::Stats::operator=(other);
 
   this->directory_hits = other.directory_hits.load();
   this->directory_misses = other.directory_misses.load();
@@ -1029,17 +1031,17 @@ CachedDiskStore::CacheStats& CachedDiskStore::CacheStats::operator=(
   return *this;
 }
 
-unordered_map<string, int64_t> CachedDiskStore::CacheStats::to_map() const {
-  auto ret = this->Stats::to_map();
-  ret.emplace("directory_hits", this->directory_hits.load());
-  ret.emplace("directory_misses", this->directory_misses.load());
-  ret.emplace("directory_creates", this->directory_creates.load());
-  ret.emplace("directory_deletes", this->directory_deletes.load());
-  ret.emplace("directory_populates", this->directory_populates.load());
-  ret.emplace("file_hits", this->file_hits.load());
-  ret.emplace("file_misses", this->file_misses.load());
-  ret.emplace("file_creates", this->file_creates.load());
-  ret.emplace("file_deletes", this->file_deletes.load());
+unordered_map<string, int64_t> CachedDiskStore::Stats::to_map() const {
+  auto ret = this->DiskStore::Stats::to_map();
+  ret.emplace("cache_directory_hits", this->directory_hits.load());
+  ret.emplace("cache_directory_misses", this->directory_misses.load());
+  ret.emplace("cache_directory_creates", this->directory_creates.load());
+  ret.emplace("cache_directory_deletes", this->directory_deletes.load());
+  ret.emplace("cache_directory_populates", this->directory_populates.load());
+  ret.emplace("cache_file_hits", this->file_hits.load());
+  ret.emplace("cache_file_misses", this->file_misses.load());
+  ret.emplace("cache_file_creates", this->file_creates.load());
+  ret.emplace("cache_file_deletes", this->file_deletes.load());
   return ret;
 }
 

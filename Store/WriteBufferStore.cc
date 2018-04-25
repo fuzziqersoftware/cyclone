@@ -461,10 +461,11 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
     rw_guard g(this->queue_lock, false);
     queue_length = this->queue.size();
   }
-  ret.emplace("queue_length", queue_length);
-  ret.emplace("queued_update_metadatas", this->queued_update_metadatas);
-  ret.emplace("queued_writes", this->queued_writes);
-  ret.emplace("queued_datapoints", this->queued_datapoints);
+  ret.emplace("queue_commands", queue_length);
+  ret.emplace("queue_update_metadatas", this->queued_update_metadatas);
+  ret.emplace("queue_writes", this->queued_writes);
+  ret.emplace("queue_datapoints", this->queued_datapoints);
+  ret.emplace("queue_batch_size", this->batch_size);
 
   return ret;
 }

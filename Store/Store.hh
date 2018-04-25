@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <unordered_map>
 #include <phosg/Concurrency.hh>
@@ -70,4 +71,14 @@ protected:
 
   std::unordered_map<std::string, std::string> resolve_patterns(
       const std::vector<std::string>& key_names, bool local_only);
+
+  struct Stats {
+    std::atomic<uint64_t> start_time;
+    std::atomic<uint64_t> duration;
+
+    Stats();
+    Stats& operator=(const Stats& other);
+
+    std::unordered_map<std::string, int64_t> to_map() const;
+  };
 };

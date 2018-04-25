@@ -54,10 +54,7 @@ protected:
 
   std::string directory;
 
-  struct Stats {
-    std::atomic<uint64_t> start_time;
-    std::atomic<uint64_t> duration;
-
+  struct Stats : public Store::Stats {
     std::atomic<size_t> directory_creates;
     std::atomic<size_t> directory_deletes;
     std::atomic<size_t> series_creates;

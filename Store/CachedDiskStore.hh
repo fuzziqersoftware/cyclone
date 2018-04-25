@@ -136,7 +136,7 @@ protected:
 
 
   // statistics tracking - these are rotated every minute
-  struct CacheStats : public Stats { // Stats comes from DiskStore
+  struct Stats : public DiskStore::Stats {
     std::atomic<size_t> directory_hits;
     std::atomic<size_t> directory_misses;
     std::atomic<size_t> directory_creates;
@@ -147,12 +147,12 @@ protected:
     std::atomic<size_t> file_creates;
     std::atomic<size_t> file_deletes;
 
-    CacheStats();
-    CacheStats& operator=(const CacheStats& other);
+    Stats();
+    Stats& operator=(const Stats& other);
 
     std::unordered_map<std::string, int64_t> to_map() const;
   };
-  FixedAtomicRotator<CacheStats> stats;
+  FixedAtomicRotator<Stats> stats;
   std::atomic<size_t> directory_count;
   std::atomic<size_t> file_count;
 

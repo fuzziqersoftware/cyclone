@@ -1,6 +1,7 @@
 #include "Store.hh"
 
 #include <phosg/Strings.hh>
+#include <phosg/Time.hh>
 
 #include "Whisper.hh"
 
@@ -182,4 +183,19 @@ unordered_map<string, string> Store::resolve_patterns(
   }
 
   return key_to_pattern;
+}
+
+Store::Stats::Stats() : start_time(now()), duration(0) { }
+
+Store::Stats& Store::Stats::operator=(const Stats& other) {
+  this->start_time = other.start_time.load();
+  this->duration = other.duration.load();
+  return *this;
+}
+
+unordered_map<string, int64_t> Store::Stats::to_map() const {
+  unordered_map<string, int64_t> ret;
+  ret.emplace("start_time", this->start_time.load());
+  ret.emplace("duration", this->duration.load());
+  return ret;
 }

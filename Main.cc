@@ -151,8 +151,8 @@ struct Options {
     if (!type.compare("remote")) {
       string hostname = (*store_config)["hostname"]->as_string();
       int port = (*store_config)["port"]->as_int();
-      int64_t connection_cache_count = (*store_config)["connection_cache_count"]->as_int();
-      return shared_ptr<Store>(new RemoteStore(hostname, port, connection_cache_count));
+      int64_t connection_limit = (*store_config)["connection_limit"]->as_int();
+      return shared_ptr<Store>(new RemoteStore(hostname, port, connection_limit));
     }
 
     if (!type.compare("disk")) {
@@ -286,12 +286,12 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
     } else if (new_type == "remote") {
       RemoteStore* r = reinterpret_cast<RemoteStore*>(base.get());
 
-      size_t new_connection_cache_count = (*new_store_config)["connection_cache_count"]->as_int();
-      if (new_connection_cache_count != r->get_connection_cache_count()) {
-        log(INFO, "%s.remote.connection_cache_count changed from %zu to %zu",
-            prefix.c_str(), r->get_connection_cache_count(),
-            new_connection_cache_count);
-        r->set_connection_cache_count(new_connection_cache_count);
+      size_t new_connection_limit = (*new_store_config)["connection_limit"]->as_int();
+      if (new_connection_limit != r->get_connection_limit()) {
+        log(INFO, "%s.remote.connection_limit changed from %zu to %zu",
+            prefix.c_str(), r->get_connection_limit(),
+            new_connection_limit);
+        r->set_connection_limit(new_connection_limit);
       }
 
       string new_hostname = (*new_store_config)["hostname"]->as_string();

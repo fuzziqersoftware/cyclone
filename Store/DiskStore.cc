@@ -342,7 +342,7 @@ string DiskStore::filename_for_key(const string& key_name, bool is_file) {
   return fname;
 }
 
-DiskStore::Stats::Stats() : start_time(now()), duration(0),
+DiskStore::Stats::Stats() : Store::Stats::Stats(),
     directory_creates(0),
     directory_deletes(0),
     series_creates(0),
@@ -365,8 +365,7 @@ DiskStore::Stats::Stats() : start_time(now()), duration(0),
 
 // TODO: figure out if we can make this less dumb
 DiskStore::Stats& DiskStore::Stats::operator=(const Stats& other) {
-  this->start_time = other.start_time.load();
-  this->duration = other.duration.load();
+  this->Store::Stats::operator=(other);
   this->directory_creates = other.directory_creates.load();
   this->directory_deletes = other.directory_deletes.load();
   this->series_creates = other.series_creates.load();
@@ -390,9 +389,7 @@ DiskStore::Stats& DiskStore::Stats::operator=(const Stats& other) {
 }
 
 unordered_map<string, int64_t> DiskStore::Stats::to_map() const {
-  unordered_map<string, int64_t> ret;
-  ret.emplace("start_time", this->start_time.load());
-  ret.emplace("duration", this->duration.load());
+  unordered_map<string, int64_t> ret = this->Store::Stats::to_map();
   ret.emplace("directory_creates", this->directory_creates.load());
   ret.emplace("directory_deletes", this->directory_deletes.load());
   ret.emplace("series_creates", this->series_creates.load());

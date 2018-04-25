@@ -118,19 +118,18 @@
   // REMOTE STORE
   // This store forwards all of its read and write requests to a remote Cyclone
   // server via the Thrift interface. This store uses persistent connections,
-  // closing them only if the number of connections exceeds
-  // connection_cache_count or when an error occurs. If connection_cache_count
-  // is 0, the connection cache size is unlimited, and connections are only
-  // closed on errors. At any time, the open connection count will be at least
-  // the number of currently-executing remote queries, which can exceed the
-  // connection cache limit. This can be limited by wrapping a remote store in a
-  // write buffer store; each thread of the write buffer store makes only one
-  // query at a time. All parameters for remote stores can be changed without
-  // restarting the server.
+  // closing them only if the number of connections exceeds connection_limit or
+  // when an error occurs. If connection_limit is 0, the connection cache size
+  // is unlimited, and connections are only closed on errors. At any time, the
+  // open connection count will be at least the number of currently-executing
+  // remote queries, which can exceed the connection cache limit. This can be
+  // limited by wrapping a remote store in a write buffer store; each thread of
+  // the write buffer store makes only one query at a time. All parameters for
+  // remote stores can be changed without restarting the server.
   // {
   //   "store_type": "remote",
   //   "hostname": "remote-server1",
-  //   "connection_cache_count": 8,
+  //   "connection_limit": 8,
   //   "port": 2000, // thrift port on the remote server
   // }
   //
@@ -209,7 +208,7 @@
   //       "node1": {
   //         "type": "remote",
   //         "hostname": "node1",
-  //         "connection_cache_count": 8,
+  //         "connection_limit": 8,
   //         "port": 2000,
   //       },
   //       "node2": {
@@ -219,13 +218,13 @@
   //       "node3": {
   //         "type": "remote",
   //         "hostname": "node3",
-  //         "connection_cache_count": 8,
+  //         "connection_limit": 8,
   //         "port": 2000,
   //       },
   //       "node4": {
   //         "type": "remote",
   //         "hostname": "node4",
-  //         "connection_cache_count": 8,
+  //         "connection_limit": 8,
   //         "port": 2000,
   //       },
   //     },
