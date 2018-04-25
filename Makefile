@@ -12,7 +12,7 @@ EXECUTABLE=cyclone
 
 all: $(EXECUTABLE) test
 
-gen-cpp: cyclone_if.thrift
+gen-cpp $(THRIFT_OBJECTS): cyclone_if.thrift
 	$(THRIFT) --gen cpp cyclone_if.thrift
 
 cyclone_client/cyclone_if: cyclone_if.thrift
