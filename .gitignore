@@ -6,3 +6,4 @@ gen-cpp
 *.pyo
 gmon.out
 cyclone
+StoreTest-data
