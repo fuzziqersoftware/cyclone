@@ -10,7 +10,7 @@ CXXFLAGS=-I/opt/local/include -I/usr/local/include -std=c++14 -g -DHAVE_INTTYPES
 LDFLAGS=-L/opt/local/lib -L/usr/local/lib -std=c++14 -levent -lthrift -lthriftnb -lphosg -lpthread
 EXECUTABLE=cyclone
 
-all: $(EXECUTABLE) utils test
+all: $(EXECUTABLE) test
 
 gen-cpp: cyclone_if.thrift
 	$(THRIFT) --gen cpp cyclone_if.thrift
@@ -24,15 +24,10 @@ cyclone_client/cyclone_if: cyclone_if.thrift
 $(EXECUTABLE): gen-cpp $(OBJECTS)
 	$(CXX) $(OBJECTS) $(LDFLAGS) -o $(EXECUTABLE)
 
-utils: Store/QueryParserMain Store/PatternMatch
-
 test: Store/WhisperTest Store/StoreTest cyclone_client/cyclone_if
 	./Store/WhisperTest
 	./Store/StoreTest
 	python3 functional_test.py
-
-Store/QueryParserMain: Store/QueryParserMain.o Store/QueryParser.o $(THRIFT_OBJECTS)
-	$(CXX) -std=c++14 -lstdc++ $^ -o $@ $(LDFLAGS)
 
 Store/WhisperTest: Store/WhisperTest.o Store/Whisper.o $(THRIFT_OBJECTS)
 	$(CXX) -std=c++14 -lstdc++ $^ -o $@ $(LDFLAGS)
@@ -40,10 +35,7 @@ Store/WhisperTest: Store/WhisperTest.o Store/Whisper.o $(THRIFT_OBJECTS)
 Store/StoreTest: Store/StoreTest.o $(STORE_OBJECTS) $(THRIFT_OBJECTS)
 	$(CXX) -std=c++14 -lstdc++ $^ -o $@ $(LDFLAGS)
 
-Store/PatternMatch: Store/PatternMatch.o $(STORE_OBJECTS) $(THRIFT_OBJECTS)
-	$(CXX) -std=c++14 -lstdc++ $^ -o $@ $(LDFLAGS)
-
 clean:
-	rm -rf *.dSYM gen-cpp gen-py cyclone_if *.o Store/*.o Store/*Test Renderer/*.o Server/*.o $(EXECUTABLE) Store/QueryParserMain Store/PatternMatch Store/whisper_util* Renderer/render_util* gmon.out
+	rm -rf *.dSYM gen-cpp gen-py cyclone_if *.o Store/*.o Store/*Test Renderer/*.o Server/*.o $(EXECUTABLE) Store/whisper_util* Renderer/render_util* gmon.out
 
-.PHONY: clean utils test
+.PHONY: clean test
