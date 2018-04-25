@@ -4,6 +4,7 @@
 #include <event2/http.h>
 #include <string.h>
 
+#include <phosg/Filesystem.hh>
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
 
@@ -19,8 +20,10 @@ using namespace std;
 
 
 CycloneHTTPServer::CycloneHTTPServer(shared_ptr<Store> store,
-    size_t num_threads, uint64_t exit_check_interval) :
-    HTTPServer(num_threads, exit_check_interval), store(store) { }
+    size_t num_threads, uint64_t exit_check_interval,
+    const string& config_filename) :
+    HTTPServer(num_threads, exit_check_interval), store(store),
+    config_filename(config_filename) { }
 
 void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* req) {
 
@@ -45,6 +48,8 @@ void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* 
     // cyclone api
     } else if (!strncmp(uri, "/y/stats", 8)) {
       content_type = this->handle_stats_request(t, req, out_buffer.get());
+    } else if (!strncmp(uri, "/y/config", 9)) {
+      content_type = this->handle_config_request(t, req, out_buffer.get());
     // } else if (!strcmp(uri, "/create")) {
     //   content_type = this->handle_create_request(t, req, out_buffer.get());
     // } else if (!strcmp(uri, "/delete")) {
@@ -131,7 +136,7 @@ const string INDEX_HTML("\
 <!DOCTYPE html>\n\
 <html><head><title>cyclone</title></head><body>\n\
 <h3>cyclone</h3>\n\
-<a href=\"/metrics/find/?query=*&format=html\">browse</a> - <a href=\"/y/stats\">stats</a>\n\
+<a href=\"/metrics/find/?query=*&format=html\">browse</a> - <a href=\"/y/stats\">stats</a> - <a href=\"/y/config\">config</a>\n\
 <form method=\"GET\" action=\"/metrics/find/\"><input name=\"query\" /><input type=\"hidden\" name=\"format\" value=\"html\" /><input type=\"submit\" value=\"find\" /></form><br />\n\
 </body></html>");
 
@@ -154,6 +159,15 @@ string CycloneHTTPServer::handle_stats_request(struct Thread& t,
   }
 
   return "text/plain";
+}
+
+string CycloneHTTPServer::handle_config_request(struct Thread& t,
+    struct evhttp_request* req, struct evbuffer* out_buffer) {
+  string contents = load_file(this->config_filename);
+  evbuffer_add_printf(out_buffer,
+      "// configuration filename: %s\n", this->config_filename.c_str());
+  evbuffer_add(out_buffer, contents.data(), contents.size());
+  return "application/json";
 }
 
 string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,

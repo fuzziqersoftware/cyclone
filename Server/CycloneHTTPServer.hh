@@ -11,11 +11,12 @@ class CycloneHTTPServer : public HTTPServer {
 public:
   CycloneHTTPServer() = delete;
   CycloneHTTPServer(std::shared_ptr<Store> store, size_t num_threads,
-      uint64_t exit_check_interval);
+      uint64_t exit_check_interval, const std::string& config_filename);
   virtual ~CycloneHTTPServer() = default;
 
 protected:
   std::shared_ptr<Store> store;
+  std::string config_filename;
 
   std::unique_ptr<Renderer> create_renderer(const std::string& format, struct evbuffer* buf);
 
@@ -25,6 +26,8 @@ protected:
       struct evbuffer* out_buffer);
 
   std::string handle_stats_request(struct Thread& t, struct evhttp_request* req,
+      struct evbuffer* out_buffer);
+  std::string handle_config_request(struct Thread& t, struct evhttp_request* req,
       struct evbuffer* out_buffer);
 
   std::string handle_graphite_render_request(struct Thread& t,

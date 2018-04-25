@@ -397,7 +397,7 @@ int main(int argc, char **argv) {
   vector<shared_ptr<Server>> servers;
   if (!opt.http_listen_addrs.empty()) {
     shared_ptr<HTTPServer> s(new CycloneHTTPServer(opt.store, opt.http_threads,
-        opt.exit_check_usecs));
+        opt.exit_check_usecs, opt.filename));
     for (const auto& addr : opt.http_listen_addrs) {
       if (addr.second == 0) {
         s->listen(addr.first);
