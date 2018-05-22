@@ -34,14 +34,18 @@ struct QueryToken {
 };
 
 struct Query {
-  enum class Type {
+  enum Type {
     // patterns become function calls; there's a function that just reads from
     // the store
-    FunctionCall = 0,
-    SeriesReference,
-    Integer,
-    Float,
-    String,
+    FunctionCall    = 0x01,
+    SeriesReference = 0x02,
+    Integer         = 0x04,
+    Float           = 0x08,
+    String          = 0x10,
+
+    Numeric         = 0x06,
+    Constant        = 0x1C,
+    SeriesOrCall    = 0x03,
   };
 
   Type type;
