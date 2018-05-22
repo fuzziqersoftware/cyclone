@@ -1,6 +1,6 @@
 # Cyclone
 
-Cyclone is a timeseries data storage engine designed to be a drop-in replacement for the Carbon daemons and Graphite backend webservers. Cyclone is designed as a multithreaded server, eliminating the need for running multiple carbon-cache processes per machine (to utilize more CPU cores) and setting up a webserver.
+Cyclone is a timeseries data storage engine designed to be a drop-in replacement for the Carbon daemons and Graphite backend webservers. It has preliminary function support, but currently cannot be used effectively as a frontend webserver - it's recommended to run the Graphite webapp in front of Cyclone for now. Cyclone is a multithreaded event-driven server, allowing the use of all CPU cores while sharing a single instance of cached data (directory contents and file headers).
 
 Like most of my projects, this is only tested at a small scale (so far), so there may be unfound bugs or inefficiencies. Use at your own risk.
 
@@ -13,17 +13,73 @@ If it doesn't work on your system, let me know. I've built and tested it on Mac 
 
 ## Running
 
-Cyclone is configured via a small JSON file. The comments in the example file (cyclone.conf.json) explain the details. Once that's all set up, just run `cyclone <config_filename>` (or use an appropriate daemonizer).
+Cyclone is configured via a small JSON file. The comments in the example file (cyclone.conf.json) explain the details. Once that's all set up, just run `cyclone config_filename.json` (or use an appropriate daemonizer).
 
-Cyclone is compatible with the Graphite webapp. You can even run the Graphite webapp directly in front of Cyclone by setting Graphite's `CLUSTER_SERVERS = ['localhost:5050']` (or any port in `http_listen` from Cyclone's configuration). Cyclone will handle the clustering logic if applicable; the Graphite webapp only needs to talk to one of the Cyclone instances in the cluster.
+## Clients
 
-## Testing
+Cyclone supports several protocols with varying capabilities:
 
-Python clients for all the interfaces are provided in the cyclone_client module. This consists of three submodules:
-- `http_client.CycloneHTTPClient` is compatible with Cyclone servers, and also with Graphite servers if `format='pickle'` is given. This client supports only read queries.
-- `stream_client.CycloneLineClient` and `stream_client.CyclonePickleClient` are both compatible with Cyclone and Graphite servers. These clients support only write queries.
-- `thrift_client.CycloneThriftClient` is compatible only with Cyclone servers. It supports read and write queries, and uses persistent connections.
+| Protocol | Graphite-compatible? | Python client class                 |   Read commands   |    Write commands     |
+| -------- |:--------------------:| ----------------------------------- |:-----------------:|:---------------------:|
+| Line     |         Yes          | `stream_client.CycloneLineClient`   |                   |    write, create*     |
+| Datagram |         Yes          |                                     |                   |    write, create*     |
+| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                   |    write, create*     |
+| Shell    |         No           |                                     |    find, stats    |        delete         |
+| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     | read, find, stats |                       |
+| Thrift   |         No           | `thrift_client.CycloneThriftClient` |    read, find     | write, create, delete |
 
-You can import cyclone_client and use the various client classes directly from there. See the docstrings on those classes for more information, or take a look at functional_test.py for usage examples.
+Note: the ability to create series through the line, datagram, and pickle protocols is limited to autocreates (according to predefined rules in the server configuration). For more fine-grained control over series schema, create series through the Thrift interface instead.
 
-You can also use the shell interface by connecting to the shell port with telnet or nc.
+## Protocol descriptions
+
+### Line protocol
+
+Connect to the server using TCP on any of the line ports specified in the configuration. Send lines of text of the format `<key> <value> [timestamp]\n`. For example, sending the line `test.cyclone.key1 700 1527014460\n` writes a datapoint with value 700 at time 1527014460. The timestamp is optional; if omitted; the server will use its current time for the written datapoint.
+
+### Datagram protocol
+
+Send UDP datagrams to the server on any of the datagram ports specified in the configuration. The data format is the same as for the line protocol. Multiple datapoints can be sent in the same datagram, as lines separated by newline bytes, as long as they fit in the datagram.
+
+### Pickle protocol
+
+Connect to the server using TCP on any of the pickle ports specified in the configuration. Send frames of the format `<size><data>`, where `<size>` is a 32-bit big-endian integer specifying the number of bytes in the data field. The data field is a pickle-encoded Python object of the form `[(key, (timestamp, value)), ...]`. Lists and tuples may be used interchangeably; the server decodes them identically. All current pickle protocols (0-4) are supported.
+
+### Shell protocol
+
+Connect to the server using TCP on any of the shell ports specified in the configuration. This is intended to be an interactive protocol for manually inspecting and editing data and server state. Use `telnet <host> <port>` or `nc <host> <port>` to use the shell interface interactively. Run the `help` command within the shell to see a list of available commands.
+
+### HTTP protocol
+
+The HTTP server provides the following endpoints:
+- `/`: Returns HTML containing links to the other endpoints.
+- `/render`: Reads and renders data from one or more series. The query parameters (as GET params) are:
+  - `from` and `until`: Specify a time range to query data over. If omitted, defaults to the past hour.
+  - `format`: Specifies the format to return data in. Valid values are `json` and `pickle`.
+  - `target`: Specifies the series or pattern to read data from. May be specified multiple times to read multiple series.
+- `/metrics/find`:
+  - `format`: Specifies the format to return data in. Valid values are `json`, `pickle`, and `html`.
+  - `query`: Specifies the pattern to search for. May be given multiple times.
+- `/y/stats`: Returns current server stats in plain text.
+- `/y/config`: Returns the server configuration in commented JSON.
+
+### Thrift protocol
+
+Use TFramedTransport with this service. Most of these functions take a `local_only` argument, which is used internally by Cyclone and should be `false` when called by an external client.
+
+The Thrift server provides the following functions:
+
+- `update_metadata`: Creates series or modifies the storage format of existing series.
+- `delete_series`: Deletes one or more series.
+- `read`: Reads datapoints from one or more series.
+- `write`: Writes datapoints to one or more series.
+- `find`: Searches for series and directories matching the given patterns.
+- `delete_from_cache`: Deletes cached reads for the givne series from the server's memory without modifying the underlying series on disk. Used in debugging.
+- `delete_pending_writes`: Deletes all buffered writes in memory for the given series without modifying the underlying series on disk. Used in debugging. Note that `delete_series` will delete pending writes (if any) and also delete the underlying series.
+
+See cyclone_if.thrift for complete descriptions of the parameters and return values for these functions.
+
+## Graphite interoperability
+
+The stream, datagram, and pickle protocols are compatible with Carbon's analogous protocols. This allows a Cyclone server to be used in place of carbon-relay and carbon-cache daemons. The HTTP protocol is also compatible with the Graphite webapp; you can run the Graphite webapp directly in front of Cyclone by setting Graphite's `CLUSTER_SERVERS = ['localhost:5050']` (or any port in `http_listen` from Cyclone's configuration). Cyclone will handle the clustering logic if applicable; the Graphite webapp only needs to talk to one of the Cyclone instances in the cluster.
+
+A Cyclone cluster can be set up by creating configuration files for each instance (see the comments in the configuration file for an example), then setting up the Graphite webapp on each instance to read from the local Cyclone instance. The entire cluster is then homogenous; all machines run the same software with slightly different configurations. Writes can go to any Cyclone instance and will be forwarded appropriately, and reads can go to any Graphite webapp.
