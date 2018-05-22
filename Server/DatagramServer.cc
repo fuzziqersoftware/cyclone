@@ -62,19 +62,27 @@ void DatagramServer::on_client_input(int fd, short events) {
       continue;
     }
 
-    // keyname value timestamp_secs
-    auto tokens = split(buffer, ' ');
-    if (tokens.size() != 3) {
-      log(WARNING, "[DatagramServer] received bad message from udp socket %d: %s", fd, buffer.c_str());
-      continue;
-    }
-
     // data = {key: {timestamp: value}}
     unordered_map<string, Series> data;
-    auto& series = data[tokens[0]];
-    series.emplace_back();
-    series.back().timestamp = stoul(tokens[2]);
-    series.back().value = stod(tokens[1]);
+
+    auto lines = split(buffer, '\n');
+    for (const auto& line : lines) {
+      if (line.empty()) {
+        continue;
+      }
+
+      // keyname value timestamp_secs
+      auto tokens = split(buffer, ' ');
+      if (tokens.size() != 3) {
+        log(WARNING, "[DatagramServer] received bad message from udp socket %d: %s", fd, buffer.c_str());
+        continue;
+      }
+
+      auto& series = data[tokens[0]];
+      series.emplace_back();
+      series.back().timestamp = stoul(tokens[2]);
+      series.back().value = stod(tokens[1]);
+    }
 
     // send it to the store
     for (const auto& it : this->store->write(data, false)) {
