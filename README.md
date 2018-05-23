@@ -56,7 +56,7 @@ The HTTP server provides the following endpoints:
   - `from` and `until`: Specify a time range to query data over. If omitted, defaults to the past hour.
   - `format`: Specifies the format to return data in. Valid values are `json` and `pickle`.
   - `target`: Specifies the series or pattern to read data from. May be specified multiple times to read multiple series.
-- `/metrics/find`:
+- `/metrics/find`: Searches for metrics matching the given query patterns.
   - `format`: Specifies the format to return data in. Valid values are `json`, `pickle`, and `html`.
   - `query`: Specifies the pattern to search for. May be given multiple times.
 - `/y/stats`: Returns current server stats in plain text.
@@ -68,13 +68,14 @@ Use TFramedTransport with this service. Most of these functions take a `local_on
 
 The Thrift server provides the following functions:
 
-- `update_metadata`: Creates series or modifies the storage format of existing series.
-- `delete_series`: Deletes one or more series.
+- `update_metadata`: Creates series or modifies the storage format of existing series. If write buffering is used, this call returns before the changes are committed to disk.
+- `delete_series`: Deletes one or more series, as well as all buffered writes in memory for those series. This call does not return until the changes are committed to disk.
 - `read`: Reads datapoints from one or more series.
-- `write`: Writes datapoints to one or more series.
-- `find`: Searches for series and directories matching the given patterns.
-- `delete_from_cache`: Deletes cached reads for the givne series from the server's memory without modifying the underlying series on disk. Used in debugging.
-- `delete_pending_writes`: Deletes all buffered writes in memory for the given series without modifying the underlying series on disk. Used in debugging. Note that `delete_series` will delete pending writes (if any) and also delete the underlying series.
+- `write`: Writes datapoints to one or more series. If write buffering is used, this call returns before the changes are committed to disk.
+- `find`: Searches for series and directories matching the given patterns. In the returned list, items that end with `.*` are subdirectories; all others are individual series.
+- `stats`: Returns current server stats.
+- `delete_from_cache`: Deletes cached reads for the given series from the server's memory without modifying the underlying series on disk. Used in debugging.
+- `delete_pending_writes`: Deletes all buffered writes in memory for the given series without modifying the underlying series on disk. Used in debugging.
 
 See cyclone_if.thrift for complete descriptions of the parameters and return values for these functions.
 
@@ -83,3 +84,12 @@ See cyclone_if.thrift for complete descriptions of the parameters and return val
 The stream, datagram, and pickle protocols are compatible with Carbon's analogous protocols. This allows a Cyclone server to be used in place of carbon-relay and carbon-cache daemons. The HTTP protocol is also compatible with the Graphite webapp; you can run the Graphite webapp directly in front of Cyclone by setting Graphite's `CLUSTER_SERVERS = ['localhost:5050']` (or any port in `http_listen` from Cyclone's configuration). Cyclone will handle the clustering logic if applicable; the Graphite webapp only needs to talk to one of the Cyclone instances in the cluster.
 
 A Cyclone cluster can be set up by creating configuration files for each instance (see the comments in the configuration file for an example), then setting up the Graphite webapp on each instance to read from the local Cyclone instance. The entire cluster is then homogenous; all machines run the same software with slightly different configurations. Writes can go to any Cyclone instance and will be forwarded appropriately, and reads can go to any Graphite webapp.
+
+## Future work
+
+There's a lot to do here.
+
+- Add a `flush_series` call to the Thrift interface to support blocking on buffered writes.
+- Support new storage formats.
+- Build out query execution functionality.
+- Support rendering graphs as images (perhaps even as SVGs).
