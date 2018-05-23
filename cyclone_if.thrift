@@ -47,6 +47,9 @@ typedef map cpp_type 'std::unordered_map<std::string, int64_t>'
 typedef map cpp_type 'std::unordered_map<std::string, class FindResult>'
     <string, FindResult> FindResultMap;
 
+typedef map cpp_type 'std::unordered_map<std::string, int64_t>'
+    <string, i64> StatsResultMap;
+
 service Cyclone {
   // updates metadata and/or creates series. returns the number of series
   // modified (including creates and updates).
@@ -69,6 +72,9 @@ service Cyclone {
   // searches for directory and key names matching the given patterns. if a
   // result ends with '.*', it's a directory; otherwise it's a key.
   FindResultMap find(1: list<string> patterns, 2: bool local_only = false);
+
+  // returns the current server stats
+  StatsResultMap stats();
 
   // if the server has a cache store, deletes the given path from the cache. if
   // the path is blank or "*", deletes everything in the cache.

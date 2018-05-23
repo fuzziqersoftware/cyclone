@@ -26,7 +26,7 @@ Cyclone supports several protocols with varying capabilities:
 | Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                   |    write, create*     |
 | Shell    |         No           |                                     |    find, stats    |        delete         |
 | HTTP     |         Yes          | `http_client.CycloneHTTPClient`     | read, find, stats |                       |
-| Thrift   |         No           | `thrift_client.CycloneThriftClient` |    read, find     | write, create, delete |
+| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats | write, create, delete |
 
 Note: the ability to create series through the line, datagram, and pickle protocols is limited to autocreates (according to predefined rules in the server configuration). For more fine-grained control over series schema, create series through the Thrift interface instead.
 

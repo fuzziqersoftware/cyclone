@@ -65,6 +65,10 @@ public:
     _return = this->store->find(patterns, local_only);
   }
 
+  void stats(unordered_map<string, int64_t>& _return) {
+    _return = this->store->get_stats();
+  }
+
   int64_t delete_from_cache(const std::string& path, bool local_only) {
     return this->store->delete_from_cache(path, local_only);
   }
