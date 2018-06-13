@@ -75,8 +75,10 @@ std::string Query::str() const {
     case Type::String:
       // TODO: we should handle escape sequences here
       return string_printf("\"%s\"", this->string_data.c_str());
+
+    default:
+      return "<unknown query node>";
   }
-  return "<unknown query node>";
 }
 
 

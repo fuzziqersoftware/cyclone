@@ -38,14 +38,21 @@ static void check_arg_types(const vector<Query>& args, ssize_t min_arg_count,
   if (args.size() < min_arg_count) {
     throw runtime_error("not enough arguments to function");
   }
-  if (args.size() > max_arg_count) {
+  if ((max_arg_count > 0) && (args.size() > max_arg_count)) {
     throw runtime_error("too many arguments to function");
   }
 
+  // variadic functions: apply the last type mask to all the excess arguments
+  size_t num_types_expected = (max_arg_count < 0) ? min_arg_count + 1 : max_arg_count;
+
   va_list va;
   va_start(va, max_arg_count);
-  for (const auto& arg : args) {
-    uint64_t type_mask = va_arg(va, uint64_t);
+  uint64_t type_mask;
+  for (size_t x = 0; x < args.size(); x++) {
+    const auto& arg = args[x];
+    if (x < num_types_expected) {
+      type_mask = va_arg(va, uint64_t);
+    }
     if (!(arg.type & type_mask)) {
       throw runtime_error("incorrect argument type in function call");
     }
@@ -64,28 +71,107 @@ static void check_arg_types(const vector<Query>& args, ssize_t min_arg_count,
 }
 
 
+void forward_errors(const vector<Query>& args) {
+  for (const auto& arg : args) {
+    if (!arg.computed) {
+      throw runtime_error("argument value is not computed");
+    }
+    for (const auto& it : arg.series_data) {
+      if (!it.second.error.empty()) {
+        throw runtime_error(it.second.error);
+      }
+    }
+  }
+}
+
+struct NormalizedSeries {
+  int64_t start_time;
+  int64_t end_time;
+  int64_t step;
+  unordered_multimap<string, vector<Datapoint>> series;
+
+  NormalizedSeries() : start_time(0), end_time(0), step(0) { }
+};
+
+int64_t gcd(int64_t a, int64_t b) {
+  // Euclidean algorithm
+  while (b) {
+    int64_t t = b;
+    b = a % b;
+    a = t;
+  }
+  return a;
+}
+
+int64_t lcm(int64_t a, int64_t b) {
+  return (a * b) / gcd(a, b);
+}
+
+NormalizedSeries normalize_series_collections(vector<Query>& args) {
+  NormalizedSeries ret;
+
+  for (const auto& arg : args) {
+    for (const auto& series_it : arg.series_data) {
+      const auto& result = series_it.second;
+      if (!result.step) {
+        continue; // series is empty
+      }
+      if (!ret.start_time || (ret.start_time < result.start_time)) {
+        ret.start_time = result.start_time;
+      }
+      if (!ret.end_time || (ret.end_time < result.end_time)) {
+        ret.end_time = result.end_time;
+      }
+      if (!ret.step) {
+        ret.step = result.step;
+      } else if (ret.step != result.step) {
+        ret.step = gcd(ret.step, result.step);
+      }
+    }
+  }
+
+  for (auto& arg : args) {
+    for (auto& series_it : arg.series_data) {
+      ret.series.emplace(move(series_it.first), move(series_it.second.data));
+    }
+    arg.series_data.clear();
+  }
+
+  return ret;
+}
+
+
 #define CYCLONE_FUNCTION(name) #name, +[](vector<Query>& args) -> unordered_map<string, ReadResult>
 
 static const unordered_map<string, unordered_map<string, ReadResult> (*)(vector<Query>&)> functions({
-  // {CYCLONE_FUNCTION(sumSeries) {
-  //   string name = function_call_str("sumSeries", args);
-  //   unordered_map<string, ReadResult> ret;
-  //   ReadResult result = ret[name];
+  {CYCLONE_FUNCTION(sumSeries) {
+    check_arg_types(args, 0, -1, Query::Type::SeriesOrCall);
+    forward_errors(args);
+    auto normalized = normalize_series_collections(args);
 
-  //   // if any read result has an error, forward the error
-  //   for (const auto& arg : args) {
-  //     if (!arg.computed) {
-  //       throw runtime_error("argument value is not computed");
-  //     }
-  //     for (const auto& it : arg.series_data) {
-  //       if (!it.second.error.empty()) {
-  //         throw runtime_error(it.second.error);
-  //       }
-  //     }
-  //   }
+    unordered_map<string, ReadResult> ret_map;
+    ReadResult& ret = ret_map[function_call_str("sumSeries", args)];
+    ret.start_time = normalized.start_time;
+    ret.end_time = normalized.end_time;
+    ret.step = normalized.step;
 
-  //   // TODO: actually write this
-  // }},
+    map<int64_t, double> result_series_map;
+    for (const auto& normalized_series_it : normalized.series) {
+      for (const auto& datapoint : normalized_series_it.second) {
+        result_series_map[datapoint.timestamp] += datapoint.value;
+      }
+    }
+
+    auto& result_series = ret.data;
+    for (const auto& result_dp : result_series_map) {
+      result_series.emplace_back();
+      Datapoint& dp = result_series.back();
+      dp.timestamp = result_dp.first;
+      dp.value = result_dp.second;
+    }
+
+    return ret_map;
+  }},
 
   /* unimplemented functions:
 
