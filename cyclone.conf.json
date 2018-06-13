@@ -165,7 +165,7 @@
   //   "file_limit": 10000000,
   // }
   //
-  // WRITE BUFFER
+  // WRITE BUFFER STORE
   // This store wraps another store and batches writes to the underlying store.
   // The writes are flushed asynchronously in a set of background threads. The
   // batch size can be changed without restarting the server.
@@ -176,7 +176,19 @@
   //   "substore": {...}, // config for the wrapped store
   // }
   //
-  // READ ONLY
+  // QUERY STORE
+  // This store wraps another store and provides function execution on top of
+  // it. Writes and finds pass through this store unmodified; reads are parsed
+  // as Graphite expressions and the functions are executed. This store is
+  // required if you want to be able to call read() and pass in functions, but
+  // it is NOT required if you just want to pass in patterns or individual
+  // series names. Note that very few functions are currently implemented.
+  // {
+  //   "store_type": "query",
+  //   "substore": {...}, // config for the wrapped store
+  // }
+  //
+  // READ ONLY STORE
   // This store prevents writes to the underlying store.
   // {
   //   "store_type": "read_only",
@@ -235,12 +247,17 @@
   // write buffer store. This configuration is generally sufficient for a
   // standalone setup.
   "store_config": {
-    "type": "write_buffer",
-    "num_write_threads": 4,
-    "batch_size": 100,
+    "type": "query",
     "substore": {
-      "type": "cached_disk",
-      "directory": "./cyclone-data",
+      "type": "write_buffer",
+      "num_write_threads": 4,
+      "batch_size": 100,
+      "substore": {
+        "type": "cached_disk",
+        "directory_limit": 10000,
+        "file_limit": 50000,
+        "directory": "./cyclone-data",
+      },
     },
   },
 
@@ -272,10 +289,6 @@
   //
   // The autocreate rules can be changed without restarting the server.
   "autocreate_rules": [
-    ["cyclone.**", "1m:30d,1h:120d", 0, "average"],
-    ["test_autocreate.**.autokey", "1m:90d", 0, "average"],
-    ["test_autocreate.*.autokey", "120:90d", 0, "average"],
-    ["**.autokey", "1800:90d", 0, "average"],
-    ["**", "3600:90d", 0, "average"],
+    ["**", "60:90d", 0, "average"],
   ],
 }
