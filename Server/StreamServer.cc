@@ -23,6 +23,8 @@
 #include <iostream>
 #include <thread>
 
+#include "../Store/Whisper.hh"
+
 using namespace std;
 
 
@@ -225,7 +227,7 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
           this->execute_shell_command(line_data, out_buffer);
           evbuffer_add_reference(out_buffer, "\n\ncyclone> ", 11, NULL, NULL);
         } catch (const exception& e) {
-          evbuffer_add_printf(out_buffer, "failed: %s\n\ncyclone> ", e.what());
+          evbuffer_add_printf(out_buffer, "FAILED: %s\n\ncyclone> ", e.what());
         }
         free(line_data);
       }
@@ -264,33 +266,50 @@ void StreamServer::check_for_thread_exit(StreamServer::WorkerThread& wt,
 }
 
 const string HELP_STRING("\
-commands:\n\
+Commands:\n\
   help\n\
-    you're reading it now\n\
+    You're reading it now.\n\
 \n\
   find <pattern> [<pattern> ...]\n\
-    search for metrics matching the given pattern(s)\n\
+    Search for metrics matching the given pattern(s).\n\
 \n\
   read <pattern> [+start=<timestamp>] [+end=<timestamp>]\n\
-    read data from all series that match the given pattern\n\
-    if given, start and end must be absolute epoch timestamps in seconds\n\
+    Read data from all series that match the given pattern.\n\
+    If given, start and end must be absolute epoch timestamps in seconds.\n\
+    If start and end are not given, the default is to read the past hour.\n\
 \n\
   write <series> <timestamp> <value> [<timestamp> <value> ...]\n\
-    write one or more datapoints to the given series\n\
+    Write one or more datapoints to the given series.\n\
+    If any timestamps are zero, the server\'s current time is used.\n\
 \n\
   delete <series> [<series> ...]\n\
-    delete entire series\n\
+    Delete entire series.\n\
+\n\
+  create <series> <archives> [+skip-existing] [+truncate]\n\
+    Alias for `update-metadata +create`.\n\
+\n\
+  update-metadata <series> <archives> <x-files-factor> <agg-method> [+create]\n\
+      [+skip-existing] [+truncate]\n\
+    Create a new series.\n\
+    <archives> is a comma-separated list of pairs, e.g. 60:90d,3600:5y to\n\
+    store minutely data for 90 days and hourly data for 5 years.\n\
+    <x-files-factor> is the proportion of datapoints in each interval that must\n\
+    be present for an aggregation to occur to a lower-reolution archive.\n\
+    <agg-method> is the aggregation method to use when updating lower-reolution\n\
+    archives. Valid values are average, sum, min, max, and last.\n\
+    +no-create skips the operation if the series does not exist.\n\
+    +skip-existing skips the operation if the series already exists.\n\
+    +truncate recreates the series if it already exists.\n\
 \n\
   stats\n\
-    get the current server stats\n\
+    Get the current server stats.\n\
 ");
 
 void StreamServer::execute_shell_command(const char* line_data,
     struct evbuffer* out_buffer) {
   auto tokens = split(line_data, ' ');
   if (tokens.size() == 0) {
-    evbuffer_add(out_buffer, "command is empty", 16);
-    return;
+    throw runtime_error("command is empty");
   }
 
   string command_name = move(tokens[0]);
@@ -300,24 +319,82 @@ void StreamServer::execute_shell_command(const char* line_data,
     evbuffer_add_reference(out_buffer, HELP_STRING.data(), HELP_STRING.size(), NULL, NULL);
 
   } else if (command_name == "stats") {
+    if (!tokens.empty()) {
+      throw runtime_error("incorrect argument count");
+    }
+
     auto stats = this->store->get_stats();
     for (const auto& it : stats) {
       evbuffer_add_printf(out_buffer, "%s = %" PRId64 "\n", it.first.c_str(), it.second);
     }
 
-  } else if (command_name == "delete") {
-    // all tokens after the command name are series names
-    auto result = this->store->delete_series(tokens, false);
+  } else if ((command_name == "update-metadata") || (command_name == "create")) {
+    if ((tokens.size() < 4) || (tokens.size() > 7)) {
+      throw runtime_error("incorrect argument count");
+    }
 
+    unordered_map<string, SeriesMetadata> metadata_map;
+    SeriesMetadata& m = metadata_map[tokens[0]];
+    m.archive_args = WhisperArchive::parse_archive_args(tokens[1]);
+    m.x_files_factor = stod(tokens[2]);
+    if (tokens[3] == "average") {
+      m.agg_method = AggregationMethod::Average;
+    } else if (tokens[3] == "sum") {
+      m.agg_method = AggregationMethod::Sum;
+    } else if (tokens[3] == "last") {
+      m.agg_method = AggregationMethod::Last;
+    } else if (tokens[3] == "min") {
+      m.agg_method = AggregationMethod::Min;
+    } else if (tokens[3] == "max") {
+      m.agg_method = AggregationMethod::Max;
+    } else {
+      throw runtime_error("unknown aggregation method");
+    }
+
+    bool create_new = (command_name == "create");
+    Store::UpdateMetadataBehavior update_behavior =
+        Store::UpdateMetadataBehavior::Update;
+    for (size_t x = 2; x < tokens.size(); x++) {
+      if (tokens[x] == "+create") {
+        create_new = true;
+      } else if (tokens[x] == "+ignore-existing") {
+        update_behavior = Store::UpdateMetadataBehavior::Ignore;
+      } else if (tokens[x] == "+truncate-existing") {
+        update_behavior = Store::UpdateMetadataBehavior::Recreate;
+      } else {
+        throw runtime_error("unknown argument");
+      }
+    }
+
+    auto result = this->store->update_metadata(metadata_map, create_new,
+        update_behavior, false);
+    for (const auto& result_it : result) {
+      if (result_it.second.empty()) {
+        evbuffer_add_printf(out_buffer, "[%s] success\n",
+            result_it.first.c_str());
+      } else {
+        evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n",
+            result_it.first.c_str(), result_it.second.c_str());
+      }
+    }
+
+  } else if (command_name == "delete") {
+    if (tokens.empty()) {
+      throw runtime_error("no series given");
+    }
+
+    auto result = this->store->delete_series(tokens, false);
     for (const auto& it : result) {
       evbuffer_add_printf(out_buffer, "[%s] %" PRId64 " series deleted\n",
           it.first.c_str(), it.second);
     }
 
   } else if (command_name == "find") {
-    // all tokens after the command name are patterns
-    auto find_result = this->store->find(tokens, false);
+    if (tokens.empty()) {
+      throw runtime_error("no patterns given");
+    }
 
+    auto find_result = this->store->find(tokens, false);
     if (find_result.size() == 1) {
       const auto& result = find_result.begin()->second;
       if (!result.error.empty()) {
@@ -342,9 +419,45 @@ void StreamServer::execute_shell_command(const char* line_data,
     }
 
   } else if (command_name == "write") {
-    evbuffer_add(out_buffer, "write is not yet implemented\n", 29);
+    if (tokens.size() < 3) {
+      throw runtime_error("not enough arguments");
+    }
+    if (!(tokens.size() & 1)) {
+      throw runtime_error("incorrect number of arguments");
+    }
+
+    unordered_map<string, vector<Datapoint>> write_map;
+    vector<Datapoint>& data = write_map[tokens[0]];
+    int64_t now_timestamp = 0;
+    for (size_t x = 1; x < tokens.size(); x += 2) {
+      data.emplace_back();
+      auto& dp = data.back();
+      dp.timestamp = stoll(tokens[x]);
+      dp.value = stod(tokens[x + 1]);
+      if (dp.timestamp == 0) {
+        if (now_timestamp == 0) {
+          now_timestamp = now() / 1000000;
+        }
+        dp.timestamp = now_timestamp;
+      }
+    }
+
+    auto result = this->store->write(write_map, false);
+    for (const auto& result_it : result) {
+      if (result_it.second.empty()) {
+        evbuffer_add_printf(out_buffer, "[%s] success\n",
+            result_it.first.c_str());
+      } else {
+        evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n",
+            result_it.first.c_str(), result_it.second.c_str());
+      }
+    }
 
   } else if (command_name == "read") {
+    if (tokens.empty()) {
+      throw runtime_error("no series given");
+    }
+
     int64_t end_time = 0;
     int64_t start_time = 0;
     vector<string> patterns;
@@ -379,10 +492,15 @@ void StreamServer::execute_shell_command(const char* line_data,
           evbuffer_add_printf(out_buffer, "FAILED: %s (%s)\n", series_name.c_str(), result.error.c_str());
           continue;
         }
-        evbuffer_add_printf(out_buffer, "series: %s (start=%" PRId64 ", end=%" PRId64 ", step=%" PRId64 "\n",
-            series_name.c_str(), result.start_time, result.end_time, result.step);
-        for (const auto& dp : result.data) {
-          evbuffer_add_printf(out_buffer, "%" PRId64 " -> %g\n", dp.timestamp, dp.value);
+        if (result.step == 0) {
+          evbuffer_add_printf(out_buffer, "series: %s (no data)\n",
+              series_name.c_str());
+        } else {
+          evbuffer_add_printf(out_buffer, "series: %s (start=%" PRId64 ", end=%" PRId64 ", step=%" PRId64 ")\n",
+              series_name.c_str(), result.start_time, result.end_time, result.step);
+          for (const auto& dp : result.data) {
+            evbuffer_add_printf(out_buffer, "%" PRId64 " -> %g\n", dp.timestamp, dp.value);
+          }
         }
       }
       evbuffer_add(out_buffer, "\n", 1);
