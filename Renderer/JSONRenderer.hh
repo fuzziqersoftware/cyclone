@@ -16,7 +16,7 @@ public:
   const JSONRenderer& operator=(const JSONRenderer& rhs) = delete;
   virtual ~JSONRenderer() = default;
 
-  const char* content_type() const;
+  virtual const char* content_type() const;
   virtual void render_data(const std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>>& data) const;
   virtual void render_find_results(const std::unordered_map<std::string, FindResult>& data) const;
 };
