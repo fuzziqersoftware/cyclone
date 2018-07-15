@@ -30,11 +30,36 @@ Cyclone supports several protocols with varying capabilities:
 
 Note: the ability to create series through the line, datagram, and pickle protocols is limited to autocreates (according to predefined rules in the server configuration). For more fine-grained control over series schema, create series through the Thrift or shell interfaces instead.
 
+### Patterns
+
+Many functions that accept key names also accept patterns as well. A pattern is a key name contining wildcards or other ambiguous characters. The special characters in key patterns are:
+- `*`: matches a string of any length containing any characters except `.`
+- `[abc]`: matches any of the characters `a`, `b`, or `c`
+- `{abc,def,ghi}`: matches any of the strings `abc`, `def`, or `ghi`
+
+For example, the pattern `test.*.{dir,file,}name.key[13]` matches all of the following keys:
+- `test.whatever.dirname.key1`
+- `test.anything.dirname.key3`
+- `test.this_field_doesnt_matter.filename.key1`
+- `test.it_can_be_anything.filename.key3`
+- `test.as_long_as_it_doesnt.name.key1`
+- `test.have_a_dot.name.key3`
+
+This example pattern does not match any of the following keys:
+- `test.whatever.dirname.key2`
+- `test.whatever.devicename.key1`
+- `test.whatever.anything.filename.key1`
+
+In autocreate rules (see the example configuration file for more information), a fourth special "character" can be used:
+- `**` matches any string of any length, including `.` characters
+
 ## Protocol descriptions
 
 ### Line protocol
 
-Connect to the server using TCP on any of the line ports specified in the configuration. Send lines of text of the format `<key> <value> [timestamp]\n`. For example, sending the line `test.cyclone.key1 700 1527014460\n` writes a datapoint with value 700 at time 1527014460. The timestamp is optional; if omitted; the server will use its current time for the written datapoint.
+Connect to the server using TCP on any of the line ports specified in the configuration. Send lines of text of the format `<key> <value> [timestamp]\n`. For example, sending the line `test.cyclone.key1 700 1527014460\n` writes a datapoint with value 700 at time 1527014460.
+
+The timestamp is optional; if omitted; the server will use its current time for the written datapoint. For example, sending the line `test.cyclone.key1 700\n` writes a datapoint with value 700 at the current time.
 
 ### Datagram protocol
 
@@ -69,13 +94,11 @@ Use TFramedTransport with this service. Most of these functions take a `local_on
 The Thrift server provides the following functions:
 
 - `update_metadata`: Creates series or modifies the storage format of existing series. If write buffering is used, this call returns before the changes are committed to disk.
-- `delete_series`: Deletes one or more series, as well as all buffered writes in memory for those series. This call does not return until the changes are committed to disk.
-- `read`: Reads datapoints from one or more series.
-- `write`: Writes datapoints to one or more series. If write buffering is used, this call returns before the changes are committed to disk.
+- `delete_series`: Deletes one or more series, as well as all buffered writes in memory for those series. Patterns may be given here; all series that match the pattern will be deleted. Entire directory trees can also be deleted by providing a pattern ending in `.**` (this is a special case and does not work in other places or other commands). This call does not return until the changes are committed to disk, even if write buffering is used.
+- `read`: Reads datapoints from one or more series. Patterns may be given here.
+- `write`: Writes datapoints to one or more series. Patterns may not be given here. If write buffering is used, this call returns before the changes are committed to disk.
 - `find`: Searches for series and directories matching the given patterns. In the returned list, items that end with `.*` are subdirectories; all others are individual series.
 - `stats`: Returns current server stats.
-- `delete_from_cache`: Deletes cached reads for the given series from the server's memory without modifying the underlying series on disk. Used in debugging.
-- `delete_pending_writes`: Deletes all buffered writes in memory for the given series without modifying the underlying series on disk. Used in debugging.
 
 See cyclone_if.thrift for complete descriptions of the parameters and return values for these functions.
 
@@ -83,12 +106,13 @@ See cyclone_if.thrift for complete descriptions of the parameters and return val
 
 The stream, datagram, and pickle protocols are compatible with Carbon's analogous protocols. This allows a Cyclone server to be used in place of carbon-relay and carbon-cache daemons. The HTTP protocol is also compatible with the Graphite webapp; you can run the Graphite webapp directly in front of Cyclone by setting Graphite's `CLUSTER_SERVERS = ['localhost:5050']` (or any port in `http_listen` from Cyclone's configuration). Cyclone will handle the clustering logic if applicable; the Graphite webapp only needs to talk to one of the Cyclone instances in the cluster.
 
-A Cyclone cluster can be set up by creating configuration files for each instance (see the comments in the configuration file for an example), then setting up the Graphite webapp on each instance to read from the local Cyclone instance. The entire cluster is then homogenous; all machines run the same software with slightly different configurations. Writes can go to any Cyclone instance and will be forwarded appropriately, and reads can go to any Graphite webapp.
+A Cyclone cluster can be set up by creating configuration files for each instance (see the comments in the configuration file for an example), then setting up the Graphite webapp on each instance to read from the local Cyclone instance. The entire cluster is then mostly homogenous; all machines run the same software with slightly different but analogous configurations. Writes can go to any Cyclone instance and will be forwarded appropriately, and reads can go to any Graphite webapp.
 
 ## Future work
 
 There's a lot to do here.
 
+- Build a way to automatically reshard data across the cluster.
 - Add a `flush_series` call to the Thrift interface to support blocking on buffered writes.
 - Support new storage formats.
 - Build out query execution functionality.
