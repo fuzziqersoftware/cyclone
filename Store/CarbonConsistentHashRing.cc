@@ -21,8 +21,8 @@ CarbonConsistentHashRing::CarbonConsistentHashRing(
     string node_key = string_printf("('%s', '%s')", host.host.c_str(),
         host.name.c_str());
 
-    for (size_t x = 0; x < replica_count; x++) {
-      string replica_key = string_printf("%s:%zu", node_key.c_str(), x);
+    for (size_t y = 0; y < replica_count; y++) {
+      string replica_key = string_printf("%s:%zu", node_key.c_str(), y);
       uint16_t position = this->compute_ring_position(replica_key.data(),
           replica_key.size());
       this->ring.emplace(position, x);
