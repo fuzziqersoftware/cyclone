@@ -75,6 +75,7 @@ void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* 
     evbuffer_drain(out_buffer.get(), evbuffer_get_length(out_buffer.get()));
     evbuffer_add_printf(out_buffer.get(), "error during request: %s", e.what());
     this->send_response(req, 500, "text/plain", out_buffer.get());
+    log(WARNING, "internal server error during http request: %s", e.what());
     return;
   }
 
