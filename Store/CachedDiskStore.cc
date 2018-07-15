@@ -281,6 +281,11 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
     const auto& key_name = it.first;
     const auto& metadata = it.second;
 
+    if (!this->key_name_is_valid(key_name)) {
+      ret.emplace(key_name, "key contains invalid characters");
+      continue;
+    }
+
     try {
       KeyPath p(key_name);
       // TODO: can we use the metadata_to_create argument here? might help to
@@ -509,6 +514,11 @@ unordered_map<string, string> CachedDiskStore::write(
     const unordered_map<string, Series>& data, bool local_only) {
   unordered_map<string, string> ret;
   for (auto& it : data) {
+    if (!this->key_name_is_valid(it.first)) {
+      ret.emplace(it.first, "key contains invalid characters");
+      continue;
+    }
+
     KeyPath p(it.first);
     try {
       try {

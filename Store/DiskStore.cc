@@ -44,6 +44,11 @@ unordered_map<string, string> DiskStore::update_metadata(
     auto& key_name = it.first;
     auto& metadata = it.second;
 
+    if (!this->key_name_is_valid(it.first)) {
+      ret.emplace(it.first, "key contains invalid characters");
+      continue;
+    }
+
     try {
       string filename = this->filename_for_key(key_name);
 
@@ -241,6 +246,11 @@ unordered_map<string, string> DiskStore::write(
     const unordered_map<string, Series>& data, bool local_only) {
   unordered_map<string, string> ret;
   for (const auto& it : data) {
+    if (!this->key_name_is_valid(it.first)) {
+      ret.emplace(it.first, "key contains invalid characters");
+      continue;
+    }
+
     try {
       string filename = this->filename_for_key(it.first);
       try {
@@ -358,6 +368,48 @@ unordered_map<string, int64_t> DiskStore::get_stats(bool rotate) {
 
 string DiskStore::str() const {
   return "DiskStore(" + this->directory + ")";
+}
+
+vector<bool> valid_chars() {
+  vector<bool> ret(0x100);
+
+  // allow alphanumeric characters
+  for (char ch = 'a'; ch <= 'z'; ch++) {
+    ret[ch] = true;
+  }
+  for (char ch = 'A'; ch <= 'Z'; ch++) {
+    ret[ch] = true;
+  }
+  for (char ch = '0'; ch <= '9'; ch++) {
+    ret[ch] = true;
+  }
+
+  // allow path separators
+  ret['.'] = true;
+
+  // allow some special chars
+  ret['_'] = true;
+  ret['-'] = true;
+  ret[':'] = true;
+  ret['@'] = true;
+  ret['#'] = true;
+  ret[','] = true;
+  ret['='] = true;
+
+  return ret;
+}
+
+static const vector<bool> VALID_CHARS = valid_chars();
+
+bool DiskStore::key_name_is_valid(const string& key_name) {
+  // allowed characters are [a-zA-Z0-9.:_-]
+  // if the key contains any other character, it's not valid
+  for (uint8_t ch : key_name) {
+    if (!VALID_CHARS[ch]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 string DiskStore::filename_for_key(const string& key_name, bool is_file) {
