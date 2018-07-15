@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -131,6 +132,9 @@ NormalizedSeries normalize_series_collections(vector<Query>& args) {
   }
 
   for (auto& arg : args) {
+    if (!(arg.type & Query::Type::SeriesOrCall)) {
+      continue;
+    }
     for (auto& series_it : arg.series_data) {
       ret.series.emplace(move(series_it.first), move(series_it.second.data));
     }
@@ -141,36 +145,91 @@ NormalizedSeries normalize_series_collections(vector<Query>& args) {
 }
 
 
+static unordered_map<string, ReadResult> fn_sum_series(vector<Query>& args) {
+  check_arg_types(args, 0, -1, Query::Type::SeriesOrCall);
+  forward_errors(args);
+  auto normalized = normalize_series_collections(args);
+
+  unordered_map<string, ReadResult> ret_map;
+  ReadResult& ret = ret_map[function_call_str("sumSeries", args)];
+  ret.start_time = normalized.start_time;
+  ret.end_time = normalized.end_time;
+  ret.step = normalized.step;
+
+  map<int64_t, double> result_series_map;
+  for (const auto& normalized_series_it : normalized.series) {
+    for (const auto& datapoint : normalized_series_it.second) {
+      result_series_map[datapoint.timestamp] += datapoint.value;
+    }
+  }
+
+  auto& result_series = ret.data;
+  for (const auto& result_dp : result_series_map) {
+    result_series.emplace_back();
+    Datapoint& dp = result_series.back();
+    dp.timestamp = result_dp.first;
+    dp.value = result_dp.second;
+  }
+
+  return ret_map;
+}
+
+static unordered_map<string, ReadResult> fn_average_series(vector<Query>& args) {
+  check_arg_types(args, 0, -1, Query::Type::SeriesOrCall);
+  forward_errors(args);
+  auto normalized = normalize_series_collections(args);
+
+  unordered_map<string, ReadResult> ret_map;
+  ReadResult& ret = ret_map[function_call_str("averageSeries", args)];
+  ret.start_time = normalized.start_time;
+  ret.end_time = normalized.end_time;
+  ret.step = normalized.step;
+
+  // {timestamp: (value, count)}
+  map<int64_t, pair<double, int64_t>> result_series_map;
+  for (const auto& normalized_series_it : normalized.series) {
+    for (const auto& datapoint : normalized_series_it.second) {
+      auto value_pair = result_series_map[datapoint.timestamp];
+      value_pair.first += datapoint.value;
+      value_pair.second += 1;
+    }
+  }
+
+  auto& result_series = ret.data;
+  for (const auto& result_dp : result_series_map) {
+    result_series.emplace_back();
+    Datapoint& dp = result_series.back();
+    dp.timestamp = result_dp.first;
+    dp.value = result_dp.second.first / result_dp.second.second;
+  }
+
+  return ret_map;
+}
+
 #define CYCLONE_FUNCTION(name) #name, +[](vector<Query>& args) -> unordered_map<string, ReadResult>
 
 static const unordered_map<string, unordered_map<string, ReadResult> (*)(vector<Query>&)> functions({
-  {CYCLONE_FUNCTION(sumSeries) {
-    check_arg_types(args, 0, -1, Query::Type::SeriesOrCall);
+  {"sumSeries", fn_sum_series},
+  {"sum", fn_sum_series},
+  {"avgSeries", fn_average_series},
+  {"avg", fn_average_series},
+
+  {CYCLONE_FUNCTION(scale) {
+    check_arg_types(args, 2, 2, Query::Type::SeriesOrCall, Query::Type::Numeric);
     forward_errors(args);
-    auto normalized = normalize_series_collections(args);
 
-    unordered_map<string, ReadResult> ret_map;
-    ReadResult& ret = ret_map[function_call_str("sumSeries", args)];
-    ret.start_time = normalized.start_time;
-    ret.end_time = normalized.end_time;
-    ret.step = normalized.step;
-
-    map<int64_t, double> result_series_map;
-    for (const auto& normalized_series_it : normalized.series) {
-      for (const auto& datapoint : normalized_series_it.second) {
-        result_series_map[datapoint.timestamp] += datapoint.value;
+    double scale_value = (args[1].type == Query::Type::Integer) ?
+        args[1].int_data : args[1].float_data;
+    unordered_map<string, ReadResult> ret;
+    for (auto& arg : args) {
+      for (auto& series_it : arg.series_data) {
+        for (auto& dp : series_it.second.data) {
+          dp.value *= scale_value;
+        }
+        ret.emplace(move(series_it.first), move(series_it.second));
       }
     }
-
-    auto& result_series = ret.data;
-    for (const auto& result_dp : result_series_map) {
-      result_series.emplace_back();
-      Datapoint& dp = result_series.back();
-      dp.timestamp = result_dp.first;
-      dp.value = result_dp.second;
-    }
-
-    return ret_map;
+    return ret;
   }},
 
   /* unimplemented functions:
@@ -293,17 +352,9 @@ static const unordered_map<string, unordered_map<string, ReadResult> (*)(vector<
     "description": "Calculates a percentage of the total of a wildcard series. If `total` is specified,\neach series will be calculated as a percentage of that total. If `total` is not specified,\nthe sum of all points in the wildcard series will be used instead.\n\nA list of nodes can optionally be provided, if so they will be used to match series with their\ncorresponding totals following the same logic as :py:func:`groupByNodes <groupByNodes>`.\n\nWhen passing `nodes` the `total` parameter may be a series list or `None`.  If it is `None` then\nfor each series in `seriesList` the percentage of the sum of series in that group will be returned.\n\nWhen not passing `nodes`, the `total` parameter may be a single series, reference the same number\nof series as `seriesList` or be a numeric value.\n\nExample:\n\n.. code-block:: none\n\n  # Server01 connections failed and succeeded as a percentage of Server01 connections attempted\n  &target=asPercent(Server01.connections.{failed,succeeded}, Server01.connections.attempted)\n\n  # For each server, its connections failed as a percentage of its connections attempted\n  &target=asPercent(Server*.connections.failed, Server*.connections.attempted)\n\n  # For each server, its connections failed and succeeded as a percentage of its connections attemped\n  &target=asPercent(Server*.connections.{failed,succeeded}, Server*.connections.attempted, 0)\n\n  # apache01.threads.busy as a percentage of 1500\n  &target=asPercent(apache01.threads.busy,1500)\n\n  # Server01 cpu stats as a percentage of its total\n  &target=asPercent(Server01.cpu.*.jiffies)\n\n  # cpu stats for each server as a percentage of its total\n  &target=asPercent(Server*.cpu.*.jiffies, None, 0)\n\nWhen using `nodes`, any series or totals that can't be matched will create output series with\nnames like ``asPercent(someSeries,MISSING)`` or ``asPercent(MISSING,someTotalSeries)`` and all\nvalues set to None. If desired these series can be filtered out by piping the result through\n``|exclude(\"MISSING\")`` as shown below:\n\n.. code-block:: none\n\n  &target=asPercent(Server{1,2}.memory.used,Server{1,3}.memory.total,0)\n\n  # will produce 3 output series:\n  # asPercent(Server1.memory.used,Server1.memory.total) [values will be as expected]\n  # asPercent(Server2.memory.used,MISSING) [all values will be None]\n  # asPercent(MISSING,Server3.memory.total) [all values will be None]\n\n  &target=asPercent(Server{1,2}.memory.used,Server{1,3}.memory.total,0)|exclude(\"MISSING\")\n\n  # will produce 1 output series:\n  # asPercent(Server1.memory.used,Server1.memory.total) [values will be as expected]\n\nEach node may be an integer referencing a node in the series name or a string identifying a tag.\n\n.. note::\n\n  When `total` is a seriesList, specifying `nodes` to match series with the corresponding total\n  series will increase reliability.",
     "function": "asPercent(seriesList, total=None, *nodes)",
   },
-  "averageSeries": {
-    "description": "Short Alias: avg()\n\nTakes one metric or a wildcard seriesList.\nDraws the average value of all metrics passed at each time.\n\nExample:\n\n.. code-block:: none\n\n  &target=averageSeries(company.server.*.threads.busy)\n\nThis is an alias for :py:func:`aggregate <aggregate>` with aggregation ``average``.",
-    "function": "averageSeries(*seriesLists)",
-  },
   "averageSeriesWithWildcards": {
     "description": "Call averageSeries after inserting wildcards at the given position(s).\n\nExample:\n\n.. code-block:: none\n\n  &target=averageSeriesWithWildcards(host.cpu-[0-7].cpu-{user,system}.value, 1)\n\nThis would be the equivalent of\n\n.. code-block:: none\n\n  &target=averageSeries(host.*.cpu-user.value)&target=averageSeries(host.*.cpu-system.value)\n\nThis is an alias for :py:func:`aggregateWithWildcards <aggregateWithWildcards>` with aggregation ``average``.",
     "function": "averageSeriesWithWildcards(seriesList, *position)",
-  },
-  "avg": {
-    "description": "Short Alias: avg()\n\nTakes one metric or a wildcard seriesList.\nDraws the average value of all metrics passed at each time.\n\nExample:\n\n.. code-block:: none\n\n  &target=averageSeries(company.server.*.threads.busy)\n\nThis is an alias for :py:func:`aggregate <aggregate>` with aggregation ``average``.",
-    "function": "avg(*seriesLists)",
   },
   "countSeries": {
     "description": "Draws a horizontal line representing the number of nodes found in the seriesList.\n\n.. code-block:: none\n\n  &target=countSeries(carbon.agents.*.*)",
@@ -712,10 +763,6 @@ static const unordered_map<string, unordered_map<string, ReadResult> (*)(vector<
   "round": {
     "description": "Takes one metric or a wildcard seriesList optionally followed by a precision, and rounds each\ndatapoint to the specified precision.\n\nExample:\n\n.. code-block:: none\n\n  &target=round(Server.instance01.threads.busy)\n  &target=round(Server.instance01.threads.busy,2)",
     "function": "round(seriesList, precision=None)",
-  },
-  "scale": {
-    "description": "Takes one metric or a wildcard seriesList followed by a constant, and multiplies the datapoint\nby the constant provided at each point.\n\nExample:\n\n.. code-block:: none\n\n  &target=scale(Server.instance01.threads.busy,10)\n  &target=scale(Server.instance*.threads.busy,10)",
-    "function": "scale(seriesList, factor)",
   },
   "scaleToSeconds": {
     "description": "Takes one metric or a wildcard seriesList and returns \"value per seconds\" where\nseconds is a last argument to this functions.\n\nUseful in conjunction with derivative or integral function if you want\nto normalize its result to a known resolution for arbitrary retentions",
