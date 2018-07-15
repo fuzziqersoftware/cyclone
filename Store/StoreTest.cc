@@ -125,7 +125,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   string pattern2 = "test.NoSuchDirectory*";
   string pattern3 = "test.DiskStore.no_such_key*";
   string pattern4 = "test.DiskStore.*";
-  string pattern5 = "test.autocreate.**";
+  string pattern5 = "test.**";
 
   {
     printf("-- [%s:basic_test] read from nonexistent series\n", store_name.c_str());
@@ -445,6 +445,59 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect(ret.at(pattern4).error.empty());
     expect(ret.at(pattern4).results.empty());
     expect_eq(2, ret.size());
+  }
+
+  {
+    printf("-- [%s:basic_test] update_metadata (create) on mixed existing & nonexistent series\n", store_name.c_str());
+    auto ret = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false);
+    expect_eq(2, ret.size());
+    expect(ret.at(key_name1).empty());
+    if (is_write_buffer) {
+      expect(ret.at(key_name2).empty());
+      expect(!isfile(key_filename1));
+      expect(isfile(key_filename2));
+      s->flush();
+    } else {
+      expect_eq("ignored", ret.at(key_name2));
+    }
+    expect(isfile(key_filename1));
+    expect(isfile(key_filename2));
+  }
+
+  {
+    printf("-- [%s:basic_test] delete file with wildcard\n", store_name.c_str());
+    auto ret = s->delete_series({pattern1}, false);
+    expect_eq(1, ret.at(pattern1));
+    expect_eq(1, ret.size());
+    expect(isfile(key_filename1));
+    expect(!isfile(key_filename2));
+    expect(!isfile(autocreate_key_filename));
+
+    // empty directories should have been deleted too
+    expect(isdir(data_directory + "/test/DiskStore"));
+    expect(!isdir(data_directory + "/test/autocreate/dir1/dir2/dir3"));
+    expect(!isdir(data_directory + "/test/autocreate/dir1/dir2"));
+    expect(!isdir(data_directory + "/test/autocreate/dir1"));
+    expect(!isdir(data_directory + "/test/autocreate"));
+    expect(isdir(data_directory + "/test"));
+  }
+
+  {
+    printf("-- [%s:basic_test] delete directory\n", store_name.c_str());
+    auto ret = s->delete_series({pattern5}, false);
+    expect_eq(1, ret.at(pattern5));
+    expect_eq(1, ret.size());
+    expect(!isfile(key_filename1));
+    expect(!isfile(key_filename2));
+    expect(!isfile(autocreate_key_filename));
+
+    // empty directories should have been deleted too
+    expect(!isdir(data_directory + "/test/DiskStore"));
+    expect(!isdir(data_directory + "/test/autocreate/dir1/dir2/dir3"));
+    expect(!isdir(data_directory + "/test/autocreate/dir1/dir2"));
+    expect(!isdir(data_directory + "/test/autocreate/dir1"));
+    expect(!isdir(data_directory + "/test/autocreate"));
+    expect(!isdir(data_directory + "/test"));
   }
 }
 

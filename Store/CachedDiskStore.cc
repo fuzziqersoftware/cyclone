@@ -380,10 +380,49 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
 
 unordered_map<string, int64_t> CachedDiskStore::delete_series(
     const vector<string>& patterns, bool local_only) {
-  auto key_to_pattern = this->resolve_patterns(patterns, local_only);
-
   unordered_map<string, int64_t> ret;
+
+  // if a pattern ends in **, delete the entire tree. ** doesn't work in
+  // resolve_patterns and isn't allowed anywhere else in patterns, so
+  // special-case it here
+  vector<string> determinate_patterns;
+  for (const auto& pattern : patterns) {
+    if (ends_with(pattern, ".**")) {
+      string directory_pattern = pattern.substr(0, pattern.size() - 3);
+      string directory_path = this->filename_for_key(directory_pattern, false);
+      int64_t& deleted_count = ret[pattern];
+
+      vector<string> paths_to_count;
+      paths_to_count.emplace_back(directory_path);
+      while (!paths_to_count.empty()) {
+        string path = paths_to_count.back();
+        paths_to_count.pop_back();
+
+        for (const string& item : list_directory(path)) {
+          string item_path = path + "/" + item;
+          if (isdir(item_path)) {
+            paths_to_count.emplace_back(item_path);
+          } else {
+            deleted_count += 1;
+          }
+        }
+      }
+
+      unlink(directory_path, true);
+
+    } else {
+      determinate_patterns.emplace_back(pattern);
+    }
+  }
+
+  auto key_to_pattern = this->resolve_patterns(determinate_patterns, local_only);
+
   for (auto key_it : key_to_pattern) {
+    // if the token is a pattern, don't delete it - directory trees must be
+    // deleted with the .** form of this command instead
+    if (this->token_is_pattern(key_it.first)) {
+      continue;
+    }
 
     try {
       KeyPath p(key_it.first);
@@ -408,7 +447,7 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
     }
   }
 
-  for (const string& pattern : patterns) {
+  for (const string& pattern : determinate_patterns) {
     ret.emplace(pattern, 0);
   }
   return ret;
