@@ -883,13 +883,18 @@ void CachedDiskStore::populate_cache_level(CachedDirectoryContents* level,
   for (const auto& item : filesystem_items) {
     string item_filesystem_path = filesystem_path + "/" + item;
 
-    auto st = stat(item_filesystem_path);
-    // note that we already hold both locks for writing
-    if (ends_with(item, ".wsp") && isfile(st)) {
-      string key_name = item.substr(0, item.size() - 4);
-      this->create_cache_file_locked(level, key_name, item_filesystem_path);
-    } else if (isdir(st)) {
-      this->create_cache_directory_locked(level, item);
+    try {
+      auto st = stat(item_filesystem_path);
+      // note that we already hold both locks for writing
+      if (ends_with(item, ".wsp") && isfile(st)) {
+        string key_name = item.substr(0, item.size() - 4);
+        this->create_cache_file_locked(level, key_name, item_filesystem_path);
+      } else if (isdir(st)) {
+        this->create_cache_directory_locked(level, item);
+      }
+    } catch (const cannot_stat_file& e) {
+      // this can happen if a file is deleted or renamed during this process, or
+      // if it has an invalid name. just ignore it entirely (don't populate it)
     }
   }
 
