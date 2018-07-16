@@ -34,12 +34,12 @@ static string function_call_str(const string& name, const vector<Query>& args) {
   return s;
 }
 
-static void check_arg_types(const vector<Query>& args, ssize_t min_arg_count,
+static void check_arg_types(const vector<Query>& args, size_t min_arg_count,
     ssize_t max_arg_count, ...) {
   if (args.size() < min_arg_count) {
     throw runtime_error("not enough arguments to function");
   }
-  if ((max_arg_count > 0) && (args.size() > max_arg_count)) {
+  if ((max_arg_count > 0) && (static_cast<ssize_t>(args.size()) > max_arg_count)) {
     throw runtime_error("too many arguments to function");
   }
 
