@@ -370,48 +370,6 @@ string DiskStore::str() const {
   return "DiskStore(" + this->directory + ")";
 }
 
-vector<bool> valid_chars() {
-  vector<bool> ret(0x100);
-
-  // allow alphanumeric characters
-  for (char ch = 'a'; ch <= 'z'; ch++) {
-    ret[ch] = true;
-  }
-  for (char ch = 'A'; ch <= 'Z'; ch++) {
-    ret[ch] = true;
-  }
-  for (char ch = '0'; ch <= '9'; ch++) {
-    ret[ch] = true;
-  }
-
-  // allow path separators
-  ret['.'] = true;
-
-  // allow some special chars
-  ret['_'] = true;
-  ret['-'] = true;
-  ret[':'] = true;
-  ret['@'] = true;
-  ret['#'] = true;
-  ret[','] = true;
-  ret['='] = true;
-
-  return ret;
-}
-
-static const vector<bool> VALID_CHARS = valid_chars();
-
-bool DiskStore::key_name_is_valid(const string& key_name) {
-  // allowed characters are [a-zA-Z0-9.:_-]
-  // if the key contains any other character, it's not valid
-  for (uint8_t ch : key_name) {
-    if (!VALID_CHARS[ch]) {
-      return false;
-    }
-  }
-  return true;
-}
-
 string DiskStore::filename_for_key(const string& key_name, bool is_file) {
   // input: a.b.c.d
   // output: /root/directory/a/b/c/d.wsp

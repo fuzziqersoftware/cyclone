@@ -59,6 +59,9 @@ public:
       const std::string& pattern, size_t name_offset = 0,
       size_t pattern_offset = 0);
 
+  static bool key_char_is_valid(char ch);
+  static bool key_name_is_valid(const std::string& key_name);
+
 protected:
   Store() = default;
 

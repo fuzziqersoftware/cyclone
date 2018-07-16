@@ -96,9 +96,18 @@ unordered_map<string, FindResult> MultiStore::find(
 unordered_map<string, int64_t> MultiStore::get_stats(bool rotate) {
   unordered_map<string, int64_t> ret;
   for (const auto& it : this->stores) {
+    // replace any invalid characters in the store name
+    string store_name;
+    for (char ch : it.first) {
+      if (!this->key_char_is_valid(ch)) {
+        ch = '_';
+      }
+      store_name.push_back(ch);
+    }
+
     for (const auto& stat : it.second->get_stats(rotate)) {
-      ret.emplace(string_printf("%s:%s", it.first.c_str(), stat.first.c_str()),
-          stat.second);
+      ret.emplace(string_printf("%s:%s", store_name.c_str(),
+          stat.first.c_str()), stat.second);
     }
   }
   return ret;

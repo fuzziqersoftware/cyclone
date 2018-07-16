@@ -131,6 +131,51 @@ bool Store::name_matches_pattern(const string& name, const string& pattern,
   return pattern_offset == pattern.size();
 }
 
+vector<bool> valid_chars() {
+  vector<bool> ret(0x100);
+
+  // allow alphanumeric characters
+  for (char ch = 'a'; ch <= 'z'; ch++) {
+    ret[ch] = true;
+  }
+  for (char ch = 'A'; ch <= 'Z'; ch++) {
+    ret[ch] = true;
+  }
+  for (char ch = '0'; ch <= '9'; ch++) {
+    ret[ch] = true;
+  }
+
+  // allow path separators
+  ret['.'] = true;
+
+  // allow some special chars
+  ret['_'] = true;
+  ret['-'] = true;
+  ret[':'] = true;
+  ret['@'] = true;
+  ret['#'] = true;
+  ret['='] = true;
+
+  return ret;
+}
+
+static const vector<bool> VALID_CHARS = valid_chars();
+
+bool Store::key_char_is_valid(char ch) {
+  return VALID_CHARS[ch];
+}
+
+bool Store::key_name_is_valid(const string& key_name) {
+  // allowed characters are [a-zA-Z0-9.:_-]
+  // if the key contains any other character, it's not valid
+  for (uint8_t ch : key_name) {
+    if (!VALID_CHARS[ch]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void Store::validate_autocreate_rules(
     const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules) {
   for (const auto& it : autocreate_rules) {

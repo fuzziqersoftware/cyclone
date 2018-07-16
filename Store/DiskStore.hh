@@ -50,8 +50,6 @@ protected:
       const std::string& current_key_prefix, size_t part_index,
       const std::vector<std::string>& pattern_parts);
 
-  static bool key_name_is_valid(const std::string& key_name);
-
   std::string filename_for_key(const std::string& key_name, bool is_file = true);
 
   std::string directory;
