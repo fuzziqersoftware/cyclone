@@ -89,10 +89,12 @@
   // the precision specifies the number of bits used in the ring. The ring will
   // use 2^precision bytes of memory. If the precision is negative, the Carbon
   // consistent hashing algorithm is used, and (-precision) specifies the
-  // replica count. Don't change the precision after keys have been created;
-  // doing so will cause keys to exist in the wrong stores. The default
-  // precision is -100. The precision can be changed without restarting the
-  // server.
+  // replica count. If you want to run Cyclone alongside Carbon without
+  // resharding, the store names must be of the form
+  // "('hostname', 'graphite_instance_name')" to work around what appears to be
+  // a bug in Carbon's consistent hashing logic. Don't change the precision
+  // after keys have been created; doing so will cause keys to exist in the
+  // wrong stores. The default precision is -100.
   // {
   //   "store_type": "hash",
   //   "precision": 20,

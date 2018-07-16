@@ -6,7 +6,8 @@ Like most of my projects, this is only tested at a small scale (so far), so ther
 
 ## Building
 
-- Build and install phosg (https://github.com/fuzziqersoftware/phosg)
+- Build and install phosg (https://github.com/fuzziqersoftware/phosg).
+- Check if you have zlib. If you don't, be a little surprised, then install it.
 - Run `make`.
 
 If it doesn't work on your system, let me know. I've built and tested it on Mac OS X 10.13 and Ubuntu 16.04.

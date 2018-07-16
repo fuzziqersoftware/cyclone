@@ -11,6 +11,7 @@
 
 #include "Server.hh"
 #include "../Store/Store.hh"
+#include "../Store/ConsistentHashMultiStore.hh"
 
 
 class StreamServer : public Server {
@@ -56,6 +57,7 @@ private:
   std::vector<WorkerThread> threads;
   std::unordered_map<int, Protocol> listen_fd_to_protocol;
   std::shared_ptr<Store> store;
+  std::vector<std::shared_ptr<ConsistentHashMultiStore>> hash_stores;
 
   void on_listen_accept(WorkerThread& wt, struct evconnlistener *listener,
       evutil_socket_t fd, struct sockaddr *address, int socklen);
@@ -69,11 +71,14 @@ private:
   void run_thread(int thread_id);
 
 public:
+  // note: StreamServer needs to know about the hash stores because it supports
+  // a shell command to start and check on verify procedures
   StreamServer() = delete;
   StreamServer(const StreamServer&) = delete;
   StreamServer(StreamServer&&) = delete;
-  StreamServer(std::shared_ptr<Store> store, size_t num_threads,
-      uint64_t exit_check_usecs);
+  StreamServer(std::shared_ptr<Store> store,
+      const std::vector<std::shared_ptr<ConsistentHashMultiStore>>& hash_stores,
+      size_t num_threads, uint64_t exit_check_usecs);
   virtual ~StreamServer() = default;
 
   void listen(const std::string& socket_path, Protocol protocol);

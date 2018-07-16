@@ -66,6 +66,15 @@ unordered_map<string, FindResult> EmptyStore::find(
   return ret;
 }
 
+string EmptyStore::restore_series(const string& key_name,
+      const string& data, bool combine_from_existing, bool local_only) {
+  return "";
+}
+
+string EmptyStore::serialize_series(const string& key_name, bool local_only) {
+  return "";
+}
+
 string EmptyStore::str() const {
   return "EmptyStore";
 }

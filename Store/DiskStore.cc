@@ -366,6 +366,72 @@ unordered_map<string, int64_t> DiskStore::get_stats(bool rotate) {
   return current_stats.to_map();
 }
 
+string DiskStore::restore_series(const string& key_name,
+      const string& data, bool combine_from_existing, bool local_only) {
+  if (!this->key_name_is_valid(key_name)) {
+    return "key contains invalid characters";
+  }
+
+  try {
+    // if we don't have to combine, just deserialize directly to the target file
+    string target_filename = this->filename_for_key(key_name);
+    if (!combine_from_existing || !isfile(target_filename)) {
+      WhisperArchive d(target_filename, data);
+      return "";
+    }
+
+    // if we do have to combine, make a temp file so we can read from both
+    // series without conflicts
+    string temp_filename = string_printf("%s.restore-%" PRId64,
+        target_filename.c_str(), now());
+    WhisperArchive temp_series(temp_filename, data);
+    try {
+      auto metadata = temp_series.get_metadata();
+      const auto& archive_metadata = metadata->archives[0];
+
+      // read the entire first archive of the restored series, and take the latest
+      // non-null datapoint
+      uint64_t end_time = now() / 1000000;
+      uint64_t start_time = end_time - archive_metadata.seconds_per_point * archive_metadata.points;
+      auto read_result = temp_series.read(start_time, end_time, 0);
+
+      uint32_t latest_datapoint_time = 0;
+      if (!read_result.data.empty()) {
+        latest_datapoint_time = read_result.data[read_result.data.size() - 1].timestamp;
+      }
+
+      // if there's data, copy it over to the new file
+      if (latest_datapoint_time) {
+        WhisperArchive original_series(target_filename);
+        auto original_read_result = original_series.read(
+            latest_datapoint_time, end_time);
+        temp_series.write(original_read_result.data);
+      }
+
+      // rename the temp series into place
+      rename(temp_filename, target_filename);
+
+      return "";
+
+    } catch (const exception& e) {
+      unlink(temp_filename);
+      throw;
+    }
+
+  } catch (const exception& e) {
+    return e.what();
+  }
+}
+
+string DiskStore::serialize_series(const string& key_name, bool local_only) {
+  try {
+    WhisperArchive d(this->filename_for_key(key_name));
+    return d.serialize();
+  } catch (const exception& e) {
+    return "";
+  }
+}
+
 string DiskStore::str() const {
   return "DiskStore(" + this->directory + ")";
 }

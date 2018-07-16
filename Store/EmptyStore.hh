@@ -28,5 +28,10 @@ public:
   virtual std::unordered_map<std::string, FindResult> find(
       const std::vector<std::string>& patterns, bool local_only);
 
+  virtual std::string restore_series(const std::string& key_name,
+      const std::string& data, bool combine_from_existing, bool local_only);
+  virtual std::string serialize_series(const std::string& key_name,
+      bool local_only);
+
   virtual std::string str() const;
 };

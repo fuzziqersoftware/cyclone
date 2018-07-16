@@ -69,6 +69,17 @@ public:
     _return = this->store->get_stats();
   }
 
+  void restore_series(string& _return, const string& key_name,
+      const string& data, bool combine_from_existing, bool local_only) {
+    _return = this->store->restore_series(key_name, data, combine_from_existing,
+        local_only);
+  }
+
+  void serialize_series(string& _return, const string& key_name,
+      bool local_only) {
+    _return = this->store->serialize_series(key_name, local_only);
+  }
+
   int64_t delete_from_cache(const std::string& path, bool local_only) {
     return this->store->delete_from_cache(path, local_only);
   }

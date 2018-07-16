@@ -98,6 +98,16 @@ unordered_map<string, int64_t> QueryStore::get_stats(bool rotate) {
   return this->store->get_stats();
 }
 
+string QueryStore::restore_series(const string& key_name,
+      const string& data, bool combine_from_existing, bool local_only) {
+  return this->store->restore_series(key_name, data, combine_from_existing,
+      local_only);
+}
+
+string QueryStore::serialize_series(const string& key_name, bool local_only) {
+  return this->store->serialize_series(key_name, local_only);
+}
+
 int64_t QueryStore::delete_from_cache(const std::string& path, bool local_only) {
   return this->store->delete_from_cache(path, local_only);
 }

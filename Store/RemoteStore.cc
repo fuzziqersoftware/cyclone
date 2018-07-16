@@ -192,6 +192,42 @@ unordered_map<string, int64_t> RemoteStore::get_stats(bool rotate) {
   return ret;
 }
 
+string RemoteStore::restore_series(const string& key_name,
+      const string& data, bool combine_from_existing, bool local_only) {
+  if (local_only) {
+    return "remote request cancelled";
+  }
+
+  string ret;
+  auto c = this->get_client();
+  try {
+    c->client->restore_series(ret, key_name, data, combine_from_existing, true);
+    this->return_client(move(c));
+  } catch (const apache::thrift::transport::TTransportException& e) {
+    this->stats[0].server_disconnects++;
+    ret = e.what();
+  }
+  this->stats[0].restore_series_commands++;
+  return ret;
+}
+
+string RemoteStore::serialize_series(const string& key_name, bool local_only) {
+  if (local_only) {
+    return "";
+  }
+
+  string ret;
+  auto c = this->get_client();
+  try {
+    c->client->serialize_series(ret, key_name, true);
+    this->return_client(move(c));
+  } catch (const apache::thrift::transport::TTransportException& e) {
+    this->stats[0].server_disconnects++;
+  }
+  this->stats[0].serialize_series_commands++;
+  return ret;
+}
+
 int64_t RemoteStore::delete_from_cache(const std::string& path, bool local_only) {
   if (local_only) {
     return 0;
@@ -284,6 +320,8 @@ RemoteStore::Stats::Stats() : Store::Stats::Stats(),
     read_commands(0),
     write_commands(0),
     find_commands(0),
+    restore_series_commands(0),
+    serialize_series_commands(0),
     delete_from_cache_commands(0),
     delete_pending_writes_commands(0) { }
 
@@ -299,6 +337,8 @@ RemoteStore::Stats& RemoteStore::Stats::operator=(const Stats& other) {
   this->read_commands = other.read_commands.load();
   this->write_commands = other.write_commands.load();
   this->find_commands = other.find_commands.load();
+  this->restore_series_commands = other.restore_series_commands.load();
+  this->serialize_series_commands = other.serialize_series_commands.load();
   this->delete_from_cache_commands = other.delete_from_cache_commands.load();
   this->delete_pending_writes_commands = other.delete_pending_writes_commands.load();
   return *this;
@@ -314,6 +354,8 @@ unordered_map<string, int64_t> RemoteStore::Stats::to_map() const {
   ret.emplace("remote_read_commands", this->read_commands.load());
   ret.emplace("remote_write_commands", this->write_commands.load());
   ret.emplace("remote_find_commands", this->find_commands.load());
+  ret.emplace("remote_restore_series_commands", this->restore_series_commands.load());
+  ret.emplace("remote_serialize_series_commands", this->serialize_series_commands.load());
   ret.emplace("remote_delete_from_cache_commands", this->delete_from_cache_commands.load());
   ret.emplace("remote_delete_pending_writes_commands", this->delete_pending_writes_commands.load());
   return ret;

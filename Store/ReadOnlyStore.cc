@@ -65,7 +65,18 @@ unordered_map<string, int64_t> ReadOnlyStore::get_stats(bool rotate) {
   return this->store->get_stats(rotate);
 }
 
-int64_t ReadOnlyStore::delete_from_cache(const std::string& path, bool local_only) {
+string ReadOnlyStore::restore_series(const string& key_name,
+      const string& data, bool combine_from_existing, bool local_only) {
+  return "writes not allowed";
+}
+
+string ReadOnlyStore::serialize_series(const string& key_name,
+    bool local_only) {
+  return this->store->serialize_series(key_name, local_only);
+}
+
+int64_t ReadOnlyStore::delete_from_cache(const std::string& path,
+    bool local_only) {
   return this->store->delete_from_cache(path, local_only);
 }
 

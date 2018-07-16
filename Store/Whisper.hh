@@ -67,13 +67,16 @@ public:
       uint32_t agg_method);
   WhisperArchive(const std::string& filename, const std::string& archive_args,
       float x_files_factor, uint32_t agg_method);
+  WhisperArchive(const std::string& filename, const std::string& serialized);
 
   virtual ~WhisperArchive();
 
+  const std::string& get_filename() const;
   std::shared_ptr<const Metadata> get_metadata() const;
 
   void print(FILE* stream, bool print_data = false);
-  ReadResult read(uint64_t start_time, uint64_t end_time);
+  ReadResult read(uint64_t start_time, uint64_t end_time,
+      ssize_t force_archive_index = -1);
   void write(const Series& data);
 
   void truncate();
@@ -81,6 +84,8 @@ public:
       float x_files_factor, uint32_t agg_method, bool truncate = false);
 
   size_t get_file_size() const;
+
+  std::string serialize() const;
 
   static std::vector<ArchiveArg> parse_archive_args(const std::string& s);
   static void validate_archive_args(const std::vector<ArchiveArg>& args);

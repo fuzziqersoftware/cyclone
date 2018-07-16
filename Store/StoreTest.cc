@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <phosg/Filesystem.hh>
+#include <phosg/Strings.hh>
 #include <phosg/UnitTest.hh>
 #include <string>
 
@@ -117,10 +118,12 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   string key_name1 = "test.DiskStore.key1";
   string key_name2 = "test.key2";
-  string autocreate_key_name = "test.autocreate.dir1.dir2.dir3.key1";
+  string autocreate_key_name1 = "test.autocreate.dir1.dir2.dir3.key1";
+  string autocreate_key_name2 = "test.autocreate.dir1.dir2.dir3.key2";
   string key_filename1 = data_directory + "/test/DiskStore/key1.wsp";
   string key_filename2 = data_directory + "/test/key2.wsp";
-  string autocreate_key_filename = data_directory + "/test/autocreate/dir1/dir2/dir3/key1.wsp";
+  string autocreate_key_filename1 = data_directory + "/test/autocreate/dir1/dir2/dir3/key1.wsp";
+  string autocreate_key_filename2 = data_directory + "/test/autocreate/dir1/dir2/dir3/key2.wsp";
   string pattern1 = "test.*";
   string pattern2 = "test.NoSuchDirectory*";
   string pattern3 = "test.DiskStore.no_such_key*";
@@ -379,53 +382,80 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] read from nonexistent series (autocreate)\n", store_name.c_str());
-    auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now, false);
+    auto ret = s->read({autocreate_key_name1}, test_now - 10 * 60, test_now, false);
     expect_eq(1, ret.size());
-    expect_eq(1, ret.at(autocreate_key_name).size());
-    expect_eq("", ret.at(autocreate_key_name).at(autocreate_key_name).error);
-    expect(ret.at(autocreate_key_name).at(autocreate_key_name).data.empty());
-    expect_eq(ret.at(autocreate_key_name).at(autocreate_key_name).start_time, test_now - 10 * 60);
-    expect_eq(ret.at(autocreate_key_name).at(autocreate_key_name).end_time, test_now);
-    expect_eq(ret.at(autocreate_key_name).at(autocreate_key_name).step, 0);
+    expect_eq(1, ret.at(autocreate_key_name1).size());
+    expect_eq("", ret.at(autocreate_key_name1).at(autocreate_key_name1).error);
+    expect(ret.at(autocreate_key_name1).at(autocreate_key_name1).data.empty());
+    expect_eq(ret.at(autocreate_key_name1).at(autocreate_key_name1).start_time, test_now - 10 * 60);
+    expect_eq(ret.at(autocreate_key_name1).at(autocreate_key_name1).end_time, test_now);
+    expect_eq(ret.at(autocreate_key_name1).at(autocreate_key_name1).step, 0);
+    expect(!isfile(autocreate_key_filename1));
   }
 
   {
     printf("-- [%s:basic_test] write to nonexistent series (autocreate)\n", store_name.c_str());
     unordered_map<string, Series> this_write_data;
-    this_write_data.emplace(autocreate_key_name, write_data.at(key_name1));
-    expect(!isfile(autocreate_key_name));
+    this_write_data.emplace(autocreate_key_name1, write_data.at(key_name1));
+    expect(!isfile(autocreate_key_name1));
     auto ret = s->write(this_write_data, false);
     expect_eq(1, ret.size());
-    expect(ret.at(autocreate_key_name).empty());
+    expect(ret.at(autocreate_key_name1).empty());
     expect(isfile(key_filename1));
     expect(isfile(key_filename2));
-    expect_eq(is_write_buffer, !isfile(autocreate_key_filename));
+    expect_eq(is_write_buffer, !isfile(autocreate_key_filename1));
     s->flush();
-    expect(isfile(autocreate_key_filename));
+    expect(isfile(autocreate_key_filename1));
+    expect(!isfile(autocreate_key_filename2));
   }
 
   {
     printf("-- [%s:basic_test] read from series created by autocreate\n", store_name.c_str());
-    auto ret = s->read({autocreate_key_name}, test_now - 10 * 60, test_now, false);
+    auto ret = s->read({autocreate_key_name1}, test_now - 10 * 60, test_now, false);
     expect_eq(1, ret.size());
-    expect_eq(1, ret.at(autocreate_key_name).size());
-    expect(ret.at(autocreate_key_name).at(autocreate_key_name).error.empty());
-    expect_eq(1, ret.at(autocreate_key_name).at(autocreate_key_name).data.size());
-    expect_eq((test_now / 60) * 60, ret.at(autocreate_key_name).at(autocreate_key_name).data[0].timestamp);
-    expect_eq(2.0, ret.at(autocreate_key_name).at(autocreate_key_name).data[0].value);
+    expect_eq(1, ret.at(autocreate_key_name1).size());
+    expect(ret.at(autocreate_key_name1).at(autocreate_key_name1).error.empty());
+    expect_eq(1, ret.at(autocreate_key_name1).at(autocreate_key_name1).data.size());
+    expect_eq((test_now / 60) * 60, ret.at(autocreate_key_name1).at(autocreate_key_name1).data[0].timestamp);
+    expect_eq(2.0, ret.at(autocreate_key_name1).at(autocreate_key_name1).data[0].value);
     metadata.x_files_factor = 0.0;
-    expect_eq(metadata.archive_args[0].precision, ret.at(autocreate_key_name).at(autocreate_key_name).step);
+    expect_eq(metadata.archive_args[0].precision, ret.at(autocreate_key_name1).at(autocreate_key_name1).step);
+  }
+
+  {
+    printf("-- [%s:basic_test] serialize/deserialize series\n", store_name.c_str());
+    auto serialized = s->serialize_series(autocreate_key_name1, false);
+    expect_ne("", serialized);
+    auto ret = s->restore_series(autocreate_key_name2, serialized, false, false);
+    expect_eq("", ret);
+    expect(isfile(autocreate_key_filename1));
+    expect(isfile(autocreate_key_filename2));
+  }
+
+  {
+    printf("-- [%s:basic_test] read from restored series\n", store_name.c_str());
+    auto ret = s->read({autocreate_key_name2}, test_now - 10 * 60, test_now, false);
+    expect_eq(1, ret.size());
+    expect_eq(1, ret.at(autocreate_key_name2).size());
+    expect(ret.at(autocreate_key_name2).at(autocreate_key_name2).error.empty());
+    expect_eq(1, ret.at(autocreate_key_name2).at(autocreate_key_name2).data.size());
+    expect_eq((test_now / 60) * 60, ret.at(autocreate_key_name2).at(autocreate_key_name2).data[0].timestamp);
+    expect_eq(2.0, ret.at(autocreate_key_name2).at(autocreate_key_name2).data[0].value);
+    metadata.x_files_factor = 0.0;
+    expect_eq(metadata.archive_args[0].precision, ret.at(autocreate_key_name2).at(autocreate_key_name2).step);
   }
 
   {
     printf("-- [%s:basic_test] delete series\n", store_name.c_str());
-    auto ret = s->delete_series({pattern4, autocreate_key_name}, false);
+    auto ret = s->delete_series({pattern4, autocreate_key_name1, autocreate_key_name2}, false);
     expect_eq(1, ret.at(pattern4));
-    expect_eq(1, ret.at(autocreate_key_name));
-    expect_eq(2, ret.size());
+    expect_eq(1, ret.at(autocreate_key_name1));
+    expect_eq(1, ret.at(autocreate_key_name2));
+    expect_eq(3, ret.size());
     expect(!isfile(key_filename1));
     expect(isfile(key_filename2));
-    expect(!isfile(autocreate_key_filename));
+    expect(!isfile(autocreate_key_filename1));
+    expect(!isfile(autocreate_key_filename2));
 
     // empty directories should have been deleted too
     expect(!isdir(data_directory + "/test/DiskStore"));
@@ -471,7 +501,8 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.size());
     expect(isfile(key_filename1));
     expect(!isfile(key_filename2));
-    expect(!isfile(autocreate_key_filename));
+    expect(!isfile(autocreate_key_filename1));
+    expect(!isfile(autocreate_key_filename2));
 
     // empty directories should have been deleted too
     expect(isdir(data_directory + "/test/DiskStore"));
@@ -489,7 +520,8 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.size());
     expect(!isfile(key_filename1));
     expect(!isfile(key_filename2));
-    expect(!isfile(autocreate_key_filename));
+    expect(!isfile(autocreate_key_filename1));
+    expect(!isfile(autocreate_key_filename2));
 
     // empty directories should have been deleted too
     expect(!isdir(data_directory + "/test/DiskStore"));

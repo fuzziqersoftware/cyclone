@@ -1,7 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <phosg/ConsistentHashRing.hh>
+#include <thread>
 #include <unordered_map>
 
 #include "Store.hh"
@@ -15,7 +18,7 @@ public:
   ConsistentHashMultiStore(
       const std::unordered_map<std::string, std::shared_ptr<Store>>& stores,
       int64_t precision);
-  virtual ~ConsistentHashMultiStore() = default;
+  virtual ~ConsistentHashMultiStore();
   const ConsistentHashMultiStore& operator=(const ConsistentHashMultiStore& rhs) = delete;
 
   int64_t get_precision() const;
@@ -33,9 +36,42 @@ public:
   virtual std::unordered_map<std::string, std::string> write(
       const std::unordered_map<std::string, Series>& data, bool local_only);
 
+  virtual std::unordered_map<std::string, int64_t> get_stats(bool rotate);
+
+  virtual std::string restore_series(const std::string& key_name,
+      const std::string& data, bool combine_from_existing, bool local_only);
+  virtual std::string serialize_series(const std::string& key_name,
+      bool local_only);
+
+  struct VerifyProgress {
+    std::atomic<int64_t> keys_examined;
+    std::atomic<int64_t> keys_moved;
+    std::atomic<int64_t> restore_errors;
+    std::atomic<int64_t> find_queries_executed;
+    std::atomic<int64_t> start_time;
+    std::atomic<int64_t> end_time; // 0 if in progress
+    std::atomic<bool> repair;
+    std::atomic<bool> cancelled;
+
+    VerifyProgress();
+
+    bool in_progress() const;
+  };
+
+  const VerifyProgress& get_verify_progress() const;
+  bool start_verify(bool repair);
+  bool cancel_verify();
+
 private:
   std::shared_ptr<ConsistentHashRing> ring;
   int64_t precision;
 
   void create_ring();
+
+  std::atomic<bool> should_exit;
+  std::thread verify_thread;
+  std::mutex verify_thread_lock;
+  VerifyProgress verify_progress;
+
+  void verify_thread_routine();
 };

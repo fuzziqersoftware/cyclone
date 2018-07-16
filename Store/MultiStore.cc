@@ -113,6 +113,29 @@ unordered_map<string, int64_t> MultiStore::get_stats(bool rotate) {
   return ret;
 }
 
+string MultiStore::restore_series(const string& key_name,
+      const string& data, bool combine_from_existing, bool local_only) {
+  string ret;
+  for (const auto& it : this->stores) {
+    string store_ret = it.second->restore_series(key_name, data,
+        combine_from_existing, local_only);
+    if (ret.empty() && !store_ret.empty()) {
+      ret = store_ret;
+    }
+  }
+  return ret;
+}
+
+string MultiStore::serialize_series(const string& key_name, bool local_only) {
+  for (const auto& it : this->stores) {
+    string ret = it.second->serialize_series(key_name, local_only);
+    if (!ret.empty()) {
+      return ret;
+    }
+  }
+  return "";
+}
+
 int64_t MultiStore::delete_from_cache(const std::string& path, bool local_only) {
   int64_t ret = 0;
   for (const auto& it : this->stores) {

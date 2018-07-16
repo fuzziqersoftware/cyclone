@@ -51,6 +51,11 @@ typedef map cpp_type 'std::unordered_map<std::string, int64_t>'
     <string, i64> StatsResultMap;
 
 service Cyclone {
+
+
+
+  // write commands
+
   // updates metadata and/or creates series. returns the number of series
   // modified (including creates and updates).
   WriteResultMap update_metadata(1: SeriesMetadataMap metadata,
@@ -61,13 +66,27 @@ service Cyclone {
   DeleteResultMap delete_series(1: list<string> patterns,
       2: bool local_only = false);
 
+  // writes or deletes datapoints in a series. to delete datapoints, pass NaN as
+  // the value.
+  WriteResultMap write(1: SeriesMap data, 2: bool local_only = false);
+
+  // load a serialized series. if the series exists and combine_from_existing is
+  // true, read all data in the most recent archive of the existing series, and
+  // write it to the restored series before restoring it.
+  string restore_series(1: string key_name, 2: binary data,
+      3: bool combine_from_existing, 4: bool local_only = false);
+
+
+
+  // read commands
+
   // reads datapoints from multiple series.
   ReadResultMap read(1: list<string> targets, 2:i64 start_time,
       3: i64 end_time, 4: bool local_only = false);
 
-  // writes or deletes datapoints in a series. to delete datapoints, pass NaN as
-  // the value.
-  WriteResultMap write(1: SeriesMap data, 2: bool local_only = false);
+  // return a serialized version of the given series' schema and data, which can
+  // be loaded again with restore_series.
+  binary serialize_series(1: string key_name, 2: bool local_only = false);
 
   // searches for directory and key names matching the given patterns. if a
   // result ends with '.*', it's a directory; otherwise it's a key.
@@ -75,6 +94,10 @@ service Cyclone {
 
   // returns the current server stats
   StatsResultMap stats();
+
+
+
+  // debugging / internal commands
 
   // if the server has a cache store, deletes the given path from the cache. if
   // the path is blank or "*", deletes everything in the cache.

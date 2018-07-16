@@ -44,6 +44,7 @@ struct Options {
 
   shared_ptr<JSONObject> store_config;
   shared_ptr<Store> store;
+  vector<shared_ptr<ConsistentHashMultiStore>> hash_stores;
 
   vector<pair<string, SeriesMetadata>> autocreate_rules;
 
@@ -92,7 +93,9 @@ struct Options {
         this->exit_check_usecs = 2000000; // 2 seconds
       }
 
-      this->store = this->parse_store_config(this->store_config);
+      auto parse_ret = this->parse_store_config(this->store_config);
+      this->store = parse_ret.first;
+      this->hash_stores = move(parse_ret.second);
       this->store->set_autocreate_rules(this->autocreate_rules);
     }
   }
@@ -118,70 +121,89 @@ struct Options {
     return ret;
   }
 
-  static shared_ptr<Store> parse_store_config(
+  pair<shared_ptr<Store>, vector<shared_ptr<ConsistentHashMultiStore>>> parse_store_config(
       shared_ptr<JSONObject> store_config) {
 
     string type = (*store_config)["type"]->as_string();
 
     if (!type.compare("query")) {
-      shared_ptr<Store> substore = parse_store_config((*store_config)["substore"]);
-      return shared_ptr<Store>(new QueryStore(substore));
+      auto parse_ret = this->parse_store_config((*store_config)["substore"]);
+      return make_pair(shared_ptr<Store>(new QueryStore(parse_ret.first)), parse_ret.second);
     }
 
     if (!type.compare("hash")) {
+      vector<shared_ptr<ConsistentHashMultiStore>> hash_stores;
       unordered_map<string, shared_ptr<Store>> stores;
+
       for (auto& it : (*store_config)["stores"]->as_dict()) {
-        stores.emplace(it.first, parse_store_config(it.second));
+        auto parse_ret = this->parse_store_config(it.second);
+        stores.emplace(it.first, parse_ret.first);
+        hash_stores.insert(hash_stores.end(), parse_ret.second.begin(), parse_ret.second.end());
       }
+
       int64_t precision = -100;
       try {
         precision = (*store_config)["precision"]->as_int();
       } catch (const JSONObject::key_error& e) { }
-      return shared_ptr<Store>(new ConsistentHashMultiStore(stores, precision));
+
+      shared_ptr<ConsistentHashMultiStore> store(new ConsistentHashMultiStore(stores, precision));
+      hash_stores.emplace_back(store);
+      return make_pair(store, hash_stores);
     }
 
     if (!type.compare("multi")) {
+      vector<shared_ptr<ConsistentHashMultiStore>> hash_stores;
       unordered_map<string, shared_ptr<Store>> stores;
+
       for (auto& it : (*store_config)["stores"]->as_dict()) {
-        stores.emplace(it.first, parse_store_config(it.second));
+        auto parse_ret = this->parse_store_config(it.second);
+        stores.emplace(it.first, parse_ret.first);
+        hash_stores.insert(hash_stores.end(), parse_ret.second.begin(), parse_ret.second.end());
       }
-      return shared_ptr<Store>(new MultiStore(stores));
+
+      return make_pair(shared_ptr<Store>(new MultiStore(stores)), hash_stores);
     }
 
     if (!type.compare("remote")) {
       string hostname = (*store_config)["hostname"]->as_string();
       int port = (*store_config)["port"]->as_int();
       int64_t connection_limit = (*store_config)["connection_limit"]->as_int();
-      return shared_ptr<Store>(new RemoteStore(hostname, port, connection_limit));
+      return make_pair(
+          shared_ptr<Store>(new RemoteStore(hostname, port, connection_limit)),
+          vector<shared_ptr<ConsistentHashMultiStore>>());
     }
 
     if (!type.compare("disk")) {
       string directory = (*store_config)["directory"]->as_string();
-      return shared_ptr<Store>(new DiskStore(directory));
+      return make_pair(shared_ptr<Store>(new DiskStore(directory)),
+          vector<shared_ptr<ConsistentHashMultiStore>>());
     }
 
     if (!type.compare("cached_disk")) {
       string directory = (*store_config)["directory"]->as_string();
       int64_t directory_limit = (*store_config)["directory_limit"]->as_int();
       int64_t file_limit = (*store_config)["file_limit"]->as_int();
-      return shared_ptr<Store>(new CachedDiskStore(directory, directory_limit, file_limit));
+      return make_pair(shared_ptr<Store>(new CachedDiskStore(directory, directory_limit, file_limit)),
+          vector<shared_ptr<ConsistentHashMultiStore>>());
     }
 
     if (!type.compare("write_buffer")) {
       size_t num_write_threads = (*store_config)["num_write_threads"]->as_int();
       size_t batch_size = (*store_config)["batch_size"]->as_int();
-      shared_ptr<Store> substore = parse_store_config((*store_config)["substore"]);
-      return shared_ptr<Store>(new WriteBufferStore(substore, num_write_threads,
-          batch_size));
+      auto parse_ret = this->parse_store_config((*store_config)["substore"]);
+      return make_pair(
+          shared_ptr<Store>(new WriteBufferStore(parse_ret.first, num_write_threads, batch_size)),
+          parse_ret.second);
     }
 
     if (!type.compare("read_only")) {
-      shared_ptr<Store> substore = parse_store_config((*store_config)["substore"]);
-      return shared_ptr<Store>(new ReadOnlyStore(substore));
+      auto parse_ret = this->parse_store_config((*store_config)["substore"]);
+      return make_pair(shared_ptr<Store>(new ReadOnlyStore(parse_ret.first)), parse_ret.second);
     }
 
     if (!type.compare("empty")) {
-      return shared_ptr<Store>(new EmptyStore());
+      return make_pair(shared_ptr<Store>(new EmptyStore()),
+          vector<shared_ptr<ConsistentHashMultiStore>>());
     }
 
     throw runtime_error("invalid store config");
@@ -410,8 +432,8 @@ int main(int argc, char **argv) {
 
   if (!opt.line_stream_listen_addrs.empty() || !opt.pickle_listen_addrs.empty() ||
       !opt.shell_listen_addrs.empty()) {
-    shared_ptr<StreamServer> s(new StreamServer(opt.store, opt.stream_threads,
-        opt.exit_check_usecs));
+    shared_ptr<StreamServer> s(new StreamServer(opt.store, opt.hash_stores,
+        opt.stream_threads, opt.exit_check_usecs));
     for (const auto& addr : opt.line_stream_listen_addrs) {
       if (addr.second == 0) {
         s->listen(addr.first, StreamServer::Protocol::Line);
