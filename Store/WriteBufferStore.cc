@@ -408,12 +408,13 @@ unordered_map<string, FindResult> WriteBufferStore::find(
 
 
 void WriteBufferStore::flush() {
-  log(INFO, "[WriteBufferStore] synchronous flush");
-
   unordered_map<string, Series> write_batch;
   uint64_t start_time = now();
   {
     rw_guard g(this->queue_lock, true);
+    log(INFO, "[WriteBufferStore] synchronous flush (%zu commands to run)",
+        this->queue.size());
+
     while (!this->queue.empty()) {
       auto it = this->queue.begin();
       const auto& key_name = it->first;
