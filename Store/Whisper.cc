@@ -632,11 +632,7 @@ string WhisperArchive::serialize() const {
     string compressed_data = compress_data(data, 2);
     serialized += compressed_data;
     *reinterpret_cast<uint32_t*>(const_cast<char*>(serialized.data() + 8)) = data.size();
-    fprintf(stderr, "compression succeeded (%zu bytes -> %zu bytes)\n",
-        data.size(), compressed_data.size());
-
   } catch (const exception& e) {
-    fprintf(stderr, "compression failed with %s\n", e.what());
     serialized += data;
   }
 

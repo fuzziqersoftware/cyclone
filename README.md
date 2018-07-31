@@ -20,14 +20,14 @@ Cyclone is configured via a small JSON file. The comments in the example file (c
 
 Cyclone supports several protocols with varying capabilities:
 
-| Protocol | Graphite-compatible? | Python client class                 |   Read commands   |    Write commands     |
-| -------- |:--------------------:| ----------------------------------- |:-----------------:|:---------------------:|
-| Line     |         Yes          | `stream_client.CycloneLineClient`   |                   |    write, create*     |
-| Datagram |         Yes          |                                     |                   |    write, create*     |
-| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                   |    write, create*     |
-| Shell    |         No           |                                     | read, find, stats | write, create, delete |
-| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     | read, find, stats |                       |
-| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats | write, create, delete |
+| Protocol | Graphite-compatible? | Python client class                 |        Read commands         |         Write commands         | Admin commands |
+| -------- |:--------------------:| ----------------------------------- |:----------------------------:|:------------------------------:|:--------------:|
+| Line     |         Yes          | `stream_client.CycloneLineClient`   |                              |         write, create*         |                |
+| Datagram |         Yes          |                                     |                              |         write, create*         |                |
+| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                              |         write, create*         |                |
+| Shell    |         No           |                                     |      read, find, stats       |     write, create, delete      |     verify     |
+| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     |      read, find, stats       |                                |                |
+| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats, serialize | write, create, delete, restore |                |
 
 Note: the ability to create series through the line, datagram, and pickle protocols is limited to autocreates (according to predefined rules in the server configuration). For more fine-grained control over series schema, create series through the Thrift or shell interfaces instead.
 
@@ -100,6 +100,8 @@ The Thrift server provides the following functions:
 - `write`: Writes datapoints to one or more series. Patterns may not be given here. If write buffering is used, this call returns before the changes are committed to disk.
 - `find`: Searches for series and directories matching the given patterns. In the returned list, items that end with `.*` are subdirectories; all others are individual series.
 - `stats`: Returns current server stats.
+- `serialize_series`: Returns a compressed serialized version of an entire series, for passing to another Cyclone server. The data format is specific to Cyclone. Returns an empty string on error.
+- `restore_series`: Creates a series from a serialized series returned by the above function. If the series already exists and combine_from_existing is given, Cyclone first performs a read of the highest-resolution archive in the existing series, then restores the serialized series, and finally writes the previously-read data into the new series. This call bypasses write buffering entirely; if there are buffered writes for the restored series, they may occur after the restore.
 
 See cyclone_if.thrift for complete descriptions of the parameters and return values for these functions.
 
@@ -108,6 +110,15 @@ See cyclone_if.thrift for complete descriptions of the parameters and return val
 The stream, datagram, and pickle protocols are compatible with Carbon's analogous protocols. This allows a Cyclone server to be used in place of carbon-relay and carbon-cache daemons. The HTTP protocol is also compatible with the Graphite webapp; you can run the Graphite webapp directly in front of Cyclone by setting Graphite's `CLUSTER_SERVERS = ['localhost:5050']` (or any port in `http_listen` from Cyclone's configuration). Cyclone will handle the clustering logic if applicable; the Graphite webapp only needs to talk to one of the Cyclone instances in the cluster.
 
 A Cyclone cluster can be set up by creating configuration files for each instance (see the comments in the configuration file for an example), then setting up the Graphite webapp on each instance to read from the local Cyclone instance. The entire cluster is then mostly homogenous; all machines run the same software with slightly different but analogous configurations. Writes can go to any Cyclone instance and will be forwarded appropriately, and reads can go to any Graphite webapp.
+
+## Scaling
+
+Adding a new node to an existing cluster can be done as follows:
+- Rewrite the configuration files on all nodes to reflect the new cluster definition (e.g. by adding another substore to a multistore).
+- Restart Cyclone on all nodes and start it on the new node.
+- Run `verify start repair` in a shell (`telnet localhost $SHELL_PORT`) on all of the original nodes, and run `verify start` in a shell on the new node.
+
+The verify procedure will examine all keys and move any that are on the wrong hosts to the correct hosts. During the verify procedure, all writes will go to the correct hosts (even if the existing data hasn't been moved yet) and all reads will go to all hosts to account for the incomplete migration.
 
 ## Future work
 
@@ -118,3 +129,4 @@ There's a lot to do here.
 - Support new storage formats.
 - Build out query execution functionality.
 - Support rendering graphs as images (perhaps even as SVGs).
+- Separate read-all mode from verify progress so it can be enabled and disabled across the entire cluster (since some nodes may finish verify before others).

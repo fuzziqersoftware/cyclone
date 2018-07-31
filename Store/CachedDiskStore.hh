@@ -131,6 +131,12 @@ protected:
 
     CacheTraversal(CachedDirectoryContents* root, std::string root_directory,
         size_t expected_levels);
+
+    CacheTraversal(const CacheTraversal&) = delete;
+    CacheTraversal(CacheTraversal&&) = default;
+    CacheTraversal& operator=(const CacheTraversal&) = delete;
+    CacheTraversal& operator=(CacheTraversal&&) = default;
+
     void move_to_level(const std::string& item);
   };
 
@@ -138,7 +144,8 @@ protected:
       bool create = false);
   CacheTraversal traverse_cache_tree(const KeyPath& p,
       const SeriesMetadata* metadata_to_create = NULL,
-      const std::string* serialized_data_to_create = NULL);
+      const std::string* serialized_data_to_create = NULL,
+      bool write_lock_files = false);
 
 
   // statistics tracking - these are rotated every minute

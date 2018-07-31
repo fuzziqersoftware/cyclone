@@ -214,10 +214,6 @@ bool ConsistentHashMultiStore::start_verify(bool repair) {
     return false;
   }
 
-  if (repair) {
-    throw runtime_error("verify and repair mode not yet supported");
-  }
-
   this->verify_progress.repair = repair;
   this->verify_thread = thread(&ConsistentHashMultiStore::verify_thread_routine,
       this);
@@ -266,7 +262,7 @@ void ConsistentHashMultiStore::verify_thread_routine() {
       continue;
     }
 
-    int64_t read_time = now();
+    int64_t read_time = now() / 1000000;
     for (const string& key_name : find_result.results) {
       if (this->should_exit) {
         break;
@@ -286,12 +282,16 @@ void ConsistentHashMultiStore::verify_thread_routine() {
       // TODO: we should find some way to make the reads happen in parallel
       unordered_map<string, unordered_map<string, ReadResult>> ret;
       for (const auto& store_it : this->stores) {
+        // skip the store that the key is supposed to be in
         if (store_it.first == store_name) {
           continue;
         }
 
         if (this->verify_progress.repair) {
-          string serialized = store_it.second->serialize_series({key_name}, false);
+          // note: we set local_only = true here because the verify procedure
+          // must run on ALL nodes in the cluster, so it makes sense for each
+          // node to only be responsible for the series on its local disk
+          string serialized = store_it.second->serialize_series({key_name}, true);
           if (serialized.empty()) {
             continue; // key isn't in this store (good)
           }
@@ -313,7 +313,7 @@ void ConsistentHashMultiStore::verify_thread_routine() {
 
         } else {
           auto results = store_it.second->read({key_name}, read_time, read_time,
-              false);
+              true);
           auto result_pattern_it = results.find(key_name);
           if (result_pattern_it == results.end()) {
             continue; // key isn't in this store (good)

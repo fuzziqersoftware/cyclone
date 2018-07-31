@@ -779,7 +779,7 @@ string CachedDiskStore::restore_series(const string& key_name,
   KeyPath p(key_name);
   try {
     try {
-      CacheTraversal t = this->traverse_cache_tree(p);
+      CacheTraversal t = this->traverse_cache_tree(p, NULL, NULL, true);
 
       // if we do have to combine, make a temp file so we can read from both
       // series without conflicts
@@ -812,13 +812,12 @@ string CachedDiskStore::restore_series(const string& key_name,
         rename(temp_filename, t.archive->get_filename());
 
         // update the cache directory - we need to reopen the file. for now
-        // we'll just close it, delete the cache file, and clear the list flag
-        {
-          rw_guard g(t.level->files_lock, true);
-          t.level->files.erase(p.basename);
-          t.level->files_lru.erase(p.basename);
-          t.level->list_complete = false;
-        }
+        // we'll just close it, delete the cache file, and clear the list flag.
+        // note that we're already holding files_lock for writing because we
+        // gave write_lock_files = true to traverse_cache_tree
+        t.level->files.erase(p.basename);
+        t.level->files_lru.erase(p.basename);
+        t.level->list_complete = false;
 
         return "";
 
@@ -1091,7 +1090,7 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
 
 CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
     const KeyPath& p, const SeriesMetadata* metadata_to_create,
-    const string* serialized_data_to_create) {
+    const string* serialized_data_to_create, bool write_lock_files) {
   CacheTraversal t = this->traverse_cache_tree(p.directories,
       (metadata_to_create != NULL) || (serialized_data_to_create != NULL));
 
@@ -1102,7 +1101,7 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
   try {
     // get the archive object; if we do so successfully, keep holding the read
     // lock
-    rw_guard g(t.level->files_lock, false);
+    rw_guard g(t.level->files_lock, write_lock_files);
     t.archive = &t.level->files.at(p.basename);
     {
       lock_guard<mutex> g2(t.level->files_lru_lock);
@@ -1163,7 +1162,7 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
         t.level->files_lru.touch(p.basename);
       }
     }
-    t.guards.emplace_back(t.level->files_lock, false);
+    t.guards.emplace_back(t.level->files_lock, write_lock_files);
     t.archive = &t.level->files.at(p.basename);
   }
 
