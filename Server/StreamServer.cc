@@ -291,15 +291,16 @@ Commands:\n\
   update-metadata <series> <archives> <x-files-factor> <agg-method> [+create]\n\
       [+skip-existing] [+truncate]\n\
     Create a new series.\n\
-    <archives> is a comma-separated list of pairs, e.g. 60:90d,3600:5y to\n\
-    store minutely data for 90 days and hourly data for 5 years.\n\
-    <x-files-factor> is the proportion of datapoints in each interval that must\n\
-    be present for an aggregation to occur to a lower-reolution archive.\n\
-    <agg-method> is the aggregation method to use when updating lower-reolution\n\
-    archives. Valid values are average, sum, min, max, and last.\n\
-    +no-create skips the operation if the series does not exist.\n\
-    +skip-existing skips the operation if the series already exists.\n\
-    +truncate recreates the series if it already exists.\n\
+    - <archives> is a comma-separated list of pairs, e.g. 60:90d,3600:5y to\n\
+      store minutely data for 90 days and hourly data for 5 years.\n\
+    - <x-files-factor> is the proportion of datapoints in each interval that\n\
+      must be present for an aggregation to occur to a lower-reolution archive.\n\
+    - <agg-method> is the aggregation method to use when updating lower-\n\
+      resolution archives. Valid values are average, sum, min, max, and last.\n\
+    - +create creates a new series if it doesn\'t exist. (By default, series\n\
+      are not created if they don't exist during update-metadata calls.)\n\
+    - +skip-existing skips the operation if the series already exists.\n\
+    - +truncate recreates the series if it already exists.\n\
 \n\
   stats\n\
     Get the current server stats.\n\

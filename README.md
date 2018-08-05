@@ -94,14 +94,13 @@ Use TFramedTransport with this service. Most of these functions take a `local_on
 
 The Thrift server provides the following functions:
 
-- `update_metadata`: Creates series or modifies the storage format of existing series. If write buffering is used, this call returns before the changes are committed to disk.
+- `update_metadata`: Creates series or modifies the storage format of existing series. If write buffering is used and skip_buffering is false (the default), this call returns before the changes are committed to disk.
 - `delete_series`: Deletes one or more series, as well as all buffered writes in memory for those series. Patterns may be given here; all series that match the pattern will be deleted. Entire directory trees can also be deleted by providing a pattern ending in `.**` (this is a special case and does not work in other places or other commands). This call does not return until the changes are committed to disk, even if write buffering is used.
 - `read`: Reads datapoints from one or more series. Patterns may be given here.
-- `write`: Writes datapoints to one or more series. Patterns may not be given here. If write buffering is used, this call returns before the changes are committed to disk.
+- `read_all`: Reads all datapoints and metadata from a series. Patterns may not be given here. This call does not respect buffered writes; if there are uncommitted changes to a series, they will not be returned. This is mainly for internal use during the verification and repair procedure.
+- `write`: Writes datapoints to one or more series. Patterns may not be given here. If write buffering is used and skip_buffering is false (the default), this call returns before the changes are committed to disk.
 - `find`: Searches for series and directories matching the given patterns. In the returned list, items that end with `.*` are subdirectories; all others are individual series.
 - `stats`: Returns current server stats.
-- `serialize_series`: Returns a compressed serialized version of an entire series, for passing to another Cyclone server. The data format is specific to Cyclone. Returns an empty string on error.
-- `restore_series`: Creates a series from a serialized series returned by the above function. If the series already exists and combine_from_existing is given, Cyclone first performs a read of the highest-resolution archive in the existing series, then restores the serialized series, and finally writes the previously-read data into the new series. This call bypasses write buffering entirely; if there are buffered writes for the restored series, they may occur after the restore.
 
 See cyclone_if.thrift for complete descriptions of the parameters and return values for these functions.
 
