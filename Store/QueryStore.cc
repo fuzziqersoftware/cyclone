@@ -33,9 +33,10 @@ void QueryStore::set_autocreate_rules(
 
 unordered_map<string, string> QueryStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool local_only) {
+    UpdateMetadataBehavior update_behavior, bool skip_buffering,
+    bool local_only) {
   return this->store->update_metadata(metadata, create_new, update_behavior,
-      local_only);
+      skip_buffering, local_only);
 }
 
 unordered_map<string, int64_t> QueryStore::delete_series(
@@ -84,9 +85,14 @@ unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
   return ret;
 }
 
+ReadAllResult QueryStore::read_all(const string& key_name, bool local_only) {  
+  return this->store->read_all(key_name, local_only);
+}
+
 unordered_map<string, string> QueryStore::write(
-    const unordered_map<string, Series>& data, bool local_only) {
-  return this->store->write(data, local_only);
+    const unordered_map<string, Series>& data, bool skip_buffering,
+    bool local_only) {
+  return this->store->write(data, skip_buffering, local_only);
 }
 
 unordered_map<string, FindResult> QueryStore::find(
@@ -96,16 +102,6 @@ unordered_map<string, FindResult> QueryStore::find(
 
 unordered_map<string, int64_t> QueryStore::get_stats(bool rotate) {
   return this->store->get_stats();
-}
-
-string QueryStore::restore_series(const string& key_name,
-      const string& data, bool combine_from_existing, bool local_only) {
-  return this->store->restore_series(key_name, data, combine_from_existing,
-      local_only);
-}
-
-string QueryStore::serialize_series(const string& key_name, bool local_only) {
-  return this->store->serialize_series(key_name, local_only);
 }
 
 int64_t QueryStore::delete_from_cache(const std::string& path, bool local_only) {

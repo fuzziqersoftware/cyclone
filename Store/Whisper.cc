@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <zlib.h>
 
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <unordered_map>
@@ -17,81 +18,6 @@
 #include "../gen-cpp/Cyclone.h"
 
 using namespace std;
-
-
-static string compress_data(const string& data, int level, int window_bits = -15) {
-  z_stream s;
-  s.zalloc = Z_NULL;
-  s.zfree = Z_NULL;
-  s.opaque = Z_NULL;
-  if (deflateInit2(&s, level, Z_DEFLATED, window_bits, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
-    deflateEnd(&s);
-    throw runtime_error("zlib initialization failure");
-  }
-
-  // allocate a destination buffer. we'll fail if the compressed data is larger
-  // than the source data, so only allocate a buffer that large
-  string out_buffer(data.size(), '\0');
-
-  // compress the input buffer
-  s.avail_in = static_cast<uInt>(data.size());
-  s.next_in = reinterpret_cast<unsigned char*>(const_cast<char*>(data.data()));
-  s.avail_out = static_cast<uInt>(out_buffer.size());
-  s.next_out = reinterpret_cast<unsigned char*>(const_cast<char*>(out_buffer.data()));
-  int res = deflate(&s, Z_FINISH);
-  size_t deflated_size = out_buffer.size() - s.avail_out;
-
-  // check the results
-  if (res == Z_STREAM_ERROR) {
-    deflateEnd(&s);
-    throw runtime_error("compression failed");
-  }
-  if (s.avail_in != 0) {
-    deflateEnd(&s);
-    throw runtime_error("incomplete compression");
-  }
-  deflateEnd(&s);
-
-  // make sure we did not use the entire output buffer, and the last deflate
-  // produced an end result
-  if (deflated_size >= data.size()) {
-    throw runtime_error("compressed data not smaller than uncompressed");
-  }
-
-  out_buffer.resize(deflated_size);
-  return out_buffer;
-}
-
-string decompress_data(const void* data, size_t size, size_t decompressed_size,
-    int window_bits = -15) {
-  string out_buffer(decompressed_size, '\0');
-
-  z_stream s;
-  s.total_in = size;
-  s.avail_in = size;
-  s.total_out = decompressed_size;
-  s.avail_out = decompressed_size;
-  s.next_in = const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(data));
-  s.next_out = const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(out_buffer.data()));
-
-  s.zalloc = Z_NULL;
-  s.zfree  = Z_NULL;
-  s.opaque = Z_NULL;
-
-  if (inflateInit2(&s, window_bits) != Z_OK) {
-    inflateEnd(&s);
-    throw runtime_error("zlib initialization failure");
-  }
-
-  if (inflate(&s, Z_FINISH) == Z_STREAM_END) {
-    out_buffer.resize(s.total_out);
-  } else {
-    inflateEnd(&s);
-    throw runtime_error("decompression failed");
-  }
-
-  return out_buffer;
-}
 
 
 static int64_t parse_time_length(const string& s, int64_t default_unit_factor = 1) {
@@ -154,6 +80,8 @@ string WhisperArchive::ReadResult::str() const {
 
 
 WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
+  rw_guard g(this->lock, true);
+
   auto lease = WhisperArchive::file_cache.lease(filename, 0);
 
   // guess: most files have <= 10 archives (we'll read more later if needed)
@@ -195,7 +123,6 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
 
   // if there were fewer than 10 archives, then we also got the base interval
   // for the first archive in the initial read; might as well populate it
-  // TODO: re-enable this later
   if (this->metadata->num_archives && (this->metadata->num_archives < 10)) {
     for (uint32_t x = 0; x < this->metadata->num_archives; x++) {
       if (this->metadata->archives[x].offset <= data.size() - sizeof(FilePoint)) {
@@ -216,76 +143,6 @@ WhisperArchive::WhisperArchive(const string& filename, const string& archive_arg
     float x_files_factor, uint32_t agg_method)
     : WhisperArchive(filename, WhisperArchive::parse_archive_args(archive_args),
         x_files_factor, agg_method) { }
-
-WhisperArchive::WhisperArchive(const string& filename, const string& serialized)
-    : filename(filename) {
-  // the serialized data must be at least 12 bytes
-  if (serialized.size() < 12) {
-    throw invalid_argument("serialized data does not include file header");
-  }
-
-  // check the header and version
-  if (serialized.substr(0, 8) != string("WSP\0\0\0\0\0", 8)) {
-    throw invalid_argument("serialized data is not a Whisper archive");
-  }
-
-  // check the compression field
-  uint32_t decompressed_size = *reinterpret_cast<const uint32_t*>(serialized.data() + 8);
-  string data;
-  if (decompressed_size) {
-    data = decompress_data(serialized.data() + 12, serialized.size() - 12,
-        decompressed_size);
-  } else {
-    data = serialized.substr(12);
-  }
-
-  // there must be enough space for headers
-  if (data.size() < sizeof(Metadata)) {
-    throw invalid_argument("serialized data does not include metadata");
-  }
-
-  // check the metadata and the rest of the size
-  const Metadata* serialized_metadata = reinterpret_cast<const Metadata*>(
-      data.data());
-  size_t header_size = sizeof(Metadata) +
-      sizeof(ArchiveMetadata) * serialized_metadata->num_archives;
-  if (data.size() < header_size) {
-    throw invalid_argument("serialized data does not include metadata header");
-  }
-
-  // check that all archive data is included
-  size_t overall_size = header_size;
-  for (size_t x = 0; x < serialized_metadata->num_archives; x++) {
-    overall_size += serialized_metadata->archives[x].points * sizeof(FilePoint);
-  }
-  if (data.size() < overall_size) {
-    throw invalid_argument("serialized data does not include all archives");
-  }
-  if (data.size() > overall_size) {
-    throw invalid_argument("serialized data includes extra data after archives");
-  }
-
-  // create the file
-  vector<ArchiveArg> archive_args;
-  for (size_t x = 0; x < serialized_metadata->num_archives; x++) {
-    archive_args.emplace_back();
-    auto& archive_arg = archive_args.back();
-    archive_arg.precision = serialized_metadata->archives[x].seconds_per_point;
-    archive_arg.points = serialized_metadata->archives[x].points;
-  }
-  this->update_metadata(archive_args, serialized_metadata->x_files_factor,
-      serialized_metadata->aggregation_method, true);
-
-  // write the archive data
-  auto lease = WhisperArchive::file_cache.lease(filename, 0);
-  size_t serialized_offset = header_size;
-  for (size_t x = 0; x < serialized_metadata->num_archives; x++) {
-    size_t archive_size = sizeof(FilePoint) * serialized_metadata->archives[x].points;
-    pwritex(lease.fd, data.data() + serialized_offset,
-        archive_size, serialized_metadata->archives[x].offset);
-    serialized_offset += archive_size;
-  }
-}
 
 WhisperArchive::~WhisperArchive() {
   WhisperArchive::file_cache.close(this->filename);
@@ -356,6 +213,8 @@ void WhisperArchive::validate_archive_args(const vector<ArchiveArg>& args) {
 }
 
 void WhisperArchive::print(FILE* stream, bool print_data) {
+  rw_guard g(this->lock, false);
+
   fprintf(stream, "WhisperArchive[%s, agg_method=%d, max_retention=%d, x_files_factor=%g, [\n",
       this->filename.c_str(), this->metadata->aggregation_method,
       this->metadata->max_retention, this->metadata->x_files_factor);
@@ -391,36 +250,38 @@ void WhisperArchive::print(FILE* stream, bool print_data) {
 }
 
 WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time,
-    uint64_t end_time, ssize_t force_archive_index) {
-
+    uint64_t end_time) {
   if (start_time > end_time) {
     throw invalid_argument("invalid time interval");
   }
 
   uint32_t now = time(NULL);
 
-  // make sure the range covers even part of this database file
-  uint32_t oldest_time = now - this->metadata->max_retention;
-  if (start_time > now) {
-    return ReadResult();
-  }
-  if (end_time < oldest_time) {
-    return ReadResult();
-  }
+  uint64_t start_interval, end_interval, seconds_per_point;
+  uint32_t num_points;
+  unique_ptr<FilePoint[]> raw_points;
+  {
+    rw_guard g(this->lock, false);
 
-  // make sure the entire range is within the scope of this db file
-  if (start_time < oldest_time) {
-    start_time = oldest_time;
-  }
-  if (end_time > now) {
-    end_time = now;
-  }
+    // make sure the range covers even part of this database file
+    uint32_t oldest_time = now - this->metadata->max_retention;
+    if (start_time > now) {
+      return ReadResult();
+    }
+    if (end_time < oldest_time) {
+      return ReadResult();
+    }
 
-  uint32_t diff = now - start_time;
-  uint32_t archive_index;
-  if (force_archive_index >= 0) {
-    archive_index = force_archive_index;
-  } else {
+    // make sure the entire range is within the scope of this db file
+    if (start_time < oldest_time) {
+      start_time = oldest_time;
+    }
+    if (end_time > now) {
+      end_time = now;
+    }
+
+    uint32_t diff = now - start_time;
+    uint32_t archive_index;
     for (archive_index = 0; archive_index < this->metadata->num_archives; archive_index++) {
       const auto& archive = this->metadata->archives[archive_index];
       if (archive.points * archive.seconds_per_point >= diff) {
@@ -431,62 +292,62 @@ WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time,
       // no archive applies to this query
       return ReadResult();
     }
-  }
 
-  const auto& archive = this->metadata->archives[archive_index];
-  uint64_t start_interval = start_time - (start_time % archive.seconds_per_point) + archive.seconds_per_point;
-  uint64_t end_interval = end_time - (end_time % archive.seconds_per_point) + archive.seconds_per_point;
+    const auto& archive = this->metadata->archives[archive_index];
+    start_interval = start_time - (start_time % archive.seconds_per_point) + archive.seconds_per_point;
+    end_interval = end_time - (end_time % archive.seconds_per_point) + archive.seconds_per_point;
 
-  auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
+    auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
 
-  // find out where to begin & end
-  uint64_t archive_start_time = this->get_base_interval(lease.fd, archive_index);
-  if (archive_start_time == 0) {
-    // archive is blank
-    // TODO: we should read from multiple archives in this case
-    ReadResult ret;
-    ret.step = archive.seconds_per_point;
-    return ret;
-  }
+    // find out where to begin & end
+    uint64_t archive_start_time = this->get_base_interval_locked(lease.fd, archive_index);
+    if (archive_start_time == 0) {
+      // archive is blank
+      // TODO: we should read from multiple archives in this case
+      ReadResult ret;
+      ret.step = archive.seconds_per_point;
+      return ret;
+    }
 
-  uint32_t start_offset, end_offset;
-  uint32_t archive_size = archive.points * sizeof(FilePoint);
-  if (start_interval >= archive_start_time) {
-    start_offset = archive.offset + ((((start_interval - archive_start_time) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
-  } else {
-    start_offset = archive.offset + (((archive.points - (archive_start_time - start_interval) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
-  }
+    uint32_t start_offset, end_offset;
+    uint32_t archive_size = archive.points * sizeof(FilePoint);
+    if (start_interval >= archive_start_time) {
+      start_offset = archive.offset + ((((start_interval - archive_start_time) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
+    } else {
+      start_offset = archive.offset + (((archive.points - (archive_start_time - start_interval) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
+    }
 
-  if (end_interval >= archive_start_time) {
-    end_offset = archive.offset + ((((end_interval - archive_start_time) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
-  } else {
-    end_offset = archive.offset + (((archive.points - (archive_start_time - end_interval) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
-  }
+    if (end_interval >= archive_start_time) {
+      end_offset = archive.offset + ((((end_interval - archive_start_time) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
+    } else {
+      end_offset = archive.offset + (((archive.points - (archive_start_time - end_interval) / archive.seconds_per_point) * sizeof(FilePoint)) % archive_size);
+    }
 
-  // read all points in the covered area
-  uint32_t num_points;
-  unique_ptr<FilePoint[]> raw_points;
-  if (start_offset < end_offset) {
-    num_points = (end_offset - start_offset) / sizeof(FilePoint);
-    raw_points.reset(new FilePoint[num_points]);
-    preadx(lease.fd, raw_points.get(), sizeof(FilePoint) * num_points, start_offset);
+    // read all points in the covered area
+    if (start_offset < end_offset) {
+      num_points = (end_offset - start_offset) / sizeof(FilePoint);
+      raw_points.reset(new FilePoint[num_points]);
+      preadx(lease.fd, raw_points.get(), sizeof(FilePoint) * num_points, start_offset);
 
-  } else {
-    uint32_t num_points_first = archive.points - (start_offset - archive.offset) / sizeof(FilePoint);
-    uint32_t num_points_second = (end_offset - archive.offset) / sizeof(FilePoint);
-    num_points = num_points_first + num_points_second;
+    } else {
+      uint32_t num_points_first = archive.points - (start_offset - archive.offset) / sizeof(FilePoint);
+      uint32_t num_points_second = (end_offset - archive.offset) / sizeof(FilePoint);
+      num_points = num_points_first + num_points_second;
 
-    raw_points.reset(new FilePoint[num_points]);
-    preadx(lease.fd, raw_points.get(), sizeof(FilePoint) * num_points_first,
-        start_offset);
-    preadx(lease.fd, &(raw_points.get()[num_points_first]),
-        sizeof(FilePoint) * num_points_second, archive.offset);
+      raw_points.reset(new FilePoint[num_points]);
+      preadx(lease.fd, raw_points.get(), sizeof(FilePoint) * num_points_first,
+          start_offset);
+      preadx(lease.fd, &(raw_points.get()[num_points_first]),
+          sizeof(FilePoint) * num_points_second, archive.offset);
+    }
+
+    seconds_per_point = archive.seconds_per_point;
   }
 
   ReadResult ret;
   ret.start_time = start_interval;
   ret.end_time = end_interval;
-  ret.step = archive.seconds_per_point;
+  ret.step = seconds_per_point;
 
   uint64_t current_interval = start_interval;
   for (uint32_t x = 0; x < num_points; x++) {
@@ -497,30 +358,71 @@ WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time,
       point.timestamp = current_interval;
       point.value = bswap64f(raw_points[x].value);
     }
-    current_interval += archive.seconds_per_point;
+    current_interval += seconds_per_point;
+  }
+  return ret;
+}
+
+Series WhisperArchive::read_all() {
+  string data;
+  int64_t offset, file_size;
+  {
+    rw_guard g(this->lock, false);
+    offset = sizeof(FileHeader) + this->metadata->num_archives * sizeof(FileArchiveHeader);
+    file_size = this->get_file_size_locked();
+
+    auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
+    data = preadx(lease.fd, file_size - offset, offset);
+  }
+
+  Series ret;
+  const FilePoint* file_points = reinterpret_cast<const FilePoint*>(data.data());
+  size_t num_points = (file_size - offset) / sizeof(FilePoint);
+  for (size_t x = 0; x < num_points; x++) {
+    if (file_points[x].time == 0) {
+      continue;
+    }
+
+    double value = bswap64f(file_points[x].value);
+    if (isnan(value)) {
+      continue;
+    }
+
+    ret.emplace_back();
+    auto& ret_point = ret.back();
+    ret_point.timestamp = bswap32(file_points[x].time);
+    ret_point.value = value;
   }
   return ret;
 }
 
 void WhisperArchive::write(const Series& data) {
-  // assumption: points are provided in decreasing order of time
+  // the datapoints need to be sorted in decreasing time order for this
+  // procedure to work properly
+  Series sorted_data = data;
+  sort(sorted_data.begin(), sorted_data.end(), [](Datapoint a, Datapoint b) {
+    return a.timestamp < b.timestamp;
+  });
+
   int64_t t = time(NULL);
   uint32_t archive_index = 0;
   uint32_t next_commit_point = 0;
+
+  rw_guard g(this->lock, true);
 
   // TODO: wtf is going on here? after a create, this open call is super slow,
   // but subsequent open calls are fast
   auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
 
   uint32_t x;
-  for (x = 0; (x < data.size()) && (archive_index < this->metadata->num_archives); x++) {
-    int64_t pt_age = t - static_cast<int64_t>(data.at(x).timestamp);
+  for (x = 0; (x < sorted_data.size()) && (archive_index < this->metadata->num_archives); x++) {
+    int64_t pt_age = t - static_cast<int64_t>(sorted_data.at(x).timestamp);
 
     // while we can't fit any more points into the current archive, commit
     while (archive_index < this->metadata->num_archives &&
         (this->metadata->archives[archive_index].points * this->metadata->archives[archive_index].seconds_per_point) < pt_age) {
       if (next_commit_point != x) {
-        this->write_archive(lease.fd, archive_index, data, next_commit_point, x);
+        this->write_archive_locked(lease.fd, archive_index, sorted_data, next_commit_point, x);
         next_commit_point = x;
       }
       archive_index++;
@@ -528,17 +430,20 @@ void WhisperArchive::write(const Series& data) {
   }
 
   if (archive_index < this->metadata->num_archives) {
-    this->write_archive(lease.fd, archive_index, data, next_commit_point, x);
+    this->write_archive_locked(lease.fd, archive_index, sorted_data, next_commit_point, x);
   }
 }
 
 void WhisperArchive::truncate() {
+  rw_guard g(this->lock, true);
   auto lease = WhisperArchive::file_cache.lease(filename);
-  this->create_file(lease.fd);
+  this->create_file_locked(lease.fd);
 }
 
 void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
     float x_files_factor, uint32_t agg_method, bool truncate) {
+  rw_guard g(this->lock, true);
+
   if (truncate) {
     this->validate_archive_args(archive_args);
 
@@ -564,7 +469,7 @@ void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
     }
 
     auto lease = WhisperArchive::file_cache.lease(filename);
-    this->create_file(lease.fd);
+    this->create_file_locked(lease.fd);
 
   } else {
     // TODO: support changing archive_args (this will probably be very tedious)
@@ -596,59 +501,31 @@ void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
 
     if (should_write_header) {
       auto lease = WhisperArchive::file_cache.lease(filename, 0);
-      this->write_header(lease.fd);
+      this->write_header_locked(lease.fd);
     }
   }
 }
 
 size_t WhisperArchive::get_file_size() const {
+  rw_guard g(this->lock, false);
+  return this->get_file_size_locked();
+}
+
+size_t WhisperArchive::get_file_size_locked() const {
   const ArchiveMetadata* last_archive = &this->metadata->archives[this->metadata->num_archives - 1];
   return last_archive->offset + sizeof(FilePoint) * last_archive->points;
 }
 
-string WhisperArchive::serialize() const {
-  // serialization format:
-  // signature (4 bytes, 'wsp\0')
-  // version (4 bytes, currently 0)
-  // decompressed data size (4 bytes, little-endian)
-  //   if nonzero, all following data is compressed
-  //   if zero, the following data is not compressed
-  // metadata structure
-  // archive data, which is a 32-bit count field followed by that many datapoints
-
-  size_t metadata_size = sizeof(Metadata) +
-      this->metadata->num_archives * sizeof(ArchiveMetadata);
-
-  string serialized("WSP\0\0\0\0\0\0\0\0\0", 12);
-
-  string data(reinterpret_cast<char*>(this->metadata.get()), metadata_size);
-  auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
-  for (size_t x = 0; x < this->metadata->num_archives; x++) {
-    data += preadx(lease.fd, sizeof(FilePoint) * this->metadata->archives[x].points,
-        this->metadata->archives[x].offset);
-  }
-
-  try {
-    string compressed_data = compress_data(data, 2);
-    serialized += compressed_data;
-    *reinterpret_cast<uint32_t*>(const_cast<char*>(serialized.data() + 8)) = data.size();
-  } catch (const exception& e) {
-    serialized += data;
-  }
-
-  return serialized;
-}
-
-void WhisperArchive::create_file(int fd) {
+void WhisperArchive::create_file_locked(int fd) {
   ftruncate(fd, 0);
-  this->write_header(fd);
-  ftruncate(fd, this->get_file_size());
+  this->write_header_locked(fd);
+  ftruncate(fd, this->get_file_size_locked());
 
   this->base_intervals.clear();
   this->base_intervals.resize(this->metadata->num_archives, -1);
 }
 
-void WhisperArchive::write_header(int fd) {
+void WhisperArchive::write_header_locked(int fd) {
   vector<uint8_t> data(sizeof(FileHeader) + this->metadata->num_archives * sizeof(FileArchiveHeader));
 
   FileHeader* sw_header = (FileHeader*)data.data();
@@ -668,7 +545,7 @@ void WhisperArchive::write_header(int fd) {
   pwritex(fd, data.data(), data.size(), 0);
 }
 
-uint32_t WhisperArchive::get_base_interval(int fd, uint32_t archive_index) {
+uint32_t WhisperArchive::get_base_interval_locked(int fd, uint32_t archive_index) {
   int64_t base_interval = this->base_intervals[archive_index];
   if (base_interval == -1) {
     FilePoint first_point;
@@ -680,7 +557,7 @@ uint32_t WhisperArchive::get_base_interval(int fd, uint32_t archive_index) {
   return base_interval;
 }
 
-void WhisperArchive::write_archive(int fd, uint32_t archive_index,
+void WhisperArchive::write_archive_locked(int fd, uint32_t archive_index,
     const Series& data, uint32_t start_index, uint32_t end_index) {
 
   const ArchiveMetadata& archive = this->metadata->archives[archive_index];
@@ -688,7 +565,7 @@ void WhisperArchive::write_archive(int fd, uint32_t archive_index,
 
   // get the base interval. if it's not set, pretend it's equal to the first
   // point's interval so we'll write at the beginning of the archive
-  uint64_t archive_start_interval = this->get_base_interval(fd, archive_index);
+  uint64_t archive_start_interval = this->get_base_interval_locked(fd, archive_index);
   if (archive_start_interval == 0) {
     int64_t first_ts = data[start_index].timestamp;
     archive_start_interval = first_ts - (first_ts % archive.seconds_per_point);
@@ -731,11 +608,11 @@ void WhisperArchive::write_archive(int fd, uint32_t archive_index,
 
     continue_propagation = false;
     for (uint64_t interval : lower_intervals)
-      continue_propagation |= this->propagate_write(fd, interval, archive_index, target_archive_index);
+      continue_propagation |= this->propagate_write_locked(fd, interval, archive_index, target_archive_index);
   }
 }
 
-bool WhisperArchive::propagate_write(int fd, uint64_t interval,
+bool WhisperArchive::propagate_write_locked(int fd, uint64_t interval,
     uint32_t archive_index, uint32_t target_archive_index) {
 
   const auto& archive = this->metadata->archives[archive_index];
@@ -745,7 +622,7 @@ bool WhisperArchive::propagate_write(int fd, uint64_t interval,
 
   int64_t target_interval_start = interval - (interval % target_archive.seconds_per_point);
 
-  uint64_t base_interval = this->get_base_interval(fd, archive_index);
+  uint64_t base_interval = this->get_base_interval_locked(fd, archive_index);
   uint32_t start_offset;
   if (base_interval == 0) {
     start_offset = archive.offset;
@@ -782,9 +659,9 @@ bool WhisperArchive::propagate_write(int fd, uint64_t interval,
   }
 
   if (num_known >= this->metadata->x_files_factor * num_points) {
-    double value = this->aggregate(target_interval_start,
+    double value = this->aggregate_locked(target_interval_start,
         archive.seconds_per_point, raw_points.get(), num_points);
-    uint64_t target_base_interval = this->get_base_interval(fd, target_archive_index);
+    uint64_t target_base_interval = this->get_base_interval_locked(fd, target_archive_index);
 
     off_t offset;
     if (target_base_interval == 0) {
@@ -826,7 +703,7 @@ static double aggregate_last(double a, double b) {
   return b;
 }
 
-double WhisperArchive::aggregate(uint64_t interval_start,
+double WhisperArchive::aggregate_locked(uint64_t interval_start,
     uint64_t interval_step, const FilePoint* pts, uint32_t num_pts) const {
 
   double (*combine)(double, double) = aggregate_sum;

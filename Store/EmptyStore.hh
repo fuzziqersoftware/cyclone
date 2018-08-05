@@ -15,23 +15,21 @@ public:
 
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
-      UpdateMetadataBehavior update_behavior, bool local_only);
+      UpdateMetadataBehavior update_behavior, bool skip_buffering,
+      bool local_only);
   virtual std::unordered_map<std::string, int64_t> delete_series(
       const std::vector<std::string>& patterns, bool local_only);
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
       int64_t end_time, bool local_only);
+  virtual ReadAllResult read_all(const std::string& key_name, bool local_only);
   virtual std::unordered_map<std::string, std::string> write(
-      const std::unordered_map<std::string, Series>& data, bool local_only);
+      const std::unordered_map<std::string, Series>& data, bool skip_buffering,
+      bool local_only);
 
   virtual std::unordered_map<std::string, FindResult> find(
       const std::vector<std::string>& patterns, bool local_only);
-
-  virtual std::string restore_series(const std::string& key_name,
-      const std::string& data, bool combine_from_existing, bool local_only);
-  virtual std::string serialize_series(const std::string& key_name,
-      bool local_only);
 
   virtual std::string str() const;
 };

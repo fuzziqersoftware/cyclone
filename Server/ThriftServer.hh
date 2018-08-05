@@ -10,6 +10,7 @@
 #include "../gen-cpp/Cyclone.h"
 #include "Server.hh"
 #include "../Store/Store.hh"
+#include "../Store/ConsistentHashMultiStore.hh"
 
 
 class ThriftServer : public Server {
@@ -17,7 +18,9 @@ public:
   ThriftServer() = delete;
   ThriftServer(const ThriftServer&) = delete;
   ThriftServer(ThriftServer&&) = delete;
-  ThriftServer(std::shared_ptr<Store> store, int port, size_t num_threads);
+  ThriftServer(std::shared_ptr<Store> store,
+      const std::vector<std::shared_ptr<ConsistentHashMultiStore>>& hash_stores,
+      int port, size_t num_threads);
   virtual ~ThriftServer() = default;
 
   virtual void start();
@@ -26,6 +29,7 @@ public:
 
 private:
   std::shared_ptr<Store> store;
+  std::vector<std::shared_ptr<ConsistentHashMultiStore>> hash_stores;
 
   int port;
 

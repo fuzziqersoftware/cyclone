@@ -274,7 +274,8 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
 
 unordered_map<string, string> CachedDiskStore::update_metadata(
     const SeriesMetadataMap& metadata_map, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool local_only) {
+    UpdateMetadataBehavior update_behavior, bool skip_buffering,
+    bool local_only) {
 
   unordered_map<string, string> ret;
   for (auto& it : metadata_map) {
@@ -510,8 +511,46 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
   return ret;
 }
 
+ReadAllResult CachedDiskStore::read_all(const string& key_name,
+    bool local_only) {  
+  ReadAllResult ret;
+
+  KeyPath p(key_name);
+  try {
+    CacheTraversal t = this->traverse_cache_tree(p);
+
+    ret.data = t.archive->read_all();
+
+    auto metadata = t.archive->get_metadata();
+    ret.metadata.x_files_factor = metadata->x_files_factor;
+    ret.metadata.agg_method = metadata->aggregation_method;
+    ret.metadata.archive_args.resize(metadata->num_archives);
+    for (size_t x = 0; x < metadata->num_archives; x++) {
+      ret.metadata.archive_args[x].precision = metadata->archives[x].seconds_per_point;
+      ret.metadata.archive_args[x].points = metadata->archives[x].points;
+    }
+
+  } catch (const out_of_range& e) {
+    // one of the directories doesn't exist
+
+  } catch (const cannot_open_file& e) {
+    if (e.error == ENOENT) {
+      // apparently the file was deleted; remove it from the cache
+      this->check_and_delete_cache_path(p);
+    } else {
+      ret.error = e.what();
+    }
+
+  } catch (const exception& e) {
+    ret.error = e.what();
+  }
+
+  return ret;
+}
+
 unordered_map<string, string> CachedDiskStore::write(
-    const unordered_map<string, Series>& data, bool local_only) {
+    const unordered_map<string, Series>& data, bool skip_buffering,
+    bool local_only) {
   unordered_map<string, string> ret;
   for (auto& it : data) {
     if (!this->key_name_is_valid(it.first)) {
@@ -770,106 +809,6 @@ unordered_map<string, int64_t> CachedDiskStore::get_stats(bool rotate) {
   return ret;
 }
 
-string CachedDiskStore::restore_series(const string& key_name,
-      const string& data, bool combine_from_existing, bool local_only) {
-  if (!this->key_name_is_valid(key_name)) {
-    return "key contains invalid characters";
-  }
-
-  KeyPath p(key_name);
-  try {
-    try {
-      CacheTraversal t = this->traverse_cache_tree(p, NULL, NULL, true);
-
-      // if we do have to combine, make a temp file so we can read from both
-      // series without conflicts
-      string temp_filename = string_printf("%s.restore-%" PRId64,
-          t.archive->get_filename().c_str(), now());
-      WhisperArchive temp_series(temp_filename, data);
-      try {
-        auto metadata = temp_series.get_metadata();
-        const auto& archive_metadata = metadata->archives[0];
-
-        // read the entire first archive of the restored series, and take the latest
-        // non-null datapoint
-        uint64_t end_time = now() / 1000000;
-        uint64_t start_time = end_time - archive_metadata.seconds_per_point * archive_metadata.points;
-        auto read_result = temp_series.read(start_time, end_time, 0);
-
-        uint32_t latest_datapoint_time = 0;
-        if (!read_result.data.empty()) {
-          latest_datapoint_time = read_result.data[read_result.data.size() - 1].timestamp;
-        }
-
-        // if there's data, copy it over to the new file
-        if (latest_datapoint_time) {
-          auto original_read_result = t.archive->read(
-              latest_datapoint_time, end_time);
-          temp_series.write(original_read_result.data);
-        }
-
-        // rename the temp series into place
-        rename(temp_filename, t.archive->get_filename());
-
-        // update the cache directory - we need to reopen the file. for now
-        // we'll just close it, delete the cache file, and clear the list flag.
-        // note that we're already holding files_lock for writing because we
-        // gave write_lock_files = true to traverse_cache_tree
-        t.level->files.erase(p.basename);
-        t.level->files_lru.erase(p.basename);
-        t.level->list_complete = false;
-
-        return "";
-
-      } catch (const exception& e) {
-        unlink(temp_filename);
-        throw;
-      }
-
-    } catch (const out_of_range& e) {
-      // a directory doesn't exist; we'll create it below if needed
-
-    } catch (const cannot_open_file& e) {
-      if (e.error == ENOENT) {
-        // apparently the file was deleted; remove it from the cache
-        this->check_and_delete_cache_path(p);
-      } else {
-        throw;
-      }
-    }
-
-    // if we get here, then we should create the key (it doesn't exist)
-    this->traverse_cache_tree(p, NULL, &data);
-    return "";
-
-  } catch (const exception& e) {
-    return e.what();
-  }
-}
-
-string CachedDiskStore::serialize_series(const string& key_name,
-    bool local_only) {
-  KeyPath p(key_name);
-  try {
-    CacheTraversal t = this->traverse_cache_tree(p);
-    return t.archive->serialize();
-
-  } catch (const out_of_range& e) {
-    // one of the directories doesn't exist
-    return "";
-
-  } catch (const cannot_open_file& e) {
-    if (e.error == ENOENT) {
-      // apparently the file was deleted; remove it from the cache
-      this->check_and_delete_cache_path(p);
-    }
-    return "";
-
-  } catch (const exception& e) {
-    return "";
-  }
-}
-
 int64_t CachedDiskStore::delete_from_cache(const string& path, bool local_only) {
   // if the path is empty, delete the ENTIRE cache
   if (path.empty() || (path == "*")) {
@@ -1090,9 +1029,9 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
 
 CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
     const KeyPath& p, const SeriesMetadata* metadata_to_create,
-    const string* serialized_data_to_create, bool write_lock_files) {
+    bool write_lock_files) {
   CacheTraversal t = this->traverse_cache_tree(p.directories,
-      (metadata_to_create != NULL) || (serialized_data_to_create != NULL));
+      (metadata_to_create != NULL));
 
   t.filesystem_path += "/";
   t.filesystem_path += p.basename;
@@ -1128,7 +1067,7 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
     // at this point the presence/absence of the file in the cache and on the
     // filesystem are the same - it exists in both or neither. and since we
     // already checked the cache, we know it exists in neither.
-    if (!metadata_to_create && !serialized_data_to_create) {
+    if (!metadata_to_create) {
       throw out_of_range(string_printf("%s does not exist (%s)",
           t.filesystem_path.c_str(), t.level->list_complete ? "cached" : "uncached"));
     }
@@ -1141,18 +1080,10 @@ CachedDiskStore::CacheTraversal CachedDiskStore::traverse_cache_tree(
     {
       rw_guard g(t.level->files_lock, true);
 
-      bool was_created;
-      if (metadata_to_create) {
-        was_created = t.level->files.emplace(piecewise_construct,
-            forward_as_tuple(p.basename),
-            forward_as_tuple(t.filesystem_path, metadata_to_create->archive_args,
-                metadata_to_create->x_files_factor, metadata_to_create->agg_method)).second;
-      } else { // serialized_data_to_create was given
-        was_created = t.level->files.emplace(piecewise_construct,
-            forward_as_tuple(p.basename),
-            forward_as_tuple(t.filesystem_path, *serialized_data_to_create)).second;
-      }
-
+      bool was_created = t.level->files.emplace(piecewise_construct,
+          forward_as_tuple(p.basename),
+          forward_as_tuple(t.filesystem_path, metadata_to_create->archive_args,
+              metadata_to_create->x_files_factor, metadata_to_create->agg_method)).second;
       if (was_created) {
         this->file_count++;
         this->stats[0].file_creates++;

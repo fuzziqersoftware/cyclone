@@ -55,7 +55,13 @@ void WriteBufferStore::set_autocreate_rules(
 
 unordered_map<string, string> WriteBufferStore::update_metadata(
       const SeriesMetadataMap& metadata_map, bool create_new,
-      UpdateMetadataBehavior update_behavior, bool local_only) {
+      UpdateMetadataBehavior update_behavior, bool skip_buffering,
+      bool local_only) {
+
+  if (skip_buffering) {
+    return this->store->update_metadata(metadata_map, create_new,
+        update_behavior, skip_buffering, local_only);
+  }
 
   unordered_map<string, string> ret;
 
@@ -276,8 +282,21 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
   return ret;
 }
 
+ReadAllResult WriteBufferStore::read_all(const string& key_name,
+    bool local_only) {  
+  // TODO: we really should merge the result with anything in the write buffer.
+  // but I'm lazy and this is primarily used for verification+repair, during
+  // which there should not be writes to series that exist on the wrong node
+  return this->store->read_all(key_name, local_only);
+}
+
 unordered_map<string, string> WriteBufferStore::write(
-    const unordered_map<string, Series>& data, bool local_only) {
+    const unordered_map<string, Series>& data, bool skip_buffering,
+    bool local_only) {
+  if (skip_buffering) {
+    return this->store->write(data, skip_buffering, local_only);
+  }
+
   unordered_map<string, string> ret;
   for (const auto& it : data) {
     ret.emplace(it.first, "");
@@ -423,7 +442,7 @@ void WriteBufferStore::flush() {
       // if archive_args isn't empty, there was an update_metadata request
       if (!command.metadata.archive_args.empty()) {
         this->store->update_metadata({{key_name, command.metadata}},
-            command.create_new, command.update_behavior, false);
+            command.create_new, command.update_behavior, false, false);
       }
 
       // if data isn't empty, there was a write request
@@ -446,7 +465,7 @@ void WriteBufferStore::flush() {
   uint64_t lock_end_time = now();
 
   if (!write_batch.empty()) {
-    this->store->write(write_batch, false);
+    this->store->write(write_batch, false, false);
   }
 
   uint64_t end_time = now();
@@ -469,17 +488,6 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
   ret.emplace("queue_batch_size", this->batch_size);
 
   return ret;
-}
-
-string WriteBufferStore::restore_series(const string& key_name,
-      const string& data, bool combine_from_existing, bool local_only) {
-  return this->store->restore_series(key_name, data, combine_from_existing,
-      local_only);
-}
-
-string WriteBufferStore::serialize_series(const string& key_name,
-    bool local_only) {
-  return this->store->serialize_series(key_name, local_only);
 }
 
 int64_t WriteBufferStore::delete_from_cache(const std::string& path,
@@ -588,7 +596,7 @@ void WriteBufferStore::write_thread_routine() {
       if (!command.metadata.archive_args.empty()) {
         try {
           this->store->update_metadata({{key_name, command.metadata}},
-              command.create_new, command.update_behavior, false);
+              command.create_new, command.update_behavior, false, false);
           this->queued_update_metadatas--;
         } catch (const exception& e) {
           log(WARNING, "[WriteBufferStore] update_metadata failed on key=%s (%s)",
@@ -613,7 +621,7 @@ void WriteBufferStore::write_thread_routine() {
 
     if (!write_batch.empty()) {
       try {
-        this->store->write(write_batch, false);
+        this->store->write(write_batch, false, false);
         this->queued_datapoints -= write_batch_datapoints;
       } catch (const exception& e) {
         log(WARNING, "[WriteBufferStore] write failed for batch of %zu keys (%s)",

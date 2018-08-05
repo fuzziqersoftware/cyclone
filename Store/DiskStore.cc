@@ -37,7 +37,8 @@ void DiskStore::set_directory(const std::string& new_value) {
 
 unordered_map<string, string> DiskStore::update_metadata(
     const SeriesMetadataMap& m, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool local_only) {
+    UpdateMetadataBehavior update_behavior, bool skip_buffering,
+    bool local_only) {
 
   unordered_map<string, string> ret;
   for (auto& it : m) {
@@ -242,8 +243,35 @@ unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
   return ret;
 }
 
+ReadAllResult DiskStore::read_all(const string& key_name, bool local_only) {  
+  ReadAllResult ret;
+  try {
+    WhisperArchive d(this->filename_for_key(key_name));
+
+    ret.data = d.read_all();
+
+    auto metadata = d.get_metadata();
+    ret.metadata.x_files_factor = metadata->x_files_factor;
+    ret.metadata.agg_method = metadata->aggregation_method;
+    ret.metadata.archive_args.resize(metadata->num_archives);
+    for (size_t x = 0; x < metadata->num_archives; x++) {
+      ret.metadata.archive_args[x].precision = metadata->archives[x].seconds_per_point;
+      ret.metadata.archive_args[x].points = metadata->archives[x].points;
+    }
+
+  } catch (const cannot_open_file& e) {
+    // if the file doesn't exist, it's not an error, but we return no data and
+    // no metadata
+
+  } catch (const exception& e) {
+    ret.error = e.what();
+  }
+  return ret;
+}
+
 unordered_map<string, string> DiskStore::write(
-    const unordered_map<string, Series>& data, bool local_only) {
+    const unordered_map<string, Series>& data, bool skip_buffering,
+    bool local_only) {
   unordered_map<string, string> ret;
   for (const auto& it : data) {
     if (!this->key_name_is_valid(it.first)) {
@@ -266,7 +294,7 @@ unordered_map<string, string> DiskStore::write(
 
         } else {
           auto update_metadata_ret = this->update_metadata({{it.first, m}},
-              true, UpdateMetadataBehavior::Ignore, local_only);
+              true, UpdateMetadataBehavior::Ignore, skip_buffering, local_only);
           auto series_ret = update_metadata_ret.at(it.first);
 
           if (series_ret.empty() || (series_ret == "ignored")) {
@@ -364,72 +392,6 @@ unordered_map<string, int64_t> DiskStore::get_stats(bool rotate) {
   }
 
   return current_stats.to_map();
-}
-
-string DiskStore::restore_series(const string& key_name,
-      const string& data, bool combine_from_existing, bool local_only) {
-  if (!this->key_name_is_valid(key_name)) {
-    return "key contains invalid characters";
-  }
-
-  try {
-    // if we don't have to combine, just deserialize directly to the target file
-    string target_filename = this->filename_for_key(key_name);
-    if (!combine_from_existing || !isfile(target_filename)) {
-      WhisperArchive d(target_filename, data);
-      return "";
-    }
-
-    // if we do have to combine, make a temp file so we can read from both
-    // series without conflicts
-    string temp_filename = string_printf("%s.restore-%" PRId64,
-        target_filename.c_str(), now());
-    WhisperArchive temp_series(temp_filename, data);
-    try {
-      auto metadata = temp_series.get_metadata();
-      const auto& archive_metadata = metadata->archives[0];
-
-      // read the entire first archive of the restored series, and take the latest
-      // non-null datapoint
-      uint64_t end_time = now() / 1000000;
-      uint64_t start_time = end_time - archive_metadata.seconds_per_point * archive_metadata.points;
-      auto read_result = temp_series.read(start_time, end_time, 0);
-
-      uint32_t latest_datapoint_time = 0;
-      if (!read_result.data.empty()) {
-        latest_datapoint_time = read_result.data[read_result.data.size() - 1].timestamp;
-      }
-
-      // if there's data, copy it over to the new file
-      if (latest_datapoint_time) {
-        WhisperArchive original_series(target_filename);
-        auto original_read_result = original_series.read(
-            latest_datapoint_time, end_time);
-        temp_series.write(original_read_result.data);
-      }
-
-      // rename the temp series into place
-      rename(temp_filename, target_filename);
-
-      return "";
-
-    } catch (const exception& e) {
-      unlink(temp_filename);
-      throw;
-    }
-
-  } catch (const exception& e) {
-    return e.what();
-  }
-}
-
-string DiskStore::serialize_series(const string& key_name, bool local_only) {
-  try {
-    WhisperArchive d(this->filename_for_key(key_name));
-    return d.serialize();
-  } catch (const exception& e) {
-    return "";
-  }
 }
 
 string DiskStore::str() const {

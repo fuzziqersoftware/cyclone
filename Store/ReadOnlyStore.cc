@@ -24,7 +24,8 @@ shared_ptr<Store> ReadOnlyStore::get_substore() const {
 
 unordered_map<string, string> ReadOnlyStore::update_metadata(
       const SeriesMetadataMap& metadata_map, bool create_new,
-      UpdateMetadataBehavior update_behavior, bool local_only) {
+      UpdateMetadataBehavior update_behavior, bool skip_buffering,
+      bool local_only) {
   unordered_map<string, string> ret;
   for (const auto& it : metadata_map) {
     ret.emplace(it.first, "writes not allowed");
@@ -47,8 +48,13 @@ unordered_map<string, unordered_map<string, ReadResult>> ReadOnlyStore::read(
   return this->store->read(key_names, start_time, end_time, local_only);
 }
 
+ReadAllResult ReadOnlyStore::read_all(const string& key_name, bool local_only) {  
+  return this->store->read_all(key_name, local_only);
+}
+
 unordered_map<string, string> ReadOnlyStore::write(
-    const unordered_map<string, Series>& data, bool local_only) {
+    const unordered_map<string, Series>& data, bool skip_buffering,
+    bool local_only) {
   unordered_map<string, string> ret;
   for (const auto& it : data) {
     ret.emplace(it.first, "writes not allowed");
@@ -63,16 +69,6 @@ unordered_map<string, FindResult> ReadOnlyStore::find(
 
 unordered_map<string, int64_t> ReadOnlyStore::get_stats(bool rotate) {
   return this->store->get_stats(rotate);
-}
-
-string ReadOnlyStore::restore_series(const string& key_name,
-      const string& data, bool combine_from_existing, bool local_only) {
-  return "writes not allowed";
-}
-
-string ReadOnlyStore::serialize_series(const string& key_name,
-    bool local_only) {
-  return this->store->serialize_series(key_name, local_only);
 }
 
 int64_t ReadOnlyStore::delete_from_cache(const std::string& path,

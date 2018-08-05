@@ -56,7 +56,8 @@ void RemoteStore::set_netloc(const std::string& new_hostname, int new_port) {
 
 unordered_map<string, string> RemoteStore::update_metadata(
     const SeriesMetadataMap& metadata_map, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool local_only) {
+    UpdateMetadataBehavior update_behavior, bool skip_buffering,
+    bool local_only) {
   unordered_map<string, string> ret;
   if (local_only) {
     return ret;
@@ -66,7 +67,8 @@ unordered_map<string, string> RemoteStore::update_metadata(
   try {
     c->client->update_metadata(ret, metadata_map, create_new,
         (update_behavior == UpdateMetadataBehavior::Ignore),
-        (update_behavior == UpdateMetadataBehavior::Recreate), true);
+        (update_behavior == UpdateMetadataBehavior::Recreate), skip_buffering,
+        true);
     this->return_client(move(c));
   } catch (const apache::thrift::transport::TTransportException& e) {
     this->stats[0].server_disconnects++;
@@ -124,8 +126,27 @@ unordered_map<string, unordered_map<string, ReadResult>> RemoteStore::read(
   return ret;
 }
 
+ReadAllResult RemoteStore::read_all(const string& key_name, bool local_only) {  
+  ReadAllResult ret;
+  if (local_only) {
+    return ret;
+  }
+
+  auto c = this->get_client();
+  try {
+    c->client->read_all(ret, key_name, true);
+    this->return_client(move(c));
+  } catch (const apache::thrift::transport::TTransportException& e) {
+    this->stats[0].server_disconnects++;
+    ret.error = e.what();
+  }
+  this->stats[0].read_all_commands++;
+  return ret;
+}
+
 unordered_map<string, string> RemoteStore::write(
-    const unordered_map<string, Series>& data, bool local_only) {
+    const unordered_map<string, Series>& data, bool skip_buffering,
+    bool local_only) {
   unordered_map<string, string> ret;
   if (data.empty()) {
     return ret;
@@ -136,7 +157,7 @@ unordered_map<string, string> RemoteStore::write(
 
   auto c = this->get_client();
   try {
-    c->client->write(ret, data, true);
+    c->client->write(ret, data, skip_buffering, true);
     this->return_client(move(c));
   } catch (const apache::thrift::transport::TTransportException& e) {
     this->stats[0].server_disconnects++;
@@ -189,42 +210,6 @@ unordered_map<string, int64_t> RemoteStore::get_stats(bool rotate) {
   auto ret = current_stats.to_map();
   ret.emplace("connection_count", client_count);
   ret.emplace("connection_limit", this->connection_limit.load());
-  return ret;
-}
-
-string RemoteStore::restore_series(const string& key_name,
-      const string& data, bool combine_from_existing, bool local_only) {
-  if (local_only) {
-    return "remote request cancelled";
-  }
-
-  string ret;
-  auto c = this->get_client();
-  try {
-    c->client->restore_series(ret, key_name, data, combine_from_existing, true);
-    this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
-    this->stats[0].server_disconnects++;
-    ret = e.what();
-  }
-  this->stats[0].restore_series_commands++;
-  return ret;
-}
-
-string RemoteStore::serialize_series(const string& key_name, bool local_only) {
-  if (local_only) {
-    return "";
-  }
-
-  string ret;
-  auto c = this->get_client();
-  try {
-    c->client->serialize_series(ret, key_name, true);
-    this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
-    this->stats[0].server_disconnects++;
-  }
-  this->stats[0].serialize_series_commands++;
   return ret;
 }
 
@@ -318,6 +303,7 @@ RemoteStore::Stats::Stats() : Store::Stats::Stats(),
     update_metadata_commands(0),
     delete_series_commands(0),
     read_commands(0),
+    read_all_commands(0),
     write_commands(0),
     find_commands(0),
     restore_series_commands(0),
@@ -335,6 +321,7 @@ RemoteStore::Stats& RemoteStore::Stats::operator=(const Stats& other) {
   this->update_metadata_commands = other.update_metadata_commands.load();
   this->delete_series_commands = other.delete_series_commands.load();
   this->read_commands = other.read_commands.load();
+  this->read_all_commands = other.read_all_commands.load();
   this->write_commands = other.write_commands.load();
   this->find_commands = other.find_commands.load();
   this->restore_series_commands = other.restore_series_commands.load();
@@ -352,6 +339,7 @@ unordered_map<string, int64_t> RemoteStore::Stats::to_map() const {
   ret.emplace("remote_update_metadata_commands", this->update_metadata_commands.load());
   ret.emplace("remote_delete_series_commands", this->delete_series_commands.load());
   ret.emplace("remote_read_commands", this->read_commands.load());
+  ret.emplace("remote_read_all_commands", this->read_all_commands.load());
   ret.emplace("remote_write_commands", this->write_commands.load());
   ret.emplace("remote_find_commands", this->find_commands.load());
   ret.emplace("remote_restore_series_commands", this->restore_series_commands.load());

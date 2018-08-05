@@ -20,14 +20,14 @@ Cyclone is configured via a small JSON file. The comments in the example file (c
 
 Cyclone supports several protocols with varying capabilities:
 
-| Protocol | Graphite-compatible? | Python client class                 |        Read commands         |         Write commands         | Admin commands |
-| -------- |:--------------------:| ----------------------------------- |:----------------------------:|:------------------------------:|:--------------:|
-| Line     |         Yes          | `stream_client.CycloneLineClient`   |                              |         write, create*         |                |
-| Datagram |         Yes          |                                     |                              |         write, create*         |                |
-| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                              |         write, create*         |                |
-| Shell    |         No           |                                     |      read, find, stats       |     write, create, delete      |     verify     |
-| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     |      read, find, stats       |                                |                |
-| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats, serialize | write, create, delete, restore |                |
+| Protocol | Graphite-compatible? | Python client class                 |   Read commands   |    Write commands     |    Admin commands     |
+| -------- |:--------------------:| ----------------------------------- |:-----------------:|:---------------------:|:---------------------:|
+| Line     |         Yes          | `stream_client.CycloneLineClient`   |                   |    write, create*     |                       |
+| Datagram |         Yes          |                                     |                   |    write, create*     |                       |
+| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                   |    write, create*     |                       |
+| Shell    |         No           |                                     | read, find, stats | write, create, delete | verify, read-from-all |
+| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     | read, find, stats |                       |                       |
+| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats | write, create, delete |                       |
 
 Note: the ability to create series through the line, datagram, and pickle protocols is limited to autocreates (according to predefined rules in the server configuration). For more fine-grained control over series schema, create series through the Thrift or shell interfaces instead.
 
@@ -114,11 +114,15 @@ A Cyclone cluster can be set up by creating configuration files for each instanc
 ## Scaling
 
 Adding a new node to an existing cluster can be done as follows:
-- Rewrite the configuration files on all nodes to reflect the new cluster definition (e.g. by adding another substore to a multistore).
+- Rewrite the configuration files on all nodes to reflect the new cluster definition (e.g. by adding another substore to a hash store).
 - Restart Cyclone on all nodes and start it on the new node.
-- Run `verify start repair` in a shell (`telnet localhost $SHELL_PORT`) on all of the original nodes, and run `verify start` in a shell on the new node.
+- Run `verify start repair` in a Cyclone shell (`telnet localhost $SHELL_PORT`) on all nodes in the cluster.
 
-The verify procedure will examine all keys and move any that are on the wrong hosts to the correct hosts. During the verify procedure, all writes will go to the correct hosts (even if the existing data hasn't been moved yet) and all reads will go to all hosts to account for the incomplete migration.
+The verify procedure runs in the background. It examines all keys and moves any that are on the wrong nodes to the correct nodes. During the verify procedure, all writes will go to the correct nodes (even if the existing data hasn't been moved yet) and all reads will go to all nodes to account for the incomplete migration. If the verification procedure finishes at different times on different nodes, some nodes might stop reading from all other nodes before all keys have been moved. To correct for this, use `read-from-all on` in a Cyclone shell to force the node to read from all nodes even if no verify procedure is running.
+
+The verification procedure exports data from the series which are on incorrect nodes, and writes the data over any existing data that exists on the correct node. For example, if a series is autocreated and exists on both nodes (with old data on node1 and new data on node2), then after the migration, there will be a single data file on node2 containing all the data from both files. If datapoints with the same timestamp on each node, the datapoint from node1 will be used. If the key schemas are different, the schema existing on node2 will be used.
+
+To monitor the verify procedure, run `verify status` in a Cyclone shell to get the instantaneous status, or look at the `cyclone.<hostname>.verify_*` keys for the historical status.
 
 ## Future work
 
@@ -129,4 +133,5 @@ There's a lot to do here.
 - Support new storage formats.
 - Build out query execution functionality.
 - Support rendering graphs as images (perhaps even as SVGs).
-- Separate read-all mode from verify progress so it can be enabled and disabled across the entire cluster (since some nodes may finish verify before others).
+- Separate read-all mode from verify progress so it can be enabled and disabled across the entire cluster (since some nodes may finish verification before others).
+- Fix the graceful shutdown procedure. Currently the servers shut down before the store is (synchronously) flushed, which doesn't work if there are pending writes to remote stores in a cluster configuration.

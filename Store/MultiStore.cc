@@ -34,12 +34,13 @@ void MultiStore::set_autocreate_rules(
 
 unordered_map<string, string> MultiStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool local_only) {
+    UpdateMetadataBehavior update_behavior, bool skip_buffering,
+    bool local_only) {
 
   unordered_map<string, string> ret;
   for (const auto& it : this->stores) {
     auto results = it.second->update_metadata(metadata, create_new,
-        update_behavior, local_only);
+        update_behavior, skip_buffering, local_only);
     for (const auto& result_it : results) {
       ret.emplace(move(result_it.first), move(result_it.second));
     }
@@ -71,11 +72,28 @@ unordered_map<string, unordered_map<string, ReadResult>> MultiStore::read(
   return ret;
 }
 
+ReadAllResult MultiStore::read_all(const string& key_name, bool local_only) {  
+  ReadAllResult ret;
+  for (const auto& it : this->stores) {
+    auto result = it.second->read_all(key_name, local_only);
+    if (result.metadata.archive_args.empty()) {
+      continue;
+    }
+    if (!ret.metadata.archive_args.empty()) {
+      ret.error = "multiple stores returned nonempty results";
+    } else {
+      ret = move(result);
+    }
+  }
+  return ret;
+}
+
 unordered_map<string, string> MultiStore::write(
-    const unordered_map<string, Series>& data, bool local_only) {
+    const unordered_map<string, Series>& data, bool skip_buffering,
+    bool local_only) {
   unordered_map<string, string> ret;
   for (const auto& it : this->stores) {
-    auto results = it.second->write(data, local_only);
+    auto results = it.second->write(data, skip_buffering, local_only);
     for (const auto& result_it : results) {
       ret.emplace(move(result_it.first), move(result_it.second));
     }
@@ -113,29 +131,6 @@ unordered_map<string, int64_t> MultiStore::get_stats(bool rotate) {
   return ret;
 }
 
-string MultiStore::restore_series(const string& key_name,
-      const string& data, bool combine_from_existing, bool local_only) {
-  string ret;
-  for (const auto& it : this->stores) {
-    string store_ret = it.second->restore_series(key_name, data,
-        combine_from_existing, local_only);
-    if (ret.empty() && !store_ret.empty()) {
-      ret = store_ret;
-    }
-  }
-  return ret;
-}
-
-string MultiStore::serialize_series(const string& key_name, bool local_only) {
-  for (const auto& it : this->stores) {
-    string ret = it.second->serialize_series(key_name, local_only);
-    if (!ret.empty()) {
-      return ret;
-    }
-  }
-  return "";
-}
-
 int64_t MultiStore::delete_from_cache(const std::string& path, bool local_only) {
   int64_t ret = 0;
   for (const auto& it : this->stores) {
@@ -171,17 +166,56 @@ string MultiStore::str() const {
 void MultiStore::combine_read_results(
     unordered_map<string, unordered_map<string, ReadResult>>& into,
     unordered_map<string, unordered_map<string, ReadResult>>&& from) {
-  for (auto& from_query_it : from) {
+  // the maps are {pattern: {key_name: result}}
+  for (auto& from_query_it : from) { // (pattern, {key_name: result})
     const string& from_query = from_query_it.first;
     auto& from_series_map = from_query_it.second;
+
     auto into_query_it = into.find(from_query);
     if (into_query_it == into.end()) {
       into.emplace(from_query, move(from_series_map));
 
     } else {
       auto& into_series_map = into_query_it->second;
-      for (auto& from_series_it : from_series_map) {
-        into_series_map.emplace(from_series_it.first, move(from_series_it.second));
+      for (auto& from_series_it : from_series_map) { // (key_name, result)
+
+        // attempt to insert the result. if it's already there, then merge the
+        // data manually
+        auto emplace_ret = into_series_map.emplace(from_series_it.first,
+            move(from_series_it.second));
+        if (!emplace_ret.second) {
+          auto& existing_result = emplace_ret.first->second;
+          auto& new_result = from_series_it.second;
+
+          if (!existing_result.error.empty()) {
+            // the existing result has an error; just leave it there
+
+          } else if (existing_result.step == 0) {
+            // the existing result is a missing series result. just replace it
+            // entirely with the new result (which might have data)
+            existing_result = move(new_result);
+
+          } else if (new_result.step != 0) {
+            // both results have data. seriously? dammit
+
+            if (new_result.step != existing_result.step) {
+              existing_result.error = "merged results with different schemas";
+            } else {
+              existing_result.data.insert(existing_result.data.end(),
+                  new_result.data.begin(), new_result.data.end());
+              sort(existing_result.data.begin(), existing_result.data.end(),
+                  [](const Datapoint& a, const Datapoint& b) {
+                    return a.timestamp < b.timestamp;
+                  });
+              if (new_result.start_time < existing_result.start_time) {
+                existing_result.start_time = new_result.start_time;
+              }
+              if (new_result.end_time > existing_result.end_time) {
+                existing_result.end_time = new_result.end_time;
+              }
+            }
+          }
+        }
       }
     }
   }

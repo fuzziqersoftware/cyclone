@@ -24,6 +24,12 @@ struct ReadResult {
   6: i64 step;
 }
 
+struct ReadAllResult {
+  1: string error;
+  2: SeriesMetadata metadata;
+  3: Series data;
+}
+
 struct FindResult {
   1: string error;
   2: list<string> results;
@@ -60,7 +66,8 @@ service Cyclone {
   // modified (including creates and updates).
   WriteResultMap update_metadata(1: SeriesMetadataMap metadata,
       2: bool create_new = true, 3: bool skip_existing_series = false,
-      4: bool truncate_existing_series = false, 5: bool local_only = false);
+      4: bool truncate_existing_series = false, 5: bool skip_buffering = false,
+      6: bool local_only = false);
 
   // deletes series. returns the number of series deleted.
   DeleteResultMap delete_series(1: list<string> patterns,
@@ -68,13 +75,8 @@ service Cyclone {
 
   // writes or deletes datapoints in a series. to delete datapoints, pass NaN as
   // the value.
-  WriteResultMap write(1: SeriesMap data, 2: bool local_only = false);
-
-  // load a serialized series. if the series exists and combine_from_existing is
-  // true, read all data in the most recent archive of the existing series, and
-  // write it to the restored series before restoring it.
-  string restore_series(1: string key_name, 2: binary data,
-      3: bool combine_from_existing, 4: bool local_only = false);
+  WriteResultMap write(1: SeriesMap data, 2: bool skip_buffering = false,
+      3: bool local_only = false);
 
 
 
@@ -84,9 +86,8 @@ service Cyclone {
   ReadResultMap read(1: list<string> targets, 2:i64 start_time,
       3: i64 end_time, 4: bool local_only = false);
 
-  // return a serialized version of the given series' schema and data, which can
-  // be loaded again with restore_series.
-  binary serialize_series(1: string key_name, 2: bool local_only = false);
+  // reads all datapoints and metadata from a series.
+  ReadAllResult read_all(1: string series, 2: bool local_only = false);
 
   // searches for directory and key names matching the given patterns. if a
   // result ends with '.*', it's a directory; otherwise it's a key.
@@ -94,6 +95,24 @@ service Cyclone {
 
   // returns the current server stats
   StatsResultMap stats();
+
+
+
+  // administration commands
+
+  // returns the status of the current verify operation.
+  StatsResultMap get_verify_status();
+
+  // starts or cancels a verify operation. returns true if the operation was
+  // performed (a verify was started or cancelled).
+  bool start_verify(1: bool repair);
+  bool cancel_verify();
+
+  // gets or sets the read-from-all state. this state should be enabled on all
+  // nodes in a cluster before a verify+repair starts and disabled after it
+  // ends.
+  bool get_read_from_all();
+  bool set_read_from_all(1: bool read_from_all);
 
 
 

@@ -28,26 +28,24 @@ public:
 
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
-      UpdateMetadataBehavior update_behavior, bool local_only);
+      UpdateMetadataBehavior update_behavior, bool skip_buffering,
+      bool local_only);
   virtual std::unordered_map<std::string, int64_t> delete_series(
       const std::vector<std::string>& patterns, bool local_only);
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
       int64_t end_time, bool local_only);
+  virtual ReadAllResult read_all(const std::string& key_name, bool local_only);
   virtual std::unordered_map<std::string, std::string> write(
-      const std::unordered_map<std::string, Series>& data, bool local_only);
+      const std::unordered_map<std::string, Series>& data, bool skip_buffering,
+      bool local_only);
 
   virtual std::unordered_map<std::string, FindResult> find(
       const std::vector<std::string>& patterns, bool local_only);
 
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
-
-  virtual std::string restore_series(const std::string& key_name,
-      const std::string& data, bool combine_from_existing, bool local_only);
-  virtual std::string serialize_series(const std::string& key_name,
-      bool local_only);
 
   virtual int64_t delete_from_cache(const std::string& path, bool local_only);
   virtual int64_t delete_pending_writes(const std::string& pattern, bool local_only);
@@ -78,6 +76,7 @@ private:
     std::atomic<size_t> update_metadata_commands;
     std::atomic<size_t> delete_series_commands;
     std::atomic<size_t> read_commands;
+    std::atomic<size_t> read_all_commands;
     std::atomic<size_t> write_commands;
     std::atomic<size_t> find_commands;
     std::atomic<size_t> restore_series_commands;

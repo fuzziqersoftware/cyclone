@@ -236,7 +236,7 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
   }
 
   if (!data.empty()) {
-    for (const auto& it : this->store->write(data, false)) {
+    for (const auto& it : this->store->write(data, false, false)) {
       if (it.second.empty()) {
         continue;
       }
@@ -313,6 +313,9 @@ Commands:\n\
 \n\
   verify status\n\
     Show the progress of all running verify procedures.\n\
+\n\
+  read-from-all [on|off]\n\
+    Get or set the read-from-all state of the server.\n\
 ");
 
 void StreamServer::execute_shell_command(const char* line_data,
@@ -377,7 +380,7 @@ void StreamServer::execute_shell_command(const char* line_data,
     }
 
     auto result = this->store->update_metadata(metadata_map, create_new,
-        update_behavior, false);
+        update_behavior, false, false);
     for (const auto& result_it : result) {
       if (result_it.second.empty()) {
         evbuffer_add_printf(out_buffer, "[%s] success\n",
@@ -452,7 +455,7 @@ void StreamServer::execute_shell_command(const char* line_data,
       }
     }
 
-    auto result = this->store->write(write_map, false);
+    auto result = this->store->write(write_map, false, false);
     for (const auto& result_it : result) {
       if (result_it.second.empty()) {
         evbuffer_add_printf(out_buffer, "[%s] success\n",
@@ -517,8 +520,11 @@ void StreamServer::execute_shell_command(const char* line_data,
     }
 
   } else if (command_name == "verify") {
-    if (!this->hash_stores.size()) {
+    if (this->hash_stores.empty()) {
       throw runtime_error("there are no hash stores");
+    }
+    if (this->hash_stores.size() > 1) {
+      throw runtime_error("there are multiple hash stores");
     }
 
     if (tokens.size() > 2) {
@@ -531,52 +537,84 @@ void StreamServer::execute_shell_command(const char* line_data,
       throw runtime_error("not enough arguments");
     }
 
+    auto hash_store = this->hash_stores[0];
+
     if (tokens[0] == "start") {
       bool repair = (tokens.size() == 2);
-      for (size_t x = 0; x < this->hash_stores.size(); x++) {
-        bool ret = this->hash_stores[x]->start_verify(repair);
-        evbuffer_add_printf(out_buffer, "[%zu] verify %s\n", x,
-            ret ? "started" : "not started");
-      }
+      bool ret = hash_store->start_verify(repair);
+      evbuffer_add_printf(out_buffer, "%s %s\n",
+          repair ? "verify+repair" : "verify", ret ? "started" : "not started");
 
     } else if (tokens[0] == "cancel") {
-      for (size_t x = 0; x < this->hash_stores.size(); x++) {
-        bool ret = this->hash_stores[x]->cancel_verify();
-        evbuffer_add_printf(out_buffer, "[%zu] verify %s\n", x,
-            ret ? "cancelled" : "not cancelled");
-      }
+      bool ret = hash_store->cancel_verify();
+      evbuffer_add_printf(out_buffer, "verify %s\n",
+          ret ? "cancelled" : "not cancelled");
 
     } else if (tokens[0] == "status") {
-      for (size_t x = 0; x < this->hash_stores.size(); x++) {
-        const auto& progress = this->hash_stores[x]->get_verify_progress();
-        int64_t start_time = progress.start_time;
-        int64_t end_time = progress.end_time;
+      const auto& progress = hash_store->get_verify_progress();
+      int64_t start_time = progress.start_time;
+      int64_t end_time = progress.end_time;
 
-        if (start_time == end_time) {
-          evbuffer_add_printf(out_buffer, "[%zu] verify never run\n", x);
-        } else {
-          string start_time_str = format_time(start_time);
-          evbuffer_add_printf(out_buffer, "[%zu] %s %s\n", x,
-              progress.repair ? "verify+repair" : "verify",
-              progress.in_progress() ? "in progress" : "completed");
-          evbuffer_add_printf(out_buffer, "[%zu] started at %" PRId64 " (%s)\n", x,
-              start_time, start_time_str.c_str());
-          if (end_time) {
-            string end_time_str = format_time(progress.end_time);
-            evbuffer_add_printf(out_buffer, "[%zu] completed at %" PRId64 " (%s)\n", x,
-                end_time, end_time_str.c_str());
-          }
-          evbuffer_add_printf(out_buffer, "[%zu] %" PRId64 " of %" PRId64 " keys moved\n", x,
-              progress.keys_moved.load(), progress.keys_examined.load());
-          evbuffer_add_printf(out_buffer, "[%zu] %" PRId64 " restore errors\n", x,
-              progress.restore_errors.load());
-          evbuffer_add_printf(out_buffer, "[%zu] %" PRId64 " find queries executed\n", x,
-              progress.find_queries_executed.load());
+      if (start_time == end_time) {
+        evbuffer_add_printf(out_buffer, "verify was never run\n");
+
+      } else {
+        string start_time_str = format_time(start_time);
+        evbuffer_add_printf(out_buffer, "%s %s\n",
+            progress.repair ? "verify+repair" : "verify",
+            progress.in_progress() ? "in progress" : "completed");
+        evbuffer_add_printf(out_buffer, "started at %" PRId64 " (%s)\n",
+            start_time, start_time_str.c_str());
+        if (end_time) {
+          string end_time_str = format_time(progress.end_time);
+          evbuffer_add_printf(out_buffer, "completed at %" PRId64 " (%s)\n",
+              end_time, end_time_str.c_str());
         }
+        evbuffer_add_printf(out_buffer, "%" PRId64 " of %" PRId64 " keys moved\n",
+            progress.keys_moved.load(), progress.keys_examined.load());
+        evbuffer_add_printf(out_buffer, "%" PRId64 " read_all errors\n",
+            progress.read_all_errors.load());
+        evbuffer_add_printf(out_buffer, "%" PRId64 " update_metadata errors\n",
+            progress.update_metadata_errors.load());
+        evbuffer_add_printf(out_buffer, "%" PRId64 " write errors\n",
+            progress.write_errors.load());
+        evbuffer_add_printf(out_buffer, "%" PRId64 " delete errors\n",
+            progress.delete_errors.load());
+        evbuffer_add_printf(out_buffer, "%" PRId64 " find queries executed\n",
+            progress.find_queries_executed.load());
       }
 
     } else {
       throw runtime_error("invalid subcommand");
+    }
+
+  } else if (command_name == "read-from-all") {
+    if (this->hash_stores.empty()) {
+      throw runtime_error("there are no hash stores");
+    }
+    if (this->hash_stores.size() > 1) {
+      throw runtime_error("there are multiple hash stores");
+    }
+
+    if (tokens.size() > 1) {
+      throw runtime_error("too many arguments");
+    }
+    if ((tokens.size() == 1) && (tokens[0] != "on") && (tokens[0] != "off")) {
+      throw runtime_error("invalid argument");
+    }
+
+    auto hash_store = this->hash_stores[0];
+
+    if (tokens.size() == 0) {
+      evbuffer_add_printf(out_buffer, "read-from-all is %s\n",
+          hash_store->get_read_from_all() ? "enabled" : "disabled");
+
+    } else {
+      bool enable = (tokens[0] == "on");
+      bool prev_read_from_all = hash_store->set_read_from_all(enable);
+      evbuffer_add_printf(out_buffer, "read-from-all is %s (was %s)\n",
+          enable ? "enabled" : "disabled",
+          prev_read_from_all ? "enabled" : "disabled");
     }
 
   } else {

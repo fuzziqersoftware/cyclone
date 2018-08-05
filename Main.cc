@@ -472,7 +472,8 @@ int main(int argc, char **argv) {
   }
 
   if (opt.thrift_port) {
-    servers.emplace_back(new ThriftServer(opt.store, opt.thrift_port, opt.thrift_threads));
+    servers.emplace_back(new ThriftServer(opt.store, opt.hash_stores,
+        opt.thrift_port, opt.thrift_threads));
   }
 
   for (auto& it : servers) {
@@ -548,7 +549,7 @@ int main(int argc, char **argv) {
           hostname.c_str(), WhisperArchive::get_files_lru_size());
 
       try {
-        opt.store->write(data_to_write, false);
+        opt.store->write(data_to_write, false, false);
       } catch (const exception& e) {
         log(INFO, "failed to report stats: %s\n", e.what());
       }

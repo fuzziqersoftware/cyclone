@@ -17,7 +17,8 @@ using namespace std;
 
 unordered_map<string, string> EmptyStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool local_only) {
+    UpdateMetadataBehavior update_behavior, bool skip_buffering,
+    bool local_only) {
 
   unordered_map<string, string> ret;
   for (const auto& it : metadata) {
@@ -46,8 +47,13 @@ unordered_map<string, unordered_map<string, ReadResult>> EmptyStore::read(
   return ret;
 }
 
+ReadAllResult EmptyStore::read_all(const string& key_name, bool local_only) {  
+  return ReadAllResult();
+}
+
 unordered_map<string, string> EmptyStore::write(
-    const unordered_map<string, Series>& data, bool local_only) {
+    const unordered_map<string, Series>& data, bool skip_buffering,
+    bool local_only) {
 
   unordered_map<string, string> ret;
   for (const auto& it : data) {
@@ -64,15 +70,6 @@ unordered_map<string, FindResult> EmptyStore::find(
     ret.emplace(piecewise_construct, forward_as_tuple(it), forward_as_tuple());
   }
   return ret;
-}
-
-string EmptyStore::restore_series(const string& key_name,
-      const string& data, bool combine_from_existing, bool local_only) {
-  return "";
-}
-
-string EmptyStore::serialize_series(const string& key_name, bool local_only) {
-  return "";
 }
 
 string EmptyStore::str() const {

@@ -150,7 +150,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] write to nonexistent series (no autocreate)\n", store_name.c_str());
-    auto ret = s->write(write_data, false);
+    auto ret = s->write(write_data, false, false);
     expect_eq(1, ret.size());
     expect_eq(is_write_buffer, ret.at(key_name1).empty());
     s->flush();
@@ -179,19 +179,19 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   // none of these should create the series
   {
     printf("-- [%s:basic_test] update_metadata (no-op) on nonexistent series\n", store_name.c_str());
-    auto ret1 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Ignore, false);
+    auto ret1 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Ignore, false, false);
     expect_eq(1, ret1.size());
     expect_eq(is_write_buffer, ret1.at(key_name1).empty());
     s->flush();
     expect(!isfile(key_filename1));
 
-    auto ret2 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Update, false);
+    auto ret2 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Update, false, false);
     expect_eq(1, ret2.size());
     expect_eq(is_write_buffer, ret2.at(key_name1).empty());
     s->flush();
     expect(!isfile(key_filename1));
 
-    auto ret3 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false);
+    auto ret3 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false, false);
     expect_eq(1, ret3.size());
     expect_eq(is_write_buffer, ret3.at(key_name1).empty());
     s->flush();
@@ -200,7 +200,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] update_metadata (create) on nonexistent series\n", store_name.c_str());
-    auto ret = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false);
+    auto ret = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     if (is_write_buffer) {
@@ -212,13 +212,13 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] update_metadata (no-op) on existing series\n", store_name.c_str());
-    auto ret1 = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false);
+    auto ret1 = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false, false);
     expect_eq(1, ret1.size());
     expect_eq(is_write_buffer, ret1.at(key_name1).empty());
     s->flush();
     expect(isfile(key_filename1));
 
-    auto ret2 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Ignore, false);
+    auto ret2 = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Ignore, false, false);
     expect_eq(1, ret2.size());
     expect_eq(is_write_buffer, ret2.at(key_name1).empty());
     s->flush();
@@ -227,7 +227,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] update_metadata (recreate) on existing series\n", store_name.c_str());
-    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false);
+    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     s->flush();
@@ -247,7 +247,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] write datapoint to existing series\n", store_name.c_str());
-    auto ret = s->write(write_data, false);
+    auto ret = s->write(write_data, false, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     expect(isfile(key_filename1));
@@ -274,7 +274,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   {
     printf("-- [%s:basic_test] update_metadata (update) on existing series with data\n", store_name.c_str());
     metadata.x_files_factor = 1.0;
-    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Update, false);
+    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Update, false, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     expect(isfile(key_filename1));
@@ -297,7 +297,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   {
     printf("-- [%s:basic_test] update_metadata (recreate) on existing series with data\n", store_name.c_str());
     metadata.x_files_factor = 1.0;
-    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false);
+    auto ret = s->update_metadata(metadata_map, false, Store::UpdateMetadataBehavior::Recreate, false, false);
     expect_eq(1, ret.size());
     expect(ret.at(key_name1).empty());
     expect(isfile(key_filename1));
@@ -352,7 +352,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] update_metadata mixed create and ignore\n", store_name.c_str());
     expect(!isfile(key_filename2));
     metadata_map[key_name2] = metadata_map.at(key_name1);
-    auto ret1 = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false);
+    auto ret1 = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false, false);
     expect_eq(2, ret1.size());
     expect(!ret1.at(key_name1).empty());
     expect(ret1.at(key_name2).empty());
@@ -398,7 +398,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     unordered_map<string, Series> this_write_data;
     this_write_data.emplace(autocreate_key_name1, write_data.at(key_name1));
     expect(!isfile(autocreate_key_name1));
-    auto ret = s->write(this_write_data, false);
+    auto ret = s->write(this_write_data, false, false);
     expect_eq(1, ret.size());
     expect(ret.at(autocreate_key_name1).empty());
     expect(isfile(key_filename1));
@@ -423,35 +423,26 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   }
 
   {
-    printf("-- [%s:basic_test] serialize/deserialize series\n", store_name.c_str());
-    auto serialized = s->serialize_series(autocreate_key_name1, false);
-    expect_ne("", serialized);
-    auto ret = s->restore_series(autocreate_key_name2, serialized, false, false);
-    expect_eq("", ret);
-    expect(isfile(autocreate_key_filename1));
-    expect(isfile(autocreate_key_filename2));
-  }
-
-  {
-    printf("-- [%s:basic_test] read from restored series\n", store_name.c_str());
-    auto ret = s->read({autocreate_key_name2}, test_now - 10 * 60, test_now, false);
-    expect_eq(1, ret.size());
-    expect_eq(1, ret.at(autocreate_key_name2).size());
-    expect(ret.at(autocreate_key_name2).at(autocreate_key_name2).error.empty());
-    expect_eq(1, ret.at(autocreate_key_name2).at(autocreate_key_name2).data.size());
-    expect_eq((test_now / 60) * 60, ret.at(autocreate_key_name2).at(autocreate_key_name2).data[0].timestamp);
-    expect_eq(2.0, ret.at(autocreate_key_name2).at(autocreate_key_name2).data[0].value);
-    metadata.x_files_factor = 0.0;
-    expect_eq(metadata.archive_args[0].precision, ret.at(autocreate_key_name2).at(autocreate_key_name2).step);
+    printf("-- [%s:basic_test] read_all from series created by autocreate\n", store_name.c_str());
+    auto ret = s->read_all(autocreate_key_name1, false);
+    expect_eq("", ret.error);
+    expect_eq(0, ret.metadata.x_files_factor);
+    expect_eq(1, ret.metadata.agg_method);
+    expect_eq(2, ret.metadata.archive_args.size());
+    expect_eq(60, ret.metadata.archive_args[0].precision);
+    expect_eq(43200, ret.metadata.archive_args[0].points);
+    expect_eq(3600, ret.metadata.archive_args[1].precision);
+    expect_eq(8760, ret.metadata.archive_args[1].points);
+    expect_eq(1, ret.data.size());
+    expect_eq(2, ret.data[0].value);
   }
 
   {
     printf("-- [%s:basic_test] delete series\n", store_name.c_str());
-    auto ret = s->delete_series({pattern4, autocreate_key_name1, autocreate_key_name2}, false);
+    auto ret = s->delete_series({pattern4, autocreate_key_name1}, false);
     expect_eq(1, ret.at(pattern4));
     expect_eq(1, ret.at(autocreate_key_name1));
-    expect_eq(1, ret.at(autocreate_key_name2));
-    expect_eq(3, ret.size());
+    expect_eq(2, ret.size());
     expect(!isfile(key_filename1));
     expect(isfile(key_filename2));
     expect(!isfile(autocreate_key_filename1));
@@ -479,7 +470,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] update_metadata (create) on mixed existing & nonexistent series\n", store_name.c_str());
-    auto ret = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false);
+    auto ret = s->update_metadata(metadata_map, true, Store::UpdateMetadataBehavior::Ignore, false, false);
     expect_eq(2, ret.size());
     expect(ret.at(key_name1).empty());
     if (is_write_buffer) {
