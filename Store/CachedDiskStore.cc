@@ -73,6 +73,9 @@ void CachedDiskStore::CacheTraversal::move_to_level(const string& item) {
   this->guards.emplace_back(move(g));
 }
 
+CachedDiskStore::CachedDirectoryContents::CachedDirectoryContents() :
+    list_complete(false) { }
+
 pair<size_t, size_t> CachedDiskStore::CachedDirectoryContents::get_counts() const {
   pair<size_t, size_t> ret = make_pair(1, 0);
   {

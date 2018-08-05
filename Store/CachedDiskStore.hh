@@ -95,7 +95,7 @@ protected:
     LRUSet<std::string> files_lru;
     mutable std::mutex files_lru_lock;
 
-    CachedDirectoryContents() = default;
+    CachedDirectoryContents();
     CachedDirectoryContents(const CachedDirectoryContents& other) = delete;
     CachedDirectoryContents(CachedDirectoryContents&& other) = default;
     CachedDirectoryContents& operator=(const CachedDirectoryContents& other) = delete;
