@@ -522,7 +522,9 @@ void StreamServer::execute_shell_command(const char* line_data,
           evbuffer_add_printf(out_buffer, "series: %s (start=%" PRId64 ", end=%" PRId64 ", step=%" PRId64 ")\n",
               series_name.c_str(), result.start_time, result.end_time, result.step);
           for (const auto& dp : result.data) {
-            evbuffer_add_printf(out_buffer, "%" PRId64 " -> %g\n", dp.timestamp, dp.value);
+            string time_str = format_time(dp.timestamp * 1000000);
+            evbuffer_add_printf(out_buffer, "%" PRId64 " (%s) -> %g\n",
+                dp.timestamp, time_str.c_str(), dp.value);
           }
         }
       }
