@@ -20,20 +20,20 @@ Cyclone is configured via a small JSON file. The comments in the example file (c
 
 Cyclone supports several protocols with varying capabilities:
 
-| Protocol | Graphite-compatible? | Python client class                 |   Read commands   |    Write commands     |    Admin commands     |
-| -------- |:--------------------:| ----------------------------------- |:-----------------:|:---------------------:|:---------------------:|
-| Line     |         Yes          | `stream_client.CycloneLineClient`   |                   |    write, create*     |                       |
-| Datagram |         Yes          |                                     |                   |    write, create*     |                       |
-| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                   |    write, create*     |                       |
-| Shell    |         No           |                                     | read, find, stats | write, create, delete | verify, read-from-all |
-| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     | read, find, stats |                       |                       |
-| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats | write, create, delete |                       |
+| Protocol | Graphite-compatible? | Python client class                 |   Read commands   |         Write commands         |    Admin commands     |
+| -------- |:--------------------:| ----------------------------------- |:-----------------:|:------------------------------:|:---------------------:|
+| Line     |         Yes          | `stream_client.CycloneLineClient`   |                   |         write, create*         |                       |
+| Datagram |         Yes          |                                     |                   |         write, create*         |                       |
+| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                   |         write, create*         |                       |
+| Shell    |         No           |                                     | read, find, stats | write, update_metadata, delete | verify, read-from-all |
+| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     | read, find, stats |                                |                       |
+| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats | write, update_metadata, delete | verify, read-from-all |
 
-Note: the ability to create series through the line, datagram, and pickle protocols is limited to autocreates (according to predefined rules in the server configuration). For more fine-grained control over series schema, create series through the Thrift or shell interfaces instead.
+Note: the ability to create series through the line, datagram, and pickle protocols is limited to autocreates (according to predefined rules in the server configuration). For more fine-grained control over series schema, create series by using update_metadata through the Thrift or shell interfaces instead.
 
 ### Patterns
 
-Many functions that accept key names also accept patterns as well. A pattern is a key name contining wildcards or other ambiguous characters. The special characters in key patterns are:
+Many functions that accept key names also accept patterns as well. A pattern is a key name containing wildcards or other special tokens. The special tokens in key patterns are:
 - `*`: matches a string of any length containing any characters except `.`
 - `[abc]`: matches any of the characters `a`, `b`, or `c`
 - `{abc,def,ghi}`: matches any of the strings `abc`, `def`, or `ghi`
@@ -51,8 +51,62 @@ This example pattern does not match any of the following keys:
 - `test.whatever.devicename.key1`
 - `test.whatever.anything.filename.key1`
 
-In autocreate rules (see the example configuration file for more information), a fourth special "character" can be used:
+In autocreate rules (see the example configuration file for more information), a fourth special token can be used:
 - `**` matches any string of any length, including `.` characters
+
+`**` may also be used with the `delete_series` and `find` commands, but only as the last token of a pattern. See the descriptions of those commands for more information.
+
+### Commands
+
+Cyclone provides the following functions.
+
+#### update_metadata
+
+This command creates series or modifies the storage format of existing series. The caller provides a map of series name to metadata (which includes the archive sizes and resolutions, and propagation/aggregation options), as well as flags to define the behavior (whether existing series should be overwritten or resampled, and whether missing series should be created).
+
+If write buffering is used and skip_buffering is false (the default), this command returns before the changes are committed to disk.
+
+#### delete_series
+
+This command deletes one or more series, as well as all buffered writes in memory for those series.
+
+Patterns may be given here; all series that match the pattern will be deleted. Entire directory trees can also be deleted by providing a pattern ending in `.**` (this is a special case and does not work in other places or other commands).
+
+This command does not return until the changes are committed to disk, even if write buffering is used.
+
+#### read
+
+This command reads datapoints from one or more series. Patterns may be given for the series names; the read will be performed on all series matching the pattern.
+
+There are currently some unfixed edge cases with write buffering, which are:
+- If there are buffered writes for a series that doesn't exist and a read is performed with a mattern that would match this series, the series is not returned.
+- If there are writes in progress for a series that is returned, the values written by the in-progress writes may or may not be returned.
+
+The second case is expected to be fixed soon.
+
+#### read_all
+
+This command reads all datapoints and metadata from a single series. The series name must be a complete name; it cannot be a pattern.
+
+This command does not respect buffered writes; if there are uncommitted changes to a series, they will not be returned. This command is mainly for internal use during the verification and repair procedure.
+
+#### write
+
+This command writes datapoints to one or more series. Patterns cannot be given for the series names.
+
+If the series doesn't exist but its name matches an autocreate rule in the server's configuration, it will be created and the data will be written to the newly-created seties.
+
+If write buffering is used and skip_buffering is false (the default), this command returns before the changes are committed to disk.
+
+#### find
+
+This command searches for series and directories matching the given patterns. In the returned list, items that end with `.*` are subdirectories; all others are individual series.
+
+Entire directories can be enumerated recursively by specifying a pattern ending in `.**` (this is a special case and does not work in other places or other commands). For example, `find(test.dir1.**)` returns all series that exist in `test.dir1` and all of its subdirectories.
+
+#### stats
+
+This command returns current server statistics.
 
 ## Protocol descriptions
 
@@ -92,17 +146,7 @@ The HTTP server provides the following endpoints:
 
 Use TFramedTransport with this service. Most of these functions take a `local_only` argument, which is used internally by Cyclone and should be `false` when called by an external client.
 
-The Thrift server provides the following functions:
-
-- `update_metadata`: Creates series or modifies the storage format of existing series. If write buffering is used and skip_buffering is false (the default), this call returns before the changes are committed to disk.
-- `delete_series`: Deletes one or more series, as well as all buffered writes in memory for those series. Patterns may be given here; all series that match the pattern will be deleted. Entire directory trees can also be deleted by providing a pattern ending in `.**` (this is a special case and does not work in other places or other commands). This call does not return until the changes are committed to disk, even if write buffering is used.
-- `read`: Reads datapoints from one or more series. Patterns may be given here.
-- `read_all`: Reads all datapoints and metadata from a series. Patterns may not be given here. This call does not respect buffered writes; if there are uncommitted changes to a series, they will not be returned. This is mainly for internal use during the verification and repair procedure.
-- `write`: Writes datapoints to one or more series. Patterns may not be given here. If write buffering is used and skip_buffering is false (the default), this call returns before the changes are committed to disk.
-- `find`: Searches for series and directories matching the given patterns. In the returned list, items that end with `.*` are subdirectories; all others are individual series.
-- `stats`: Returns current server stats.
-
-See cyclone_if.thrift for complete descriptions of the parameters and return values for these functions.
+The Thrift server provides functions for all of the commands listed in the Commands section. See cyclone_if.thrift for complete descriptions of the parameters and return values for these functions.
 
 ## Graphite interoperability
 
@@ -117,9 +161,9 @@ Adding a new node to an existing cluster can be done as follows:
 - Restart Cyclone on all nodes and start it on the new node.
 - Run `verify start repair` in a Cyclone shell (`telnet localhost $SHELL_PORT`) on all nodes in the cluster.
 
-The verify procedure runs in the background. It examines all keys and moves any that are on the wrong nodes to the correct nodes. During the verify procedure, all writes will go to the correct nodes (even if the existing data hasn't been moved yet) and all reads will go to all nodes to account for the incomplete migration. If the verification procedure finishes at different times on different nodes, some nodes might stop reading from all other nodes before all keys have been moved. To correct for this, use `read-from-all on` in a Cyclone shell to force the node to read from all nodes even if no verify procedure is running.
+The verification procedure runs in the background. It examines all keys and moves any that are on the wrong nodes to the correct nodes. During the verify procedure, all writes will go to the correct nodes (even if the existing data hasn't been moved yet) and all reads will go to all nodes to account for the incomplete migration. If the verification procedure finishes at different times on different nodes, some nodes might stop reading from all other nodes before all keys have been moved. To correct for this, use `read-from-all on` in a Cyclone shell to force the node to read from all nodes even if no verify procedure is running.
 
-The verification procedure exports data from the series which are on incorrect nodes, and writes the data over any existing data that exists on the correct node. For example, if a series is autocreated and exists on both nodes (with old data on node1 and new data on node2), then after the migration, there will be a single data file on node2 containing all the data from both files. If datapoints with the same timestamp on each node, the datapoint from node1 will be used. If the key schemas are different, the schema existing on node2 will be used.
+The verification procedure exports data from the series which are on incorrect nodes, and writes the data over any existing data that exists on the correct node. For example, if a series is autocreated and exists on both nodes (with old data on node1 and new data on node2), then after the migration, there will be a single data file on node2 containing all the data from both files. If datapoints with the same timestamp exist on each node, the datapoint from node1 will be used. If the schemas are different, the schema existing on node2 will be used.
 
 To monitor the verify procedure, run `verify status` in a Cyclone shell to get the instantaneous status, or look at the `cyclone.<hostname>.verify_*` keys for the historical status.
 
@@ -128,6 +172,8 @@ To monitor the verify procedure, run `verify status` in a Cyclone shell to get t
 There's a lot to do here.
 
 - Add a `flush_series` call to the Thrift interface to support blocking on buffered writes.
+- Make write buffer merging work with in-progress writes.
+- Make write buffer merging work with find patterns.
 - Support new storage formats.
 - Build out query execution functionality.
 - Support rendering graphs as images (perhaps even as SVGs).
