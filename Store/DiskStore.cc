@@ -332,14 +332,25 @@ void DiskStore::find_recursive(vector<string>& ret,
     return; // nothing matches an empty pattern
   }
 
+  bool is_find_all_recursive = (this_part == "**");
+  if (this_part == "**") {
+    if (part_index != pattern_parts.size() - 1) {
+      throw invalid_argument("indeterminate pattern (**) may only appear at the end");
+    }
+  }
+
   for (auto filename : list_directory(current_path_prefix)) {
     string full_path = current_path_prefix + filename;
     if (isdir(full_path)) {
       if (!name_matches_pattern(filename, this_part)) {
         continue;
       }
+
+      // if we're processing a ** token at the end of the pattern, use the same
+      // part_index so deeper levels will also see the **
       this->find_recursive(ret, full_path + "/",
-          current_key_prefix + filename + ".", part_index + 1, pattern_parts);
+          current_key_prefix + filename + ".",
+          part_index + !is_find_all_recursive, pattern_parts);
 
     } else {
       if (part_index != pattern_parts.size() - 1) {
@@ -364,10 +375,6 @@ unordered_map<string, FindResult> DiskStore::find(
   unordered_map<string, FindResult> ret;
   for (const auto& pattern : patterns) {
     FindResult& r = ret[pattern];
-    if (this->pattern_is_indeterminate(pattern)) {
-      r.error = "pattern is indeterminate";
-      continue;
-    }
     try {
       vector<string> pattern_parts = split(pattern, '.');
       this->find_recursive(r.results, this->directory + "/", "", 0, pattern_parts);

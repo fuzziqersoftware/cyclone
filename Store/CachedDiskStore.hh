@@ -117,6 +117,8 @@ protected:
   void populate_cache_level(CachedDirectoryContents* level,
       const std::string& filesystem_path);
 
+  void find_all_recursive(FindResult& r, CachedDirectoryContents* level,
+      const std::string& level_path);
 
   // object representing a path down the cache tree
   struct CacheTraversal {

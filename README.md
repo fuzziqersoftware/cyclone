@@ -127,10 +127,8 @@ To monitor the verify procedure, run `verify status` in a Cyclone shell to get t
 
 There's a lot to do here.
 
-- Build a way to automatically reshard data across the cluster.
 - Add a `flush_series` call to the Thrift interface to support blocking on buffered writes.
 - Support new storage formats.
 - Build out query execution functionality.
 - Support rendering graphs as images (perhaps even as SVGs).
-- Separate read-all mode from verify progress so it can be enabled and disabled across the entire cluster (since some nodes may finish verification before others).
 - Fix the graceful shutdown procedure. Currently the servers shut down before the store is (synchronously) flushed, which doesn't work if there are pending writes to remote stores in a cluster configuration.

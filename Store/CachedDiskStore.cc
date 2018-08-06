@@ -606,6 +606,24 @@ static string path_join(const string& a, const string& b) {
   return a.empty() ? b : (a + "." + b);
 }
 
+void CachedDiskStore::find_all_recursive(FindResult& r,
+    CachedDirectoryContents* level, const string& level_path) {
+  {
+    rw_guard g(level->subdirectories_lock, false);
+    for (const auto& it : level->subdirectories) {
+      this->find_all_recursive(r, it.second.get(),
+          path_join(level_path, it.first));
+    }
+  }
+
+  {
+    rw_guard g(level->files_lock, false);
+    for (const auto& it : level->files) {
+      r.results.emplace_back(path_join(level_path, it.first));
+    }
+  }
+}
+
 unordered_map<string, FindResult> CachedDiskStore::find(
     const vector<string>& patterns, bool local_only) {
 
@@ -618,11 +636,6 @@ unordered_map<string, FindResult> CachedDiskStore::find(
     }
     FindResult& r = emplace_ret.first->second;
 
-    if (this->pattern_is_indeterminate(pattern)) {
-      r.error = "pattern is indeterminate";
-      continue;
-    }
-
     try {
       KeyPath p(pattern);
 
@@ -631,6 +644,10 @@ unordered_map<string, FindResult> CachedDiskStore::find(
       vector<rw_guard> guards;
 
       for (const auto& item : p.directories) {
+        if (item == "**") {
+          throw invalid_argument("indeterminate pattern (**) may only appear at the end");
+        }
+
         for (auto& level_it : current_levels) {
           CachedDirectoryContents* level = level_it.first;
           const auto& current_level_path = level_it.second;
@@ -711,6 +728,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
       // at this point current_levels is the set of directories that (should)
       // contain the files we're looking for; scan through their directories and
       // files to find key names to return
+      bool basename_is_find_all = (p.basename == "**");
       for (auto& it : current_levels) {
         CachedDirectoryContents* level = it.first;
         const string& level_path = it.second;
@@ -718,24 +736,29 @@ unordered_map<string, FindResult> CachedDiskStore::find(
         if (this->token_is_pattern(p.basename)) {
           this->populate_cache_level(level, this->filename_for_key(level_path, false));
 
-          {
-            rw_guard g(level->subdirectories_lock, false);
-            for (const auto& it : level->subdirectories) {
-              if (this->name_matches_pattern(it.first, p.basename)) {
-                {
-                  lock_guard<mutex> g2(level->subdirectories_lru_lock);
-                  level->subdirectories_lru.touch(it.first);
+          if (basename_is_find_all) {
+            this->find_all_recursive(r, level, level_path);
+
+          } else {
+            {
+              rw_guard g(level->subdirectories_lock, false);
+              for (const auto& it : level->subdirectories) {
+                if (this->name_matches_pattern(it.first, p.basename)) {
+                  {
+                    lock_guard<mutex> g2(level->subdirectories_lru_lock);
+                    level->subdirectories_lru.touch(it.first);
+                  }
+                  r.results.emplace_back(path_join(level_path, it.first) + ".*");
                 }
-                r.results.emplace_back(path_join(level_path, it.first) + ".*");
               }
             }
-          }
 
-          {
-            rw_guard g(level->files_lock, false);
-            for (const auto& it : level->files) {
-              if (this->name_matches_pattern(it.first, p.basename)) {
-                r.results.emplace_back(path_join(level_path, it.first));
+            {
+              rw_guard g(level->files_lock, false);
+              for (const auto& it : level->files) {
+                if (this->name_matches_pattern(it.first, p.basename)) {
+                  r.results.emplace_back(path_join(level_path, it.first));
+                }
               }
             }
           }

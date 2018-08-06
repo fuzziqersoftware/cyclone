@@ -165,6 +165,14 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect(ret.at(pattern1).results.empty());
   }
 
+  {
+    printf("-- [%s:basic_test] find all with no results\n", store_name.c_str());
+    auto ret = s->find({pattern5}, false);
+    expect_eq(1, ret.size());
+    expect(ret.at(pattern5).error.empty());
+    expect(ret.at(pattern5).results.empty());
+  }
+
   SeriesMetadataMap metadata_map;
   auto& metadata = metadata_map[key_name1];
   metadata.archive_args.emplace_back();
@@ -337,7 +345,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.size());
     expect(ret.at(pattern4).error.empty());
     expect_eq(1, ret.at(pattern4).results.size());
-    expect_eq("test.DiskStore.key1", ret.at(pattern4).results[0]);
+    expect_eq(key_name1, ret.at(pattern4).results[0]);
   }
 
   {
@@ -346,6 +354,15 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.size());
     expect(ret.at(pattern3).error.empty());
     expect(ret.at(pattern3).results.empty());
+  }
+
+  {
+    printf("-- [%s:basic_test] find all\n", store_name.c_str());
+    auto ret = s->find({pattern5}, false);
+    expect_eq(1, ret.size());
+    expect(ret.at(pattern5).error.empty());
+    expect_eq(1, ret.at(pattern5).results.size());
+    expect_eq(key_name1, ret.at(pattern5).results[0]);
   }
 
   {
@@ -378,6 +395,18 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect(result4.error.empty());
     expect_eq(1, result4.results.size());
     expect_eq(key_name1, result4.results[0]);
+  }
+
+  {
+    printf("-- [%s:basic_test] find all\n", store_name.c_str());
+    auto ret = s->find({pattern5}, false);
+    expect_eq(1, ret.size());
+    expect(ret.at(pattern5).error.empty());
+    auto& results = ret.at(pattern5).results;
+    sort(results.begin(), results.end());
+    expect_eq(2, results.size());
+    expect_eq(key_name1, results[0]);
+    expect_eq(key_name2, results[1]);
   }
 
   {
@@ -435,6 +464,19 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(8760, ret.metadata.archive_args[1].points);
     expect_eq(1, ret.data.size());
     expect_eq(2, ret.data[0].value);
+  }
+
+  {
+    printf("-- [%s:basic_test] find all\n", store_name.c_str());
+    auto ret = s->find({pattern5}, false);
+    expect_eq(1, ret.size());
+    expect(ret.at(pattern5).error.empty());
+    auto& results = ret.at(pattern5).results;
+    sort(results.begin(), results.end());
+    expect_eq(3, results.size());
+    expect_eq(key_name1, results[0]);
+    expect_eq(autocreate_key_name1, results[1]);
+    expect_eq(key_name2, results[2]);
   }
 
   {

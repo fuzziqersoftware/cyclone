@@ -13,14 +13,14 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <iostream>
 #include <phosg/Encoding.hh>
 #include <phosg/JSON.hh>
 #include <phosg/JSONPickle.hh>
 #include <phosg/Network.hh>
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
-
-#include <iostream>
 #include <thread>
 
 #include "../Store/Whisper.hh"
@@ -410,10 +410,11 @@ void StreamServer::execute_shell_command(const char* line_data,
 
     auto find_result = this->store->find(tokens, false);
     if (find_result.size() == 1) {
-      const auto& result = find_result.begin()->second;
+      auto& result = find_result.begin()->second;
       if (!result.error.empty()) {
         evbuffer_add_printf(out_buffer, "FAILED: %s\n", result.error.c_str());
       } else {
+        sort(result.results.begin(), result.results.end());
         for (const auto& item : result.results) {
           evbuffer_add(out_buffer, item.data(), item.size());
           evbuffer_add(out_buffer, "\n", 1);
@@ -421,11 +422,12 @@ void StreamServer::execute_shell_command(const char* line_data,
       }
 
     } else {
-      for (const auto& it : find_result) {
+      for (auto& it : find_result) {
         if (!it.second.error.empty()) {
           evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n", it.first.c_str(), it.second.error.c_str());
           continue;
         }
+        sort(it.second.results.begin(), it.second.results.end());
         for (const auto& item : it.second.results) {
           evbuffer_add_printf(out_buffer, "[%s] %s\n", it.first.c_str(), item.c_str());
         }
