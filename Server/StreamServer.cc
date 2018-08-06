@@ -312,18 +312,25 @@ Commands:\n\
     repair option is given, keys that exist in incorrect stores will be moved\n\
     to the correct store and combined with any existing data in that store.\n\
 \n\
+  verify cancel\n\
+    Cancel the running verify procedure.\n\
+\n\
   verify status\n\
-    Show the progress of all running verify procedures.\n\
+    Show the progress of the running verify procedure.\n\
 \n\
   read-from-all [on|off]\n\
-    Get or set the read-from-all state of the server.\n\
+    Get or set the read-from-all state of the server. This state determines\n\
+    whether reads from hash stores go to all substores or only the substore\n\
+    which is responsible for the key in question. The read-from-all state is\n\
+    automatically enabled during a verify+repair procedure, since it's likely\n\
+    that keys exist in the wrong substores is a verify+repair is running.\n\
 ");
 
 void StreamServer::execute_shell_command(const char* line_data,
     struct evbuffer* out_buffer) {
   auto tokens = split(line_data, ' ');
   if (tokens.size() == 0) {
-    throw runtime_error("command is empty");
+    throw runtime_error("command is empty; try \'help\'");
   }
 
   string command_name = move(tokens[0]);
