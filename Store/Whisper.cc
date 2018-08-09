@@ -306,6 +306,8 @@ WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time,
       // archive is blank
       // TODO: we should read from multiple archives in this case
       ReadResult ret;
+      ret.start_time = start_interval;
+      ret.end_time = end_interval;
       ret.step = archive.seconds_per_point;
       return ret;
     }

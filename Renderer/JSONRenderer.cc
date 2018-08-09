@@ -24,7 +24,9 @@ void JSONRenderer::render_data(
   int num_series = 0;
   for (const auto& it : results) {
     for (const auto& it2 : it.second) {
-      if (!it2.second.error.empty()) {
+      // if there was a read error or the series doesn't exist (step==0), don't
+      // render it
+      if (!it2.second.error.empty() || !it2.second.step) {
         continue;
       }
 

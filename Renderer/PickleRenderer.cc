@@ -32,6 +32,26 @@ void PickleRenderer::render_data(
 
   evbuffer_add(this->buf, "\x80\x02(", 3);
 
+  // figure out the overall start and end times. we need to fill in nulls in the
+  // returned series because graphite functions like divideSeries don't check
+  // the timestamps! they just divide the datapoints in order, which is wrong
+  uint32_t overall_start = 0, overall_end = 0;
+  for (const auto& it : data) { // (pattern, key_to_result)
+    const auto& key_to_result = it.second;
+
+    for (const auto& it2 : key_to_result) {
+      const auto& result = it2.second;
+
+      // the fields in result are i64s, we need to write u32s instead
+      if ((overall_start == 0) || (result.start_time < overall_start)) {
+        overall_start = result.start_time;
+      }
+      if ((overall_end == 0) || (result.end_time < overall_end)) {
+        overall_end = result.end_time;
+      }
+    }
+  }
+
   for (const auto& it : data) { // (pattern, key_to_result)
     const auto& pattern = it.first;
     const auto& key_to_result = it.second;
@@ -64,15 +84,12 @@ void PickleRenderer::render_data(
       evbuffer_add(this->buf, "U\x06values(", 9);
 
       size_t offset = 0;
-      for (int64_t ts = result.start_time; result.end_time && (ts <= result.end_time); ts += result.step) {
+      for (int64_t ts = overall_start; overall_end && (ts <= overall_end); ts += result.step) {
         while ((offset < result.data.size()) && (result.data[offset].timestamp < ts)) {
           offset++;
         }
-        if (offset >= result.data.size()) {
-          break;
-        }
 
-        if ((result.data[offset].timestamp != ts) || isnan(result.data[offset].value)) {
+        if ((offset >= result.data.size()) || (result.data[offset].timestamp != ts) || isnan(result.data[offset].value)) {
           evbuffer_add(this->buf, "N", 1); // None
         } else {
           uint64_t v = bswap64f(result.data[offset].value);
