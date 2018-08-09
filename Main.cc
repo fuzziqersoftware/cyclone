@@ -416,6 +416,9 @@ int main(int argc, char **argv) {
   signal(SIGTERM, signal_handler);
   signal(SIGUSR1, signal_handler);
 
+  log(INFO, "populating cache root");
+  opt.store->find({"*"}, true);
+
   vector<shared_ptr<Server>> servers;
   if (!opt.http_listen_addrs.empty()) {
     shared_ptr<HTTPServer> s(new CycloneHTTPServer(opt.store, opt.http_threads,
