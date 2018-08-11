@@ -67,6 +67,13 @@
   // evicting open files.
   "open_file_cache_size": 16384,
 
+  // Number of cache directory levels to prepopulate. At startup, Cyclone will
+  // run find queries starting at * for this many levels deep before starting
+  // any servers. This may be useful in a high-write environment, where writes
+  // can starve reads that need to populate the cache root (e.g. find(*)). If
+  // omitted, the default value is 0 (no prepopulation occurs).
+  "prepopulate_depth": 2,
+
   // Amount of information to write to stderr during operation. Larger numbers
   // mean less verbosity. The levels are as follows:
   // 0 - write everything, including debugging messages

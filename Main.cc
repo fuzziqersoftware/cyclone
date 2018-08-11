@@ -40,6 +40,7 @@ struct Options {
   uint64_t exit_check_usecs;
   uint64_t stats_report_usecs;
   size_t open_file_cache_size;
+  size_t prepopulate_depth;
   int log_level;
 
   shared_ptr<JSONObject> store_config;
@@ -61,6 +62,11 @@ struct Options {
       this->open_file_cache_size = (*json)["open_file_cache_size"]->as_int();
     } catch (const JSONObject::key_error& e) {
       this->open_file_cache_size = 1024;
+    }
+    try {
+      this->prepopulate_depth = (*json)["prepopulate_depth"]->as_int();
+    } catch (const JSONObject::key_error& e) {
+      this->prepopulate_depth = 0;
     }
     try {
       this->log_level = (*json)["log_level"]->as_int();
@@ -416,8 +422,32 @@ int main(int argc, char **argv) {
   signal(SIGTERM, signal_handler);
   signal(SIGUSR1, signal_handler);
 
-  log(INFO, "populating cache root");
-  opt.store->find({"*"}, true);
+  if (opt.prepopulate_depth) {
+    log(INFO, "populating cache directories to depth %zu", opt.prepopulate_depth);
+
+    deque<pair<string, size_t>> pending_patterns;
+    pending_patterns.emplace_back(make_pair("*", 0));
+    while (!pending_patterns.empty()) {
+
+      auto item = pending_patterns.front();
+      const string& pattern = item.first;
+      size_t level = item.second;
+      pending_patterns.pop_front();
+
+      log(INFO, "[prepopulate] find %s (level %zu)", pattern.c_str(), level);
+      auto find_result_map = opt.store->find({pattern}, true);
+      if (level >= opt.prepopulate_depth) {
+        continue;
+      }
+
+      auto& result = find_result_map.at(pattern);
+      for (const string& item : result.results) {
+        if (ends_with(item, ".*")) {
+          pending_patterns.emplace_back(make_pair(item, level + 1));
+        }
+      }
+    }
+  }
 
   vector<shared_ptr<Server>> servers;
   if (!opt.http_listen_addrs.empty()) {
