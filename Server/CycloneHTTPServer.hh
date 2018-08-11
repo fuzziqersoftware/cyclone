@@ -34,4 +34,7 @@ protected:
       struct evhttp_request* req, struct evbuffer* out_buffer);
   std::string handle_graphite_find_request(struct Thread& t,
       struct evhttp_request* req, struct evbuffer* out_buffer);
+
+  std::string handle_read_all_request(struct Thread& t,
+      struct evhttp_request* req, struct evbuffer* out_buffer);
 };

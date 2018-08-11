@@ -50,6 +50,8 @@ void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* 
       content_type = this->handle_stats_request(t, req, out_buffer.get());
     } else if (!strncmp(uri, "/y/config", 9)) {
       content_type = this->handle_config_request(t, req, out_buffer.get());
+    } else if (!strncmp(uri, "/y/read_all", 11)) {
+      content_type = this->handle_read_all_request(t, req, out_buffer.get());
     // } else if (!strcmp(uri, "/create")) {
     //   content_type = this->handle_create_request(t, req, out_buffer.get());
     // } else if (!strcmp(uri, "/delete")) {
@@ -239,4 +241,50 @@ string CycloneHTTPServer::handle_graphite_find_request(struct Thread& t,
   auto ret = this->store->find(queries, false);
   r->render_find_results(ret);
   return r->content_type();
+}
+
+string CycloneHTTPServer::handle_read_all_request(struct Thread& t,
+    struct evhttp_request* req, struct evbuffer* out_buffer) {
+
+  const struct evhttp_uri* uri = evhttp_request_get_evhttp_uri(req);
+  const char* query_string = evhttp_uri_get_query(uri);
+  unordered_multimap<string, string> params;
+  if (query_string) {
+    params = this->parse_url_params(query_string);
+  }
+
+  string target;
+  for (auto it : params) {
+    if (it.first.compare("target") == 0) {
+      if (!target.empty()) {
+        throw http_error(400, "multiple targets given");
+      }
+      target = it.second;
+    } else {
+      throw http_error(400, string_printf("unknown argument: %s", it.first.c_str()));
+    }
+  }
+
+  auto result = this->store->read_all(target, false);
+
+  if (result.error.empty()) {
+    evbuffer_add(out_buffer, "[", 1);
+    size_t num_points = 0;
+    for (const auto& pt : result.data) {
+      if (isnan(pt.value)) {
+        continue;
+      }
+
+      if (num_points) {
+        evbuffer_add(out_buffer, ",", 1);
+      }
+      evbuffer_add_printf(out_buffer, "[%g,%" PRId64 "]", pt.value, pt.timestamp);
+      num_points++;
+    }
+    evbuffer_add(out_buffer, "]", 1);
+  } else {
+    evbuffer_add_printf(out_buffer, "\"error: %s\"", result.error.c_str());
+  }
+
+  return "application/json";
 }

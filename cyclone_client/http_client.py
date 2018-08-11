@@ -55,6 +55,15 @@ class CycloneHTTPClient(threading.local):
       return {d['pathExpression']: ReadResult(d['values']) for d in pickle.loads(raw_data)}
     assert False, 'unknown format: %s' % format
 
+  def read_all(self, key_name):
+    """Reads all datapoints from the given key."""
+    url = 'http://%s:%d/y/read_all?target=%s' % (self.host, self.port, key_name,)
+    raw_data = urllib.urlopen(url).read()
+    result = json.loads(raw_data)
+    if isinstance(result, list):
+      return result
+    assert False, result
+
   def find(self, patterns):
     """Searches for keys matching the given patterns.
 
