@@ -404,7 +404,7 @@ void WhisperArchive::write(const Series& data) {
   // procedure to work properly
   Series sorted_data = data;
   sort(sorted_data.begin(), sorted_data.end(), [](Datapoint a, Datapoint b) {
-    return a.timestamp < b.timestamp;
+    return a.timestamp > b.timestamp;
   });
 
   int64_t t = time(NULL);
