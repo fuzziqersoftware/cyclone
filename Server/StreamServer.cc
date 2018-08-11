@@ -345,8 +345,15 @@ void StreamServer::execute_shell_command(const char* line_data,
     }
 
     auto stats = this->store->get_stats();
+
+    vector<string> lines;
     for (const auto& it : stats) {
-      evbuffer_add_printf(out_buffer, "%s = %" PRId64 "\n", it.first.c_str(), it.second);
+      lines.emplace_back(string_printf("%s = %" PRId64 "\n", it.first.c_str(), it.second));
+    }
+    sort(lines.begin(), lines.end());
+
+    for (const auto& line : lines) {
+      evbuffer_add(out_buffer, line.data(), line.size());
     }
 
   } else if ((command_name == "update-metadata") || (command_name == "create")) {
