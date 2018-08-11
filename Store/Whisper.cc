@@ -420,10 +420,10 @@ void WhisperArchive::write(const Series& data) {
   uint32_t x;
   for (x = 0; (x < sorted_data.size()) && (archive_index < this->metadata->num_archives); x++) {
     int64_t pt_age = t - static_cast<int64_t>(sorted_data.at(x).timestamp);
+    int64_t retention = this->metadata->archives[archive_index].points * this->metadata->archives[archive_index].seconds_per_point;
 
     // while we can't fit any more points into the current archive, commit
-    while (archive_index < this->metadata->num_archives &&
-        (this->metadata->archives[archive_index].points * this->metadata->archives[archive_index].seconds_per_point) < pt_age) {
+    while ((archive_index < this->metadata->num_archives) && (retention < pt_age)) {
       if (next_commit_point != x) {
         this->write_archive_locked(lease.fd, archive_index, sorted_data, next_commit_point, x);
         next_commit_point = x;
@@ -576,7 +576,8 @@ void WhisperArchive::write_archive_locked(int fd, uint32_t archive_index,
 
   // write all the points to the archive first
   // TODO: don't call pwritex for every loop iteration; coalesce writes somehow
-  for (auto pt : data) {
+  for (size_t x = start_index; x < end_index; x++) {
+    const auto& pt = data[x];
     int64_t point_interval = pt.timestamp - (pt.timestamp % archive.seconds_per_point);
     int64_t time_distance = point_interval - archive_start_interval;
     int32_t point_distance = time_distance / archive.seconds_per_point;
