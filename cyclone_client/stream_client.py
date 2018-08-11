@@ -15,6 +15,11 @@ class CycloneLineClient(object):
   def __init__(self, host, port):
     self.host = host
     self.port = port
+    self.socket = None
+
+  def __del__(self):
+    if self.socket is not None:
+      self.socket.close()
 
   def write(self, key_to_datapoints):
     """Sends datapoints to Cyclone (or Graphite).
@@ -22,13 +27,11 @@ class CycloneLineClient(object):
     key_to_datapoints is a dict of {key_name: [(timestamp, value), ...]}.
 
     """
-    s = socket.create_connection((self.host, self.port))
-    try:
-      for key_name, datapoints in key_to_datapoints.iteritems():
-        for timestamp, value in datapoints:
-          s.sendall('%s %f %d\n' % (key_name, value, timestamp))
-    finally:
-      s.close()
+    if self.socket is None:
+      self.socket = socket.create_connection((self.host, self.port))
+    for key_name, datapoints in key_to_datapoints.iteritems():
+      for timestamp, value in datapoints:
+        self.socket.sendall('%s %f %d\n' % (key_name, value, timestamp))
 
 
 class CyclonePickleClient(object):
