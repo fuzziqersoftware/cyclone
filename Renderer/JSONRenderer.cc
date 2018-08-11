@@ -36,7 +36,7 @@ void JSONRenderer::render_data(
       evbuffer_add_printf(this->buf, "{\"target\":\"%s\",\"datapoints\":[",
           it2.first.c_str());
 
-      int num_points = 0;
+      size_t num_points = 0;
       for (const auto& pt : it2.second.data) {
         if (isnan(pt.value)) {
           continue;

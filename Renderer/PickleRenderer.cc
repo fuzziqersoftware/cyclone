@@ -46,7 +46,7 @@ void PickleRenderer::render_data(
       if ((overall_start == 0) || (result.start_time < overall_start)) {
         overall_start = result.start_time;
       }
-      if ((overall_end == 0) || (result.end_time < overall_end)) {
+      if ((overall_end == 0) || (result.end_time > overall_end)) {
         overall_end = result.end_time;
       }
     }
