@@ -7,7 +7,7 @@ OBJECTS=$(STORE_OBJECTS) $(RENDERER_OBJECTS) $(THRIFT_OBJECTS) $(SERVER_OBJECTS)
 THRIFT=/usr/local/bin/thrift
 CXX=g++
 CXXFLAGS=-I/opt/local/include -I/usr/local/include -std=c++14 -g -DHAVE_INTTYPES_H -DHAVE_NETINET_IN_H -Wall
-LDFLAGS=-L/opt/local/lib -L/usr/local/lib -std=c++14 -levent -lthrift -lthriftnb -lphosg -lpthread -lz
+LDFLAGS=-L/opt/local/lib -L/usr/local/lib -std=c++14 -levent -lthrift -lthriftnb -lphosg -lpthread
 EXECUTABLE=cyclone
 
 all: $(EXECUTABLE) test
