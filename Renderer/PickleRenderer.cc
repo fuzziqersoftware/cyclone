@@ -34,20 +34,31 @@ void PickleRenderer::render_data(
 
   // figure out the overall start and end times. we need to fill in nulls in the
   // returned series because graphite functions like divideSeries don't check
-  // the timestamps! they just divide the datapoints in order, which is wrong
-  uint32_t overall_start = 0, overall_end = 0;
+  // the timestamps! they just divide the datapoints in order, which is wrong.
+  // but rendering doesn't work (and things will break anyway) if you do this
+  // with series with different step values (because we could overshoot the
+  // timestamps in the lower-resolution series), so find start/end pairs for
+  // each unique step value instead of overall
+  unordered_map<uint32_t, pair<uint32_t, uint32_t>> step_to_start_end;
   for (const auto& it : data) { // (pattern, key_to_result)
     const auto& key_to_result = it.second;
 
     for (const auto& it2 : key_to_result) {
       const auto& result = it2.second;
 
-      // the fields in result are i64s, we need to write u32s instead
-      if ((overall_start == 0) || (result.start_time < overall_start)) {
-        overall_start = result.start_time;
+      auto emplace_ret = step_to_start_end.emplace(result.step, make_pair(
+          result.start_time, result.end_time));
+      if (emplace_ret.second) {
+        continue; // no other series had this step yet
       }
-      if ((overall_end == 0) || (result.end_time > overall_end)) {
-        overall_end = result.end_time;
+
+      // some other series had this step. apply min/max appropriately
+      pair<uint32_t, uint32_t>& start_end = emplace_ret.first->second;
+      if (result.start_time < start_end.first) {
+        start_end.first = result.start_time;
+      }
+      if (result.end_time > start_end.second) {
+        start_end.second = result.end_time;
       }
     }
   }
@@ -67,24 +78,23 @@ void PickleRenderer::render_data(
       }
 
       // the fields in result are i64s, we need to write u32s instead
-      uint32_t start = result.start_time;
-      uint32_t end = result.end_time;
       uint32_t step = result.step;
+      const auto& start_end = step_to_start_end.at(step);
 
       evbuffer_add(this->buf, "(U\x0EpathExpression", 17);
       write_pickle_string(this->buf, pattern);
       evbuffer_add(this->buf, "U\x04name", 6);
       write_pickle_string(this->buf, key);
       evbuffer_add(this->buf, "U\x05startJ", 8);
-      evbuffer_add(this->buf, &start, sizeof(start));
+      evbuffer_add(this->buf, &start_end.first, sizeof(start_end.first));
       evbuffer_add(this->buf, "U\x03\x65ndJ", 6);
-      evbuffer_add(this->buf, &end, sizeof(end));
+      evbuffer_add(this->buf, &start_end.second, sizeof(start_end.second));
       evbuffer_add(this->buf, "U\x04stepJ", 7);
       evbuffer_add(this->buf, &step, sizeof(step));
       evbuffer_add(this->buf, "U\x06values(", 9);
 
       size_t offset = 0;
-      for (int64_t ts = overall_start; overall_end && (ts <= overall_end); ts += result.step) {
+      for (int64_t ts = start_end.first; ts <= start_end.second; ts += result.step) {
         while ((offset < result.data.size()) && (result.data[offset].timestamp < ts)) {
           offset++;
         }
