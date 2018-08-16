@@ -612,8 +612,6 @@ int main(int argc, char **argv) {
         series.back().timestamp = n;
         series.back().value = stat.second;
       }
-      string key = string_printf("cyclone.%s.open_file_cache_size",
-          hostname.c_str(), WhisperArchive::get_files_lru_size());
 
       try {
         opt.store->write(data_to_write, false, false);

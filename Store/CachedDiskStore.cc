@@ -832,6 +832,7 @@ unordered_map<string, int64_t> CachedDiskStore::get_stats(bool rotate) {
   ret.emplace("cache_file_count", this->file_count.load());
   ret.emplace("cache_directory_limit", this->directory_limit.load());
   ret.emplace("cache_file_limit", this->file_limit.load());
+  ret.emplace("open_file_cache_size", WhisperArchive::get_files_lru_size());
   return ret;
 }
 

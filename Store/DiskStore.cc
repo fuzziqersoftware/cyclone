@@ -398,7 +398,9 @@ unordered_map<string, int64_t> DiskStore::get_stats(bool rotate) {
     this->stats[1].duration = n - this->stats[1].start_time;
   }
 
-  return current_stats.to_map();
+  auto ret = current_stats.to_map();
+  ret.emplace("open_file_cache_size", WhisperArchive::get_files_lru_size());
+  return ret;
 }
 
 string DiskStore::str() const {
