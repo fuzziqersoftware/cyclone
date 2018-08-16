@@ -182,6 +182,9 @@
   //   "store_type": "write_buffer",
   //   "num_write_threads": 4,
   //   "batch_size": 1000, // number of series to write in a single write() call
+  //   "max_update_metadatas_per_second": 0, // 0 means no rate limit
+  //   "max_write_batches_per_second": 0, // 0 means no rate limit
+  //   "disable_rate_limit_for_queue_length": 1000000,
   //   "substore": {...}, // config for the wrapped store
   // }
   //
@@ -220,33 +223,29 @@
   // configuration on node2 may look something like this:
   // {
   //   "type": "write_buffer",
-  //   "num_write_threads": 4,
-  //   "batch_size": 100,
+  //   ... (other write_buffer config options)
   //   "substore": {
   //     "type": "hash",
-  //     "precision": -100,
+  //     ...
   //     "stores": {
   //       "node1": {
   //         "type": "remote",
   //         "hostname": "node1",
-  //         "connection_limit": 8,
-  //         "port": 2000,
+  //         ...
   //       },
   //       "node2": {
   //         "type": "cached_disk",
-  //         "directory": "/cyclone-data",
+  //         ...
   //       },
   //       "node3": {
   //         "type": "remote",
   //         "hostname": "node3",
-  //         "connection_limit": 8,
-  //         "port": 2000,
+  //         ...
   //       },
   //       "node4": {
   //         "type": "remote",
   //         "hostname": "node4",
-  //         "connection_limit": 8,
-  //         "port": 2000,
+  //         ...
   //       },
   //     },
   //   },
@@ -261,6 +260,9 @@
       "type": "write_buffer",
       "num_write_threads": 4,
       "batch_size": 100,
+      "max_update_metadatas_per_second": 100,
+      "max_write_batches_per_second": 100,
+      "disable_rate_limit_for_queue_length": 1000000,
       "substore": {
         "type": "cached_disk",
         "directory_limit": 10000,

@@ -20,8 +20,15 @@ using namespace std;
 
 
 WriteBufferStore::WriteBufferStore(shared_ptr<Store> store,
-    size_t num_write_threads, size_t batch_size) : Store(), store(store),
+    size_t num_write_threads, size_t batch_size,
+    size_t max_update_metadatas_per_second, size_t max_write_batches_per_second,
+    ssize_t disable_rate_limit_for_queue_length) : Store(), store(store),
+    max_update_metadatas_per_second(max_update_metadatas_per_second),
+    max_write_batches_per_second(max_write_batches_per_second),
+    disable_rate_limit_for_queue_length(disable_rate_limit_for_queue_length),
     queued_update_metadatas(0), queued_writes(0), queued_datapoints(0),
+    update_metadata_rate_limiter(this->max_update_metadatas_per_second),
+    write_batch_rate_limiter(this->max_write_batches_per_second),
     batch_size(batch_size), should_exit(false) {
   while (this->write_threads.size() < num_write_threads) {
     this->write_threads.emplace_back(&WriteBufferStore::write_thread_routine, this);
@@ -42,6 +49,32 @@ size_t WriteBufferStore::get_batch_size() const {
 void WriteBufferStore::set_batch_size(size_t new_value) {
   this->batch_size = new_value;
 }
+
+size_t WriteBufferStore::get_max_update_metadatas_per_second() const {
+  return this->max_update_metadatas_per_second;
+}
+
+void WriteBufferStore::set_max_update_metadatas_per_second(size_t new_value) {
+  this->max_update_metadatas_per_second = new_value;
+}
+
+size_t WriteBufferStore::get_max_write_batches_per_second() const {
+  return this->max_write_batches_per_second;
+}
+
+void WriteBufferStore::set_max_write_batches_per_second(size_t new_value) {
+  this->max_write_batches_per_second = new_value;
+}
+
+ssize_t WriteBufferStore::get_disable_rate_limit_for_queue_length() const {
+  return this->disable_rate_limit_for_queue_length;
+}
+
+void WriteBufferStore::set_disable_rate_limit_for_queue_length(ssize_t new_value) {
+  this->disable_rate_limit_for_queue_length = new_value;
+}
+
+
 
 shared_ptr<Store> WriteBufferStore::get_substore() const {
   return this->store;
@@ -486,7 +519,9 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
   ret.emplace("queue_writes", this->queued_writes);
   ret.emplace("queue_datapoints", this->queued_datapoints);
   ret.emplace("queue_batch_size", this->batch_size);
-
+  ret.emplace("max_update_metadatas_per_second", this->max_update_metadatas_per_second);
+  ret.emplace("max_write_batches_per_second", this->max_write_batches_per_second);
+  ret.emplace("disable_rate_limit_for_queue_length", this->disable_rate_limit_for_queue_length);
   return ret;
 }
 
@@ -564,15 +599,24 @@ WriteBufferStore::QueueItem::QueueItem(const Series& data) {
 }
 
 
+
 void WriteBufferStore::write_thread_routine() {
   string queue_position;
 
   while (!this->should_exit) {
+    bool enable_rate_limits = true;
 
     // pick out a batch of creates from the create queue
     map<string, QueueItem> commands;
     {
       rw_guard g(this->queue_lock, true);
+
+      ssize_t disable_rate_limit_threshold = this->disable_rate_limit_for_queue_length;
+      if ((disable_rate_limit_threshold >= 0) &&
+          (this->queue.size() >= static_cast<size_t>(disable_rate_limit_threshold))) {
+        enable_rate_limits = false;
+      }
+
       auto it = this->queue.lower_bound(queue_position);
       while (it != this->queue.end() && commands.size() < this->batch_size) {
         commands.emplace(it->first, move(it->second));
@@ -594,6 +638,13 @@ void WriteBufferStore::write_thread_routine() {
 
       // if archive_args isn't empty, there was a create request
       if (!command.metadata.archive_args.empty()) {
+        if (enable_rate_limits && this->max_update_metadatas_per_second) {
+          uint64_t delay = this->update_metadata_rate_limiter.delay_until_next_action();
+          if (delay) {
+            usleep(delay);
+          }
+        }
+
         try {
           this->store->update_metadata({{key_name, command.metadata}},
               command.create_new, command.update_behavior, false, false);
@@ -620,6 +671,13 @@ void WriteBufferStore::write_thread_routine() {
     }
 
     if (!write_batch.empty()) {
+      if (enable_rate_limits && this->max_write_batches_per_second) {
+        uint64_t delay = this->write_batch_rate_limiter.delay_until_next_action();
+        if (delay) {
+          usleep(delay);
+        }
+      }
+
       try {
         this->store->write(write_batch, false, false);
         this->queued_datapoints -= write_batch_datapoints;

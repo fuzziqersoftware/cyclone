@@ -603,7 +603,7 @@ int main(int argc, char* argv[]) {
     // TODO: test more complex MultiStores
 
     recreate_directory(data_directory);
-    shared_ptr<Store> buffer_on_disk_store(new WriteBufferStore(disk_store, 0, 0));
+    shared_ptr<Store> buffer_on_disk_store(new WriteBufferStore(disk_store, 0, 0, 0, 0, 0));
     run_basic_test(buffer_on_disk_store, "WriteBufferStore(DiskStore)", data_directory, true);
 
     // note: order is important here. the buffer_on_disk_store test will fail if
@@ -620,7 +620,7 @@ int main(int argc, char* argv[]) {
     recreate_directory(data_directory);
     cached_disk_store.reset(new CachedDiskStore(data_directory, 100, 100));
     cached_disk_store->set_autocreate_rules(autocreate_rules);
-    shared_ptr<Store> buffer_on_cached_disk_store(new WriteBufferStore(cached_disk_store, 0, 0));
+    shared_ptr<Store> buffer_on_cached_disk_store(new WriteBufferStore(cached_disk_store, 0, 0, 0, 0, 0));
     run_basic_test(buffer_on_cached_disk_store, "WriteBufferStore(CachedDiskStore)", data_directory, true);
 
     // TODO: test RemoteStore, EmptyStore

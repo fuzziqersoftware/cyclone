@@ -196,9 +196,14 @@ struct Options {
     if (!type.compare("write_buffer")) {
       size_t num_write_threads = (*store_config)["num_write_threads"]->as_int();
       size_t batch_size = (*store_config)["batch_size"]->as_int();
+      size_t max_update_metadatas_per_second = (*store_config)["max_update_metadatas_per_second"]->as_int();
+      size_t max_write_batches_per_second = (*store_config)["max_write_batches_per_second"]->as_int();
+      size_t disable_rate_limit_for_queue_length = (*store_config)["disable_rate_limit_for_queue_length"]->as_int();
       auto parse_ret = this->parse_store_config((*store_config)["substore"]);
       return make_pair(
-          shared_ptr<Store>(new WriteBufferStore(parse_ret.first, num_write_threads, batch_size)),
+          shared_ptr<Store>(new WriteBufferStore(parse_ret.first,
+            num_write_threads, batch_size, max_update_metadatas_per_second,
+            max_write_batches_per_second, disable_rate_limit_for_queue_length)),
           parse_ret.second);
     }
 
@@ -299,11 +304,40 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
     } else if (new_type == "write_buffer") {
       WriteBufferStore* wb = reinterpret_cast<WriteBufferStore*>(base.get());
 
-      size_t new_batch_size = (*new_store_config)["batch_size"]->as_int();
-      if (new_batch_size != wb->get_batch_size()) {
-        log(INFO, "%s.write_buffer.batch_size changed from %zu to %zu",
-            prefix.c_str(), wb->get_batch_size(), new_batch_size);
-        wb->set_batch_size(new_batch_size);
+      {
+        size_t new_batch_size = (*new_store_config)["batch_size"]->as_int();
+        if (new_batch_size != wb->get_batch_size()) {
+          log(INFO, "%s.write_buffer.batch_size changed from %zu to %zu",
+              prefix.c_str(), wb->get_batch_size(), new_batch_size);
+          wb->set_batch_size(new_batch_size);
+        }
+      }
+
+      {
+        size_t new_value = (*new_store_config)["max_update_metadatas_per_second"]->as_int();
+        if (new_value != wb->get_max_update_metadatas_per_second()) {
+          log(INFO, "%s.write_buffer.max_update_metadatas_per_second changed from %zu to %zu",
+              prefix.c_str(), wb->get_max_update_metadatas_per_second(), new_value);
+          wb->set_max_update_metadatas_per_second(new_value);
+        }
+      }
+
+      {
+        size_t new_value = (*new_store_config)["max_write_batches_per_second"]->as_int();
+        if (new_value != wb->get_max_write_batches_per_second()) {
+          log(INFO, "%s.write_buffer.max_write_batches_per_second changed from %zu to %zu",
+              prefix.c_str(), wb->get_max_write_batches_per_second(), new_value);
+          wb->set_max_write_batches_per_second(new_value);
+        }
+      }
+
+      {
+        ssize_t new_value = (*new_store_config)["disable_rate_limit_for_queue_length"]->as_int();
+        if (new_value != wb->get_disable_rate_limit_for_queue_length()) {
+          log(INFO, "%s.write_buffer.disable_rate_limit_for_queue_length changed from %zd to %zd",
+              prefix.c_str(), wb->get_disable_rate_limit_for_queue_length(), new_value);
+          wb->set_disable_rate_limit_for_queue_length(new_value);
+        }
       }
 
       auto orig_substore_config = (*orig_store_config)["substore"];

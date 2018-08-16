@@ -9,6 +9,7 @@
 #include <phosg/Concurrency.hh>
 
 #include "Store.hh"
+#include "RateLimiter.hh"
 
 
 class WriteBufferStore : public Store {
@@ -16,12 +17,21 @@ public:
   WriteBufferStore() = delete;
   WriteBufferStore(const WriteBufferStore& rhs) = delete;
   WriteBufferStore(std::shared_ptr<Store> store, size_t num_write_threads,
-      size_t batch_size);
+      size_t batch_size, size_t max_update_metadatas_per_second,
+      size_t max_write_batches_per_second,
+      ssize_t disable_rate_limit_for_queue_length);
   virtual ~WriteBufferStore();
   const WriteBufferStore& operator=(const WriteBufferStore& rhs) = delete;
 
   size_t get_batch_size() const;
   void set_batch_size(size_t new_value);
+
+  size_t get_max_update_metadatas_per_second() const;
+  void set_max_update_metadatas_per_second(size_t new_value);
+  size_t get_max_write_batches_per_second() const;
+  void set_max_write_batches_per_second(size_t new_value);
+  ssize_t get_disable_rate_limit_for_queue_length() const;
+  void set_disable_rate_limit_for_queue_length(ssize_t new_value);
 
   std::shared_ptr<Store> get_substore() const;
 
@@ -58,6 +68,9 @@ public:
 
 private:
   std::shared_ptr<Store> store;
+  std::atomic<size_t> max_update_metadatas_per_second;
+  std::atomic<size_t> max_write_batches_per_second;
+  std::atomic<ssize_t> disable_rate_limit_for_queue_length;
 
   struct QueueItem {
     SeriesMetadata metadata;
@@ -83,6 +96,9 @@ private:
 
   static std::string get_directory_match_for_queue_item(
       const std::string& queue_item, const std::string& pattern);
+
+  RateLimiter update_metadata_rate_limiter;
+  RateLimiter write_batch_rate_limiter;
 
   // TODO: switch from multithreaded model to async i/o model here
   // (WhisperArchive needs to support async i/o first)
