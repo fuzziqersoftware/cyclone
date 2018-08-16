@@ -566,6 +566,10 @@ void WhisperArchive::write_archive_locked(int fd, uint32_t archive_index,
   const ArchiveMetadata& archive = this->metadata->archives[archive_index];
   int32_t archive_size = archive.points * sizeof(FilePoint);
 
+  if (archive.seconds_per_point == 0) {
+    throw runtime_error("invalid archive header");
+  }
+
   // get the base interval. if it's not set, pretend it's equal to the first
   // point's interval so we'll write at the beginning of the archive
   uint64_t archive_start_interval = this->get_base_interval_locked(fd, archive_index);
@@ -603,6 +607,11 @@ void WhisperArchive::write_archive_locked(int fd, uint32_t archive_index,
   for (uint32_t target_archive_index = archive_index + 1;
        target_archive_index < this->metadata->num_archives && continue_propagation;
        target_archive_index++) {
+
+    if (this->metadata->archives[target_archive_index].seconds_per_point == 0) {
+      throw runtime_error(string_printf(
+          "invalid archive header for archive %" PRIu32, target_archive_index));
+    }
 
     unordered_set<uint64_t> lower_intervals;
     for (const auto& pt : data) {
