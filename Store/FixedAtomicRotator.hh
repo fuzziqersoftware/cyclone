@@ -14,6 +14,7 @@ public:
   FixedAtomicRotator(FixedAtomicRotator&&) = delete;
   ~FixedAtomicRotator() = default;
   FixedAtomicRotator& operator=(const FixedAtomicRotator&) = delete;
+  FixedAtomicRotator& operator=(FixedAtomicRotator&&) = delete;
 
   T& operator[](size_t which);
   const T& operator[](size_t which) const;
