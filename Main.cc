@@ -460,7 +460,7 @@ int main(int argc, char **argv) {
     log(INFO, "populating cache directories to depth %zu", opt.prepopulate_depth);
 
     deque<pair<string, size_t>> pending_patterns;
-    pending_patterns.emplace_back(make_pair("*", 0));
+    pending_patterns.emplace_back(make_pair("*", 1));
     while (!pending_patterns.empty()) {
 
       auto item = pending_patterns.front();
