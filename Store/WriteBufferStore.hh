@@ -88,6 +88,7 @@ private:
         UpdateMetadataBehavior update_behavior);
   };
 
+  // TODO: add writes-in-progress so they can be merged with reads too
   std::atomic<size_t> queued_update_metadatas;
   std::atomic<size_t> queued_writes;
   std::atomic<size_t> queued_datapoints;
