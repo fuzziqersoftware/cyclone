@@ -7,7 +7,7 @@ Like most of my projects, this is only tested at a small scale (so far), so ther
 ## Building
 
 - Build and install phosg (https://github.com/fuzziqersoftware/phosg).
-- Install any version of libevent at or after 2.0 and any version of THrift at or after 0.10.0.
+- Install any version of libevent at or after 2.0 and any version of Thrift at or after 0.10.0.
 - Run `make`.
 
 If it doesn't work on your system, let me know. I've built and tested it on Mac OS X 10.13 and Ubuntu 16.04.
@@ -178,3 +178,4 @@ There's a lot to do here.
 - Build out query execution functionality.
 - Support rendering graphs as images (perhaps even as SVGs).
 - Fix the graceful shutdown procedure. Currently the servers shut down before the store is (synchronously) flushed, which doesn't work if there are pending writes to remote stores in a cluster configuration.
+- Make an easy way to remove nodes from a cluster. Probably this could be easily done by adding weights to the hash ring; a store with a weight of zero could exist but have no assigned keys, so verify would move them all to other nodes.

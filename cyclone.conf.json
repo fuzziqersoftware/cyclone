@@ -194,7 +194,10 @@
   // as Graphite expressions and the functions are executed. This store is
   // required if you want to be able to call read() and pass in functions, but
   // it is NOT required if you just want to pass in patterns or individual
-  // series names. Note that very few functions are currently implemented.
+  // series names. When using the Graphite web frontend in front of Cyclone,
+  // this store is not required - the frontend will only make pattern queries,
+  // and will not pass through function calls to Cyclone. Note that very few
+  // functions are currently implemented.
   // {
   //   "store_type": "query",
   //   "substore": {...}, // config for the wrapped store
@@ -215,38 +218,47 @@
   // }
   //
   // When using Cyclone in a clustered setup, usually a hash store should be
-  // used to distribute work among the cluster. Each node should have a write
-  // buffer store wrapping a hash store, which contains a substore for each
-  // node. The substore corresponding to the local host should be some kind of
-  // disk store, and the others should be remove stores. For example, in a
+  // used to distribute work among the cluster. The hash store contains a
+  // substore for each node in the cluster. The substore corresponding to the
+  // local host should be some kind of disk store, likely wrapped in a write
+  // buffer store, and the others should be remote stores. For example, in a
   // cluster consisting of node1, node2, node3, and node4, the store
   // configuration on node2 may look something like this:
   // {
-  //   "type": "write_buffer",
-  //   ... (other write_buffer config options)
-  //   "substore": {
-  //     "type": "hash",
-  //     ...
-  //     "stores": {
-  //       "node1": {
-  //         "type": "remote",
-  //         "hostname": "node1",
-  //         ...
-  //       },
-  //       "node2": {
+  //   "type": "hash",
+  //   "precision": -100,
+  //   "stores": {
+  //     "node1": {
+  //       "type": "remote",
+  //       "hostname": "node1",
+  //       "port": 2000,
+  //       "connection_limit": 32,
+  //     },
+  //     "node2": {
+  //       "type": "write_buffer",
+  //       "num_write_threads": 8,
+  //       "batch_size": 100,
+  //       "max_update_metadatas_per_second": 100,
+  //       "max_write_batches_per_second": 5,
+  //       "disable_rate_limit_for_queue_length": 1000000,
+  //       "substore": {
   //         "type": "cached_disk",
-  //         ...
+  //         "directory": "/cyclone-data",
+  //         "directory_limit": 15000000,
+  //         "file_limit": 30000000,
   //       },
-  //       "node3": {
-  //         "type": "remote",
-  //         "hostname": "node3",
-  //         ...
-  //       },
-  //       "node4": {
-  //         "type": "remote",
-  //         "hostname": "node4",
-  //         ...
-  //       },
+  //     },
+  //     "node3": {
+  //       "type": "remote",
+  //       "hostname": "node3",
+  //       "port": 2000,
+  //       "connection_limit": 32,
+  //     },
+  //     "node4": {
+  //       "type": "remote",
+  //       "hostname": "node4",
+  //       "port": 2000,
+  //       "connection_limit": 32,
   //     },
   //   },
   // }
@@ -255,20 +267,17 @@
   // write buffer store. This configuration is generally sufficient for a
   // standalone setup.
   "store_config": {
-    "type": "query",
+    "type": "write_buffer",
+    "num_write_threads": 4,
+    "batch_size": 100,
+    "max_update_metadatas_per_second": 100,
+    "max_write_batches_per_second": 100,
+    "disable_rate_limit_for_queue_length": 1000000,
     "substore": {
-      "type": "write_buffer",
-      "num_write_threads": 4,
-      "batch_size": 100,
-      "max_update_metadatas_per_second": 100,
-      "max_write_batches_per_second": 100,
-      "disable_rate_limit_for_queue_length": 1000000,
-      "substore": {
-        "type": "cached_disk",
-        "directory_limit": 10000,
-        "file_limit": 50000,
-        "directory": "./cyclone-data",
-      },
+      "type": "cached_disk",
+      "directory_limit": 10000,
+      "file_limit": 50000,
+      "directory": "./cyclone-data",
     },
   },
 
