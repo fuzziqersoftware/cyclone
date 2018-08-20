@@ -63,14 +63,14 @@ unordered_map<string, string> RemoteStore::update_metadata(
     return ret;
   }
 
-  auto c = this->get_client();
   try {
+    auto c = this->get_client();
     c->client->update_metadata(ret, metadata_map, create_new,
         (update_behavior == UpdateMetadataBehavior::Ignore),
         (update_behavior == UpdateMetadataBehavior::Recreate), skip_buffering,
         true);
     this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
+  } catch (const exception& e) {
     this->stats[0].server_disconnects++;
     for (const auto& it : metadata_map) {
       ret.emplace(it.first, e.what());
@@ -87,11 +87,11 @@ unordered_map<string, int64_t> RemoteStore::delete_series(
     return ret;
   }
 
-  auto c = this->get_client();
   try {
+    auto c = this->get_client();
     c->client->delete_series(ret, patterns, true);
     this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
+  } catch (const exception& e) {
     this->stats[0].server_disconnects++;
     for (const auto& it : patterns) {
       ret.emplace(it, 0);
@@ -112,11 +112,11 @@ unordered_map<string, unordered_map<string, ReadResult>> RemoteStore::read(
     return ret;
   }
 
-  auto c = this->get_client();
   try {
+    auto c = this->get_client();
     c->client->read(ret, key_names, start_time, end_time, true);
     this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
+  } catch (const exception& e) {
     this->stats[0].server_disconnects++;
     for (const auto& it : key_names) {
       ret[it][it].error = e.what();
@@ -132,11 +132,11 @@ ReadAllResult RemoteStore::read_all(const string& key_name, bool local_only) {
     return ret;
   }
 
-  auto c = this->get_client();
   try {
+    auto c = this->get_client();
     c->client->read_all(ret, key_name, true);
     this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
+  } catch (const exception& e) {
     this->stats[0].server_disconnects++;
     ret.error = e.what();
   }
@@ -155,11 +155,11 @@ unordered_map<string, string> RemoteStore::write(
     return ret;
   }
 
-  auto c = this->get_client();
   try {
+    auto c = this->get_client();
     c->client->write(ret, data, skip_buffering, true);
     this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
+  } catch (const exception& e) {
     this->stats[0].server_disconnects++;
     for (const auto& it : data) {
       ret.emplace(it.first, e.what());
@@ -176,11 +176,11 @@ unordered_map<string, FindResult> RemoteStore::find(
     return ret;
   }
 
-  auto c = this->get_client();
   try {
+    auto c = this->get_client();
     c->client->find(ret, patterns, true);
     this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
+  } catch (const exception& e) {
     this->stats[0].server_disconnects++;
     for (const auto& it : patterns) {
       ret[it].error = e.what();
@@ -218,12 +218,12 @@ int64_t RemoteStore::delete_from_cache(const std::string& path, bool local_only)
     return 0;
   }
 
-  auto c = this->get_client();
   int64_t ret;
   try {
+    auto c = this->get_client();
     ret = c->client->delete_from_cache(path, true);
     this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
+  } catch (const exception& e) {
     this->stats[0].server_disconnects++;
     ret = 0;
   }
@@ -236,12 +236,12 @@ int64_t RemoteStore::delete_pending_writes(const std::string& pattern, bool loca
     return 0;
   }
 
-  auto c = this->get_client();
   int64_t ret;
   try {
+    auto c = this->get_client();
     ret = c->client->delete_pending_writes(pattern, true);
     this->return_client(move(c));
-  } catch (const apache::thrift::transport::TTransportException& e) {
+  } catch (const exception& e) {
     this->stats[0].server_disconnects++;
     ret = 0;
   }
