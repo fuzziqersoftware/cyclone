@@ -265,7 +265,9 @@
   //
   // The default store configuration uses a cached disk store wrapped by a
   // write buffer store. This configuration is generally sufficient for a
-  // standalone setup.
+  // standalone setup, though you may want to change the thread counts, rate
+  // limits, and cache limits to match the configuration of the machine on which
+  // it runs.
   "store_config": {
     "type": "write_buffer",
     "num_write_threads": 4,
