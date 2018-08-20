@@ -41,6 +41,8 @@ void DatagramServer::dispatch_check_for_thread_exit(
 }
 
 void DatagramServer::on_client_input(int fd, short events) {
+  BusyThreadGuard g(&this->idle_thread_count);
+
   struct sockaddr_storage ss;
   socklen_t ss_len = sizeof(struct sockaddr_storage);
 
@@ -108,8 +110,8 @@ void DatagramServer::run_thread(int worker_num) {
 }
 
 DatagramServer::DatagramServer(shared_ptr<Store> store, size_t num_threads,
-    uint64_t exit_check_usecs) : Server(), should_exit(false),
-    exit_check_usecs(exit_check_usecs), store(store) {
+    uint64_t exit_check_usecs) : Server("datagram_server", num_threads),
+    should_exit(false), exit_check_usecs(exit_check_usecs), store(store) {
   for (size_t x = 0; x < num_threads; x++) {
     this->threads.emplace_back(this, x);
   }

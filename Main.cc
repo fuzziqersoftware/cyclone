@@ -600,6 +600,12 @@ int main(int argc, char **argv) {
     if (next_stats_report_time && (now() >= next_stats_report_time)) {
       string hostname = gethostname();
       auto stats = opt.store->get_stats(true);
+      for (const auto& server : servers) {
+        auto server_stats = server->get_stats();
+        for (const auto& it : server_stats) {
+          stats.emplace(it.first, it.second);
+        }
+      }
 
       unordered_map<string, Series> data_to_write;
 

@@ -12,8 +12,8 @@ using namespace std;
 
 
 HTTPServer::HTTPServer(size_t num_threads, uint64_t exit_check_usecs) :
-    should_exit(false), exit_check_usecs(exit_check_usecs),
-    num_threads(num_threads), threads() { }
+    Server("http_server", num_threads), should_exit(false),
+    exit_check_usecs(exit_check_usecs), num_threads(num_threads), threads() { }
 
 void HTTPServer::listen(const string& path) {
   int fd = ::listen(path, 0, SOMAXCONN);

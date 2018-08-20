@@ -31,14 +31,18 @@ WriteBufferStore::WriteBufferStore(shared_ptr<Store> store,
     write_batch_rate_limiter(this->max_write_batches_per_second),
     batch_size(batch_size), should_exit(false) {
   while (this->write_threads.size() < num_write_threads) {
-    this->write_threads.emplace_back(&WriteBufferStore::write_thread_routine, this);
+    this->write_threads.emplace_back(new WriteThread());
+  }
+  for (size_t x = 0; x < this->write_threads.size(); x++) {
+    this->write_threads[x]->t = thread(&WriteBufferStore::write_thread_routine,
+        this, x);
   }
 }
 
 WriteBufferStore::~WriteBufferStore() {
   this->should_exit = true;
-  for (auto& t : this->write_threads) {
-    t.join();
+  for (auto& wt : this->write_threads) {
+    wt->t.join();
   }
 }
 
@@ -514,11 +518,28 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
     rw_guard g(this->queue_lock, false);
     queue_length = this->queue.size();
   }
+
+  int64_t total_queue_sweep_time = 0;
+  size_t counted_queue_sweep_times = 0;
+  for (const auto& wt : this->write_threads) {
+    int64_t queue_sweep_time = wt->queue_sweep_time;
+    if (queue_sweep_time > 0) {
+      total_queue_sweep_time += queue_sweep_time;
+      counted_queue_sweep_times++;
+    }
+  }
+  if (counted_queue_sweep_times == 0) {
+    total_queue_sweep_time = -1;
+  } else {
+    total_queue_sweep_time /= counted_queue_sweep_times;
+  }
+
   ret.emplace("queue_commands", queue_length);
   ret.emplace("queue_update_metadatas", this->queued_update_metadatas);
   ret.emplace("queue_writes", this->queued_writes);
   ret.emplace("queue_datapoints", this->queued_datapoints);
   ret.emplace("queue_batch_size", this->batch_size);
+  ret.emplace("queue_sweep_time", total_queue_sweep_time);
   ret.emplace("max_update_metadatas_per_second", this->max_update_metadatas_per_second);
   ret.emplace("max_write_batches_per_second", this->max_write_batches_per_second);
   ret.emplace("disable_rate_limit_for_queue_length", this->disable_rate_limit_for_queue_length);
@@ -600,8 +621,15 @@ WriteBufferStore::QueueItem::QueueItem(const Series& data) {
 
 
 
-void WriteBufferStore::write_thread_routine() {
+WriteBufferStore::WriteThread::WriteThread() : t(), last_queue_restart(0),
+    queue_sweep_time(0) { }
+
+void WriteBufferStore::write_thread_routine(size_t thread_index) {
   string queue_position;
+
+  auto& wt = this->write_threads[thread_index];
+  wt->last_queue_restart = now();
+  wt->queue_sweep_time = -1;
 
   while (!this->should_exit) {
     bool enable_rate_limits = true;
@@ -624,6 +652,8 @@ void WriteBufferStore::write_thread_routine() {
       }
       if (it == this->queue.end()) {
         queue_position.clear();
+        wt->queue_sweep_time = now() - wt->last_queue_restart;
+        wt->last_queue_restart += wt->queue_sweep_time;
       } else {
         queue_position = it->first;
       }

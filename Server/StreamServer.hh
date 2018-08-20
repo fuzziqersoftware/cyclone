@@ -56,6 +56,7 @@ private:
   uint64_t exit_check_usecs;
   std::vector<WorkerThread> threads;
   std::unordered_map<int, Protocol> listen_fd_to_protocol;
+  std::atomic<size_t> client_count;
   std::shared_ptr<Store> store;
   std::vector<std::shared_ptr<ConsistentHashMultiStore>> hash_stores;
 
@@ -69,6 +70,8 @@ private:
   void execute_shell_command(const char* command, struct evbuffer* out_buffer);
 
   void run_thread(int thread_id);
+
+  virtual std::unordered_map<std::string, int64_t> get_stats();
 
 public:
   // note: StreamServer needs to know about the hash stores because it supports

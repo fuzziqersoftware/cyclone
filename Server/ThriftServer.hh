@@ -27,6 +27,8 @@ public:
   virtual void schedule_stop();
   virtual void wait_for_stop();
 
+  virtual std::unordered_map<std::string, int64_t> get_stats();
+
 private:
   std::shared_ptr<Store> store;
   std::vector<std::shared_ptr<ConsistentHashMultiStore>> hash_stores;

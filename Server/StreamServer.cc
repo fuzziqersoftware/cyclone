@@ -38,6 +38,7 @@ StreamServer::WorkerThread::WorkerThread(StreamServer* server, int worker_num) :
 void StreamServer::WorkerThread::disconnect_client(struct bufferevent* bev) {
   this->bev_to_client.erase(bev);
   bufferevent_free(bev);
+  this->server->client_count--;
   // don't have to explicitly close the client's fd because the bufferevent has
   // BEV_OPT_CLOSE_ON_FREE
 }
@@ -76,6 +77,7 @@ void StreamServer::WorkerThread::dispatch_check_for_thread_exit(
 void StreamServer::on_listen_accept(StreamServer::WorkerThread& wt,
     struct evconnlistener *listener, evutil_socket_t fd,
     struct sockaddr *address, int socklen) {
+  BusyThreadGuard g(&this->idle_thread_count);
 
   int fd_flags = fcntl(fd, F_GETFD, 0);
   if (fd_flags >= 0) {
@@ -95,6 +97,7 @@ void StreamServer::on_listen_accept(StreamServer::WorkerThread& wt,
       BEV_OPT_CLOSE_ON_FREE);
   wt.bev_to_client.emplace(piecewise_construct, make_tuple(bev),
       make_tuple(fd, *address, protocol));
+  this->client_count++;
 
   bufferevent_setcb(bev, &WorkerThread::dispatch_on_client_input, NULL,
       &WorkerThread::dispatch_on_client_error, &wt);
@@ -109,6 +112,8 @@ void StreamServer::on_listen_accept(StreamServer::WorkerThread& wt,
 
 void StreamServer::on_listen_error(StreamServer::WorkerThread& wt,
     struct evconnlistener *listener) {
+  BusyThreadGuard g(&this->idle_thread_count);
+
   int err = EVUTIL_SOCKET_ERROR();
   log(ERROR, "[StreamServer] failure on listening socket %d: %d (%s)\n",
       evconnlistener_get_fd(listener), err,
@@ -119,6 +124,7 @@ void StreamServer::on_listen_error(StreamServer::WorkerThread& wt,
 
 void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
     struct bufferevent *bev) {
+  BusyThreadGuard g(&this->idle_thread_count);
 
   struct evbuffer* in_buffer = bufferevent_get_input(bev);
   Client* c = NULL;
@@ -247,6 +253,7 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
 
 void StreamServer::on_client_error(StreamServer::WorkerThread& wt,
     struct bufferevent *bev, short events) {
+  BusyThreadGuard g(&this->idle_thread_count);
 
   if (events & BEV_EVENT_ERROR) {
     int err = EVUTIL_SOCKET_ERROR();
@@ -263,6 +270,12 @@ void StreamServer::check_for_thread_exit(StreamServer::WorkerThread& wt,
   if (this->should_exit) {
     event_base_loopexit(wt.base.get(), NULL);
   }
+}
+
+unordered_map<string, int64_t> StreamServer::get_stats() {
+  auto stats = this->Server::get_stats();
+  stats.emplace(this->stats_prefix + ".client_count", this->client_count.load());
+  return stats;
 }
 
 const string HELP_STRING("\
@@ -345,6 +358,7 @@ void StreamServer::execute_shell_command(const char* line_data,
     }
 
     auto stats = this->store->get_stats();
+    // TODO: add server stats here
 
     vector<string> lines;
     for (const auto& it : stats) {
@@ -657,8 +671,9 @@ void StreamServer::run_thread(int worker_num) {
 
 StreamServer::StreamServer(shared_ptr<Store> store,
     const vector<shared_ptr<ConsistentHashMultiStore>>& hash_stores,
-    size_t num_threads, uint64_t exit_check_usecs) : Server(),
-    should_exit(false), exit_check_usecs(exit_check_usecs), store(store),
+    size_t num_threads, uint64_t exit_check_usecs) :
+    Server("stream_server", num_threads), should_exit(false),
+    exit_check_usecs(exit_check_usecs), client_count(0), store(store),
     hash_stores(hash_stores) {
   for (size_t x = 0; x < num_threads; x++) {
     this->threads.emplace_back(this, x);

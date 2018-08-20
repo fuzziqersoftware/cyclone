@@ -101,11 +101,20 @@ private:
   RateLimiter update_metadata_rate_limiter;
   RateLimiter write_batch_rate_limiter;
 
-  // TODO: switch from multithreaded model to async i/o model here
-  // (WhisperArchive needs to support async i/o first)
   size_t batch_size;
   std::atomic<bool> should_exit;
-  std::vector<std::thread> write_threads;
+  struct WriteThread {
+    std::thread t;
+    std::atomic<int64_t> last_queue_restart;
+    std::atomic<int64_t> queue_sweep_time;
 
-  void write_thread_routine();
+    WriteThread();
+    WriteThread(const WriteThread&) = delete;
+    WriteThread(WriteThread&&) = delete;
+    WriteThread& operator=(const WriteThread&) = delete;
+    WriteThread& operator=(WriteThread&&) = delete;
+  };
+  std::vector<std::unique_ptr<WriteThread>> write_threads;
+
+  void write_thread_routine(size_t thread_index);
 };
