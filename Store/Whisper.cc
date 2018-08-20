@@ -122,6 +122,73 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
     this->metadata->archives[x].points = bswap32(sw_archive_metadata->points);
   }
 
+  // verify the metadata
+  size_t file_size = fstat(lease.fd).st_size;
+
+  if (this->metadata->aggregation_method < 1 || this->metadata->aggregation_method > 5) {
+    throw runtime_error(this->filename + " has invalid aggregation method");
+  }
+  if (this->metadata->x_files_factor < 0 || this->metadata->x_files_factor > 1) {
+    throw runtime_error(this->filename + " has invalid x-files-factor");
+  }
+  if (this->metadata->num_archives == 0) {
+    throw runtime_error(this->filename + " has no archives");
+  }
+
+  const auto& last_archive = this->metadata->archives[this->metadata->num_archives - 1];
+  uint32_t max_retention = last_archive.seconds_per_point * last_archive.points;
+  if (this->metadata->max_retention != max_retention) {
+    throw runtime_error(this->filename + " has incorrect maximum retention");
+  }
+
+  for (size_t x = 0; x < this->metadata->num_archives; x++) {
+    const auto& archive = this->metadata->archives[x];
+
+    if (archive.seconds_per_point <= 0) {
+      throw invalid_argument(string_printf("archive %zu in %s has a precision of zero or less",
+          x, this->filename.c_str()));
+    }
+    if (archive.points == 0) {
+      throw invalid_argument(string_printf("archive %zu in %s contains no points",
+          x, this->filename.c_str()));
+    }
+    if (archive.offset < sizeof(FileHeader) + this->metadata->num_archives * sizeof(FileArchiveHeader)) {
+      throw invalid_argument(string_printf("archive %zu in %s overlaps file header",
+          x, this->filename.c_str()));
+    }
+    uint32_t archive_end_offset = archive.offset + (archive.points * sizeof(FilePoint));
+    if (archive_end_offset > file_size) {
+      throw invalid_argument(string_printf("archive %zu in %s extends beyond end of file",
+          x, this->filename.c_str()));
+    }
+
+    if (x > 0) {
+      const auto& previous_archive = this->metadata->archives[x - 1];
+
+      if (archive.seconds_per_point == previous_archive.seconds_per_point) {
+        throw invalid_argument(string_printf("archive %zu in %s has the same precision as a previous archive",
+            x, this->filename.c_str()));
+      }
+      if (archive.seconds_per_point < previous_archive.seconds_per_point) {
+        throw invalid_argument(string_printf("archive %zu in %s is out of order",
+            x, this->filename.c_str()));
+      }
+      if (archive.seconds_per_point % previous_archive.seconds_per_point) {
+        throw invalid_argument(string_printf("archive %zu in %s does not divide higher precisions",
+            x, this->filename.c_str()));
+      }
+      if (archive.seconds_per_point * archive.points <=
+          previous_archive.seconds_per_point * previous_archive.points) {
+        throw invalid_argument(string_printf("archive %zu in %s covers shorter time than higher precisions",
+            x, this->filename.c_str()));
+      }
+      if (previous_archive.points < archive.seconds_per_point / previous_archive.seconds_per_point) {
+        throw invalid_argument(string_printf("archive %zu in %s can\'t consolidate higher precisions",
+            x, this->filename.c_str()));
+      }
+    }
+  }
+
   // if there were fewer than 10 archives, then we also got the base interval
   // for the first archive in the initial read; might as well populate it
   if (this->metadata->num_archives && (this->metadata->num_archives < 10)) {
