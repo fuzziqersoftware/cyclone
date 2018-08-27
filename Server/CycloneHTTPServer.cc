@@ -2,6 +2,7 @@
 
 #include <event2/buffer.h>
 #include <event2/http.h>
+#include <math.h>
 #include <string.h>
 
 #include <phosg/Filesystem.hh>
