@@ -263,10 +263,16 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
           parent_level->subdirectories_lru.erase(p.directories.back());
         }
       }
-      auto counts = deleted_level->get_counts();
-      this->stats[0].report_directory_delete(counts.first, counts.second);
-      this->directory_count -= counts.first;
-      this->file_count -= counts.second;
+
+      // if deleted_level is NULL, then we directory was deleted on disk but it
+      // already didn't exist in the cache, so just ignore it. we should keep
+      // moving up the tree though, since the parent directory may still exist
+      if (deleted_level.get()) {
+        auto counts = deleted_level->get_counts();
+        this->stats[0].report_directory_delete(counts.first, counts.second);
+        this->directory_count -= counts.first;
+        this->file_count -= counts.second;
+      }
 
       // we deleted a directory - move up to the previous one
       levels.pop_back();
