@@ -637,7 +637,10 @@ int main(int argc, char **argv) {
     if (next_stats_report_time && (wakeup_time > next_stats_report_time)) {
       wakeup_time = next_stats_report_time;
     }
-    usleep(wakeup_time - now());
+    int64_t sleep_time = wakeup_time - now();
+    if (sleep_time > 0) {
+      usleep(wakeup_time - now());
+    }
   }
 
   signal(SIGINT, SIG_DFL);
