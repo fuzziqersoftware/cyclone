@@ -27,8 +27,10 @@ class CycloneHandler : virtual public CycloneIf {
 public:
   CycloneHandler(shared_ptr<Store> store,
       const vector<shared_ptr<ConsistentHashMultiStore>>& hash_stores,
-      atomic<size_t>* idle_thread_count) : store(store),
-      hash_stores(hash_stores), idle_thread_count(idle_thread_count) { }
+      atomic<size_t>* idle_thread_count,
+      const vector<shared_ptr<Server>>* all_servers) : store(store),
+      hash_stores(hash_stores), idle_thread_count(idle_thread_count),
+      all_servers(all_servers) { }
 
   void update_metadata(unordered_map<string, string>& _return,
       const SeriesMetadataMap& metadata, bool create_new,
@@ -85,8 +87,7 @@ public:
 
   void stats(unordered_map<string, int64_t>& _return) {
     BusyThreadGuard g(this->idle_thread_count);
-    // TODO: add server stats here
-    _return = this->store->get_stats();
+    _return = gather_stats(this->store, *this->all_servers);
   }
 
   int64_t delete_from_cache(const std::string& path, bool local_only) {
@@ -160,6 +161,7 @@ private:
   shared_ptr<Store> store;
   vector<shared_ptr<ConsistentHashMultiStore>> hash_stores;
   atomic<size_t>* idle_thread_count;
+  const vector<shared_ptr<Server>>* all_servers;
 };
 
 ThriftServer::ThriftServer(shared_ptr<Store> store,
@@ -212,7 +214,7 @@ void ThriftServer::serve_thread_routine() {
       new apache::thrift::protocol::TBinaryProtocolFactory());
 
   thrift_ptr<CycloneHandler> handler(new CycloneHandler(this->store,
-      this->hash_stores, &this->idle_thread_count));
+      this->hash_stores, &this->idle_thread_count, &this->all_servers));
   thrift_ptr<CycloneProcessor::TProcessor> processor(new CycloneProcessor(handler));
 
   // TODO: unify these implementations

@@ -320,8 +320,7 @@ Commands:\n\
     - +truncate recreates the series if it already exists.\n\
 \n\
   stats\n\
-    Get the current store stats. Because of a limitation in the internal\n\
-    abstraction, this does not include the current server stats.\n\
+    Get the current store and server stats.\n\
 \n\
   verify start [repair]\n\
     Start a verify procedure. This procedure checks that all keys are in the\n\
@@ -362,8 +361,7 @@ void StreamServer::execute_shell_command(const char* line_data,
       throw runtime_error("incorrect argument count");
     }
 
-    auto stats = this->store->get_stats();
-    // TODO: add server stats here
+    auto stats = gather_stats(this->store, this->all_servers);
 
     vector<string> lines;
     for (const auto& it : stats) {

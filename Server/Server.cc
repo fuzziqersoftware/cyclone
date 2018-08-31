@@ -18,6 +18,10 @@ unordered_map<string, int64_t> Server::get_stats() {
   return ret;
 }
 
+void Server::set_servers_list(const vector<shared_ptr<Server>>& all_servers) {
+  this->all_servers = all_servers;
+}
+
 
 
 BusyThreadGuard::BusyThreadGuard(std::atomic<size_t>* idle_thread_count) :
@@ -62,4 +66,16 @@ int64_t parse_relative_time(const string& s) {
   }
 
   throw invalid_argument("can\'t parse relative time: " + s);
+}
+
+unordered_map<string, int64_t> gather_stats(shared_ptr<Store> store,
+    const vector<shared_ptr<Server>>& all_servers) {
+  auto stats = store->get_stats(true);
+  for (const auto& server : all_servers) {
+    auto server_stats = server->get_stats();
+    for (const auto& it : server_stats) {
+      stats.emplace(it.first, it.second);
+    }
+  }
+  return stats;
 }

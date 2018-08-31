@@ -119,8 +119,7 @@ string CycloneHTTPServer::handle_index_request(struct Thread& t,
 
 string CycloneHTTPServer::handle_stats_request(struct Thread& t,
     struct evhttp_request* req, struct evbuffer* out_buffer) {
-  auto stats = this->store->get_stats();
-  // TODO: add server stats here
+  auto stats = gather_stats(this->store, this->all_servers);
 
   map<string, int64_t> sorted_stats;
   for (const auto& it : stats) {
