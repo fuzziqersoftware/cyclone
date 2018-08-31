@@ -438,7 +438,7 @@ void StreamServer::execute_shell_command(const char* line_data,
 
   } else if (command_name == "find") {
     if (tokens.empty()) {
-      throw runtime_error("no patterns given");
+      tokens.emplace_back("*");
     }
 
     auto find_result = this->store->find(tokens, false);
