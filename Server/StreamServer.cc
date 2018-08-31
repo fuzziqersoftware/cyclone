@@ -281,10 +281,11 @@ unordered_map<string, int64_t> StreamServer::get_stats() {
 const string HELP_STRING("\
 Commands:\n\
   help\n\
-    You're reading it now.\n\
+    You\'re reading it now.\n\
 \n\
-  find <pattern> [<pattern> ...]\n\
-    Search for metrics matching the given pattern(s).\n\
+  find [<pattern> ...]\n\
+    Search for metrics matching the given pattern(s). If no patterns are given,\n\
+    return the contents of the root directory.\n\
 \n\
   read <pattern> [+start=<time>] [+end=<time>]\n\
     Read data from all series that match the given pattern.\n\
@@ -293,13 +294,15 @@ Commands:\n\
     The start and end timestamps may also be relative, like -24h or -30d.\n\
 \n\
   write <series> <timestamp> <value> [<timestamp> <value> ...]\n\
-    Write one or more datapoints to the given series.\n\
-    If any timestamps are zero, the server\'s current time is used.\n\
+    Write one or more datapoints to the given series. If any timestamps are\n\
+    zero, the server\'s current time is used. Timestamps may also be relative,\n\
+    like -5m or -12h.\n\
 \n\
   delete <series> [<series> ...]\n\
     Delete entire series.\n\
 \n\
-  create <series> <archives> [+skip-existing] [+truncate]\n\
+  create <series> <archives> <x-files-factor> <agg-method> [+skip-existing]\n\
+      [+truncate]\n\
     Alias for `update-metadata +create`.\n\
 \n\
   update-metadata <series> <archives> <x-files-factor> <agg-method> [+create]\n\
@@ -317,7 +320,8 @@ Commands:\n\
     - +truncate recreates the series if it already exists.\n\
 \n\
   stats\n\
-    Get the current server stats.\n\
+    Get the current store stats. Because of a limitation in the internal\n\
+    abstraction, this does not include the current server stats.\n\
 \n\
   verify start [repair]\n\
     Start a verify procedure. This procedure checks that all keys are in the\n\
@@ -337,7 +341,7 @@ Commands:\n\
     whether reads from hash stores go to all substores or only the substore\n\
     which is responsible for the key in question. The read-from-all state is\n\
     automatically enabled during a verify+repair procedure, since it's likely\n\
-    that keys exist in the wrong substores is a verify+repair is running.\n\
+    that keys exist in the wrong substores if a verify+repair is running.\n\
 ");
 
 void StreamServer::execute_shell_command(const char* line_data,
