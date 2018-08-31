@@ -42,3 +42,8 @@ public:
 protected:
   std::atomic<size_t>* idle_thread_count;
 };
+
+
+
+// this is used by multiple servers and I don't know where else to put it
+int64_t parse_relative_time(const std::string& s);

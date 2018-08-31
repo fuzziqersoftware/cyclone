@@ -103,40 +103,6 @@ unique_ptr<Renderer> CycloneHTTPServer::create_renderer(const string& format,
 }
 
 
-static int64_t parse_relative_time(const string& s) {
-  if (s == "now") {
-    return now() / 1000000;
-  }
-
-  size_t bytes_parsed;
-  int64_t int_part = stoll(s, &bytes_parsed, 0);
-  if (bytes_parsed == s.size()) {
-    return int_part; // it's an absolute timestamp
-  }
-
-  if (s[bytes_parsed] == 's') {
-    return (now() / 1000000) + int_part;
-  }
-  if (s[bytes_parsed] == 'm') {
-    return (now() / 1000000) + (int_part * 60);
-  }
-  if (s[bytes_parsed] == 'h') {
-    return (now() / 1000000) + (int_part * 60 * 60);
-  }
-  if (s[bytes_parsed] == 'd') {
-    return (now() / 1000000) + (int_part * 60 * 60 * 24);
-  }
-  if (s[bytes_parsed] == 'w') {
-    return (now() / 1000000) + (int_part * 60 * 60 * 24 * 7);
-  }
-  if (s[bytes_parsed] == 'y') {
-    return (now() / 1000000) + (int_part * 60 * 60 * 365);
-  }
-
-  throw invalid_argument("can\'t parse relative time: " + s);
-}
-
-
 const string INDEX_HTML("\
 <!DOCTYPE html>\n\
 <html><head><title>cyclone</title></head><body>\n\

@@ -286,10 +286,11 @@ Commands:\n\
   find <pattern> [<pattern> ...]\n\
     Search for metrics matching the given pattern(s).\n\
 \n\
-  read <pattern> [+start=<timestamp>] [+end=<timestamp>]\n\
+  read <pattern> [+start=<time>] [+end=<time>]\n\
     Read data from all series that match the given pattern.\n\
     If given, start and end must be absolute epoch timestamps in seconds.\n\
     If start and end are not given, the default is to read the past hour.\n\
+    The start and end timestamps may also be relative, like -24h or -30d.\n\
 \n\
   write <series> <timestamp> <value> [<timestamp> <value> ...]\n\
     Write one or more datapoints to the given series.\n\
@@ -476,7 +477,7 @@ void StreamServer::execute_shell_command(const char* line_data,
     for (size_t x = 1; x < tokens.size(); x += 2) {
       data.emplace_back();
       auto& dp = data.back();
-      dp.timestamp = stoll(tokens[x]);
+      dp.timestamp = parse_relative_time(tokens[x]);
       dp.value = stod(tokens[x + 1]);
       if (dp.timestamp == 0) {
         if (now_timestamp == 0) {
@@ -507,9 +508,9 @@ void StreamServer::execute_shell_command(const char* line_data,
     vector<string> patterns;
     for (auto& tok : tokens) {
       if (starts_with(tok, "+start=")) {
-        start_time = stoll(tok.substr(7));
+        start_time = parse_relative_time(tok.substr(7));
       } else if (starts_with(tok, "+end=")) {
-        end_time = stoll(tok.substr(5));
+        end_time = parse_relative_time(tok.substr(5));
       } else {
         patterns.emplace_back(move(tok));
       }
