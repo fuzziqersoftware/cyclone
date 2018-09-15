@@ -613,7 +613,8 @@ WriteBufferStore::QueueItem::QueueItem(const SeriesMetadata& metadata,
     metadata(metadata), create_new(create_new),
     update_behavior(update_behavior) { }
 
-WriteBufferStore::QueueItem::QueueItem(const Series& data) {
+WriteBufferStore::QueueItem::QueueItem(const Series& data) : create_new(true),
+    update_behavior(UpdateMetadataBehavior::Ignore) {
   for (const auto& dp : data) {
     this->data[dp.timestamp] = dp.value;
   }
@@ -708,9 +709,15 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
         }
       }
 
+      this->queued_datapoints -= write_batch_datapoints;
       try {
-        this->store->write(write_batch, false, false);
-        this->queued_datapoints -= write_batch_datapoints;
+        auto write_errors = this->store->write(write_batch, false, false);
+        for (const auto& it : write_errors) {
+          if (!it.second.empty()) {
+            log(WARNING, "[WriteBufferStore] write error on key %s: %s",
+                it.first.c_str(), it.second.c_str());
+          }
+        }
       } catch (const exception& e) {
         log(WARNING, "[WriteBufferStore] write failed for batch of %zu keys (%s)",
             write_batch.size(), e.what());
