@@ -36,7 +36,7 @@ FunctionProfiler::~FunctionProfiler() {
   uint64_t total_time = end_time - this->start_time;
   if (total_time >= this->threshold_usecs) {
     string result = this->output(end_time);
-    log(INFO, "%s", result.c_str());
+    log(INFO, "slow query: %s", result.c_str());
   }
 }
 

@@ -24,11 +24,13 @@ using namespace std;
 WriteBufferStore::WriteBufferStore(shared_ptr<Store> store,
     size_t num_write_threads, size_t batch_size,
     size_t max_update_metadatas_per_second, size_t max_write_batches_per_second,
-    ssize_t disable_rate_limit_for_queue_length) : Store(), store(store),
+    ssize_t disable_rate_limit_for_queue_length, bool merge_find_patterns) :
+    Store(), store(store),
     max_update_metadatas_per_second(max_update_metadatas_per_second),
     max_write_batches_per_second(max_write_batches_per_second),
     disable_rate_limit_for_queue_length(disable_rate_limit_for_queue_length),
-    queued_update_metadatas(0), queued_writes(0), queued_datapoints(0),
+    merge_find_patterns(merge_find_patterns), queued_update_metadatas(0),
+    queued_writes(0), queued_datapoints(0),
     update_metadata_rate_limiter(this->max_update_metadatas_per_second),
     write_batch_rate_limiter(this->max_write_batches_per_second),
     batch_size(batch_size), should_exit(false) {
@@ -78,6 +80,14 @@ ssize_t WriteBufferStore::get_disable_rate_limit_for_queue_length() const {
 
 void WriteBufferStore::set_disable_rate_limit_for_queue_length(ssize_t new_value) {
   this->disable_rate_limit_for_queue_length = new_value;
+}
+
+bool WriteBufferStore::get_merge_find_patterns() const {
+  return this->merge_find_patterns;
+}
+
+void WriteBufferStore::set_merge_find_patterns(bool new_value) {
+  this->merge_find_patterns = new_value;
 }
 
 
@@ -407,6 +417,10 @@ unordered_map<string, FindResult> WriteBufferStore::find(
 
     size_t pattern_start_offset = it.first.find_first_of("[{*");
     if (pattern_start_offset != string::npos) {
+      // if merging patterns is disabled, don't do anything
+      if (!this->merge_find_patterns) {
+        continue;
+      }
 
       // this query is a pattern; need to merge with a queue range. but we can
       // make it faster by only skipping the parts of the queue that we know
@@ -573,6 +587,7 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
   ret.emplace("max_update_metadatas_per_second", this->max_update_metadatas_per_second);
   ret.emplace("max_write_batches_per_second", this->max_write_batches_per_second);
   ret.emplace("disable_rate_limit_for_queue_length", this->disable_rate_limit_for_queue_length);
+  ret.emplace("merge_find_patterns", this->merge_find_patterns);
   return ret;
 }
 

@@ -205,11 +205,13 @@ struct Options {
       size_t max_update_metadatas_per_second = (*store_config)["max_update_metadatas_per_second"]->as_int();
       size_t max_write_batches_per_second = (*store_config)["max_write_batches_per_second"]->as_int();
       size_t disable_rate_limit_for_queue_length = (*store_config)["disable_rate_limit_for_queue_length"]->as_int();
+      bool merge_find_patterns = (*store_config)["merge_find_patterns"]->as_bool();
       auto parse_ret = this->parse_store_config((*store_config)["substore"]);
       return make_pair(
           shared_ptr<Store>(new WriteBufferStore(parse_ret.first,
             num_write_threads, batch_size, max_update_metadatas_per_second,
-            max_write_batches_per_second, disable_rate_limit_for_queue_length)),
+            max_write_batches_per_second, disable_rate_limit_for_queue_length,
+            merge_find_patterns)),
           parse_ret.second);
     }
 
@@ -343,6 +345,16 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
           log(INFO, "%s.write_buffer.disable_rate_limit_for_queue_length changed from %zd to %zd",
               prefix.c_str(), wb->get_disable_rate_limit_for_queue_length(), new_value);
           wb->set_disable_rate_limit_for_queue_length(new_value);
+        }
+      }
+
+      {
+        bool new_value = (*new_store_config)["merge_find_patterns"]->as_int();
+        if (new_value != wb->get_merge_find_patterns()) {
+          log(INFO, "%s.write_buffer.merge_find_patterns changed from %s to %s",
+              prefix.c_str(), wb->get_merge_find_patterns() ? "true" : "false",
+              new_value ? "true" : "false");
+          wb->set_merge_find_patterns(new_value);
         }
       }
 

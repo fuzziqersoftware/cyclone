@@ -19,7 +19,7 @@ public:
   WriteBufferStore(std::shared_ptr<Store> store, size_t num_write_threads,
       size_t batch_size, size_t max_update_metadatas_per_second,
       size_t max_write_batches_per_second,
-      ssize_t disable_rate_limit_for_queue_length);
+      ssize_t disable_rate_limit_for_queue_length, bool merge_find_patterns);
   virtual ~WriteBufferStore();
   const WriteBufferStore& operator=(const WriteBufferStore& rhs) = delete;
 
@@ -32,6 +32,8 @@ public:
   void set_max_write_batches_per_second(size_t new_value);
   ssize_t get_disable_rate_limit_for_queue_length() const;
   void set_disable_rate_limit_for_queue_length(ssize_t new_value);
+  bool get_merge_find_patterns() const;
+  void set_merge_find_patterns(bool new_value);
 
   std::shared_ptr<Store> get_substore() const;
 
@@ -74,6 +76,7 @@ private:
   std::atomic<size_t> max_update_metadatas_per_second;
   std::atomic<size_t> max_write_batches_per_second;
   std::atomic<ssize_t> disable_rate_limit_for_queue_length;
+  std::atomic<bool> merge_find_patterns;
 
   struct QueueItem {
     SeriesMetadata metadata;

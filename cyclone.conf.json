@@ -187,6 +187,11 @@
   // This store wraps another store and batches writes to the underlying store.
   // The writes are flushed asynchronously in a set of background threads. The
   // batch size can be changed without restarting the server.
+  // If merge_find_patterns is false, the results of find queries that include
+  // patterns will not be merged with the write queue. This means that writes to
+  // series that don't exist but will be autocreated won't be visible until the
+  // write actually occurs. This can be useful if writes are heavily
+  // rate-limited since the write queue could be long, which makes merging slow.
   // {
   //   "store_type": "write_buffer",
   //   "num_write_threads": 4,
@@ -194,6 +199,7 @@
   //   "max_update_metadatas_per_second": 0, // 0 means no rate limit
   //   "max_write_batches_per_second": 0, // 0 means no rate limit
   //   "disable_rate_limit_for_queue_length": 1000000,
+  //   "merge_find_patterns": true,
   //   "substore": {...}, // config for the wrapped store
   // }
   //
