@@ -29,7 +29,8 @@ using namespace std;
 
 
 StreamServer::Client::Client(int fd, const struct sockaddr& remote_addr,
-    Protocol protocol) : remote_addr(remote_addr), fd(fd), protocol(protocol) { }
+    Protocol protocol) : remote_addr(remote_addr), fd(fd), protocol(protocol),
+    profiler_enabled(false) { }
 
 StreamServer::WorkerThread::WorkerThread(StreamServer* server, int worker_num) :
     server(server), worker_num(worker_num),
@@ -230,7 +231,7 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
       size_t line_length = 0;
       while ((line_data = evbuffer_readln(in_buffer, &line_length, EVBUFFER_EOL_CRLF))) {
         try {
-          this->execute_shell_command(line_data, out_buffer);
+          this->execute_shell_command(line_data, out_buffer, c);
           evbuffer_add_reference(out_buffer, "\n\ncyclone> ", 11, NULL, NULL);
         } catch (const exception& e) {
           evbuffer_add_printf(out_buffer, "FAILED: %s\n\ncyclone> ", e.what());
@@ -242,7 +243,8 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
   }
 
   if (!data.empty()) {
-    for (const auto& it : this->store->write(data, false, false)) {
+    auto profiler = create_profiler("StreamServer::write");
+    for (const auto& it : this->store->write(data, false, false, profiler.get())) {
       if (it.second.empty()) {
         continue;
       }
@@ -282,6 +284,12 @@ const string HELP_STRING("\
 Commands:\n\
   help\n\
     You\'re reading it now.\n\
+\n\
+  profiler [on|off]\n\
+    Get or set the profiling state for this shell connection.\n\
+    Profiling can be useful to diagnose performance problems. When profiling is\n\
+    enabled, performance debugging information is printed before the result of\n\
+    each query run from the current shell connection.\n\
 \n\
   find [<pattern> ...]\n\
     Search for metrics matching the given pattern(s). If no patterns are given,\n\
@@ -344,7 +352,7 @@ Commands:\n\
 ");
 
 void StreamServer::execute_shell_command(const char* line_data,
-    struct evbuffer* out_buffer) {
+    struct evbuffer* out_buffer, Client* client) {
   auto tokens = split(line_data, ' ');
   if (tokens.size() == 0) {
     throw runtime_error("command is empty; try \'help\'");
@@ -352,6 +360,23 @@ void StreamServer::execute_shell_command(const char* line_data,
 
   string command_name = move(tokens[0]);
   tokens.erase(tokens.begin());
+
+  auto create_shell_profiler = +[](const char* function_name, bool enabled)
+      -> unique_ptr<BaseFunctionProfiler> {
+    if (enabled) {
+      return create_profiler(function_name, 0);
+    } else {
+      return create_profiler(function_name);
+    }
+  };
+  auto flush_profiler = +[](Client* client,
+      unique_ptr<BaseFunctionProfiler>& profiler, struct evbuffer* out_buffer) {
+    if (client->profiler_enabled) {
+      auto result = profiler->output();
+      evbuffer_add_printf(out_buffer, "Profiler result: %s\n\n", result.c_str());
+    }
+    profiler.reset();
+  };
 
   if (command_name == "help") {
     evbuffer_add_reference(out_buffer, HELP_STRING.data(), HELP_STRING.size(), NULL, NULL);
@@ -411,8 +436,12 @@ void StreamServer::execute_shell_command(const char* line_data,
       }
     }
 
+    auto profiler = create_shell_profiler("StreamServer::shell_update_metadata",
+        client->profiler_enabled);
     auto result = this->store->update_metadata(metadata_map, create_new,
-        update_behavior, false, false);
+        update_behavior, false, false, profiler.get());
+    flush_profiler(client, profiler, out_buffer);
+
     for (const auto& result_it : result) {
       if (result_it.second.empty()) {
         evbuffer_add_printf(out_buffer, "[%s] success\n",
@@ -428,7 +457,11 @@ void StreamServer::execute_shell_command(const char* line_data,
       throw runtime_error("no series given");
     }
 
-    auto result = this->store->delete_series(tokens, false);
+    auto profiler = create_shell_profiler("StreamServer::shell_delete_series",
+        client->profiler_enabled);
+    auto result = this->store->delete_series(tokens, false, profiler.get());
+    flush_profiler(client, profiler, out_buffer);
+
     for (const auto& it : result) {
       evbuffer_add_printf(out_buffer, "[%s] %" PRId64 " series deleted\n",
           it.first.c_str(), it.second);
@@ -439,7 +472,11 @@ void StreamServer::execute_shell_command(const char* line_data,
       tokens.emplace_back("*");
     }
 
-    auto find_result = this->store->find(tokens, false);
+    auto profiler = create_shell_profiler("StreamServer::shell_find",
+        client->profiler_enabled);
+    auto find_result = this->store->find(tokens, false, profiler.get());
+    flush_profiler(client, profiler, out_buffer);
+
     if (find_result.size() == 1) {
       auto& result = find_result.begin()->second;
       if (!result.error.empty()) {
@@ -489,7 +526,11 @@ void StreamServer::execute_shell_command(const char* line_data,
       }
     }
 
-    auto result = this->store->write(write_map, false, false);
+    auto profiler = create_shell_profiler("StreamServer::shell_write",
+        client->profiler_enabled);
+    auto result = this->store->write(write_map, false, false, profiler.get());
+    flush_profiler(client, profiler, out_buffer);
+
     for (const auto& result_it : result) {
       if (result_it.second.empty()) {
         evbuffer_add_printf(out_buffer, "[%s] success\n",
@@ -525,7 +566,12 @@ void StreamServer::execute_shell_command(const char* line_data,
       start_time = end_time - (60 * 60);
     }
 
-    auto read_results = this->store->read(patterns, start_time, end_time, false);
+    auto profiler = create_shell_profiler("StreamServer::shell_read",
+        client->profiler_enabled);
+    auto read_results = this->store->read(patterns, start_time, end_time, false,
+        profiler.get());
+    flush_profiler(client, profiler, out_buffer);
+
     for (const auto& result_it : read_results) {
       const string& pattern = result_it.first;
       const auto& series_map = result_it.second;
@@ -651,6 +697,26 @@ void StreamServer::execute_shell_command(const char* line_data,
       evbuffer_add_printf(out_buffer, "read-from-all is %s (was %s)\n",
           enable ? "enabled" : "disabled",
           prev_read_from_all ? "enabled" : "disabled");
+    }
+
+  } else if (command_name == "profiler") {
+    if (tokens.size() > 1) {
+      throw runtime_error("too many arguments");
+    }
+    if ((tokens.size() == 1) && (tokens[0] != "on") && (tokens[0] != "off")) {
+      throw runtime_error("invalid argument");
+    }
+
+    if (tokens.size() == 0) {
+      evbuffer_add_printf(out_buffer, "profiler is %s\n",
+          client->profiler_enabled ? "enabled" : "disabled");
+
+    } else {
+      bool enable = (tokens[0] == "on");
+      evbuffer_add_printf(out_buffer, "profiler is %s (was %s)\n",
+          enable ? "enabled" : "disabled",
+          client->profiler_enabled ? "enabled" : "disabled");
+      client->profiler_enabled = enable;
     }
 
   } else {

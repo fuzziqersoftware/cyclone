@@ -38,7 +38,9 @@ void DiskStore::set_directory(const std::string& new_value) {
 unordered_map<string, string> DiskStore::update_metadata(
     const SeriesMetadataMap& m, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
+
+  // TODO: add profiling metadata and checkpoints for this function
 
   unordered_map<string, string> ret;
   for (auto& it : m) {
@@ -112,7 +114,8 @@ unordered_map<string, string> DiskStore::update_metadata(
 }
 
 unordered_map<string, int64_t> DiskStore::delete_series(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, int64_t> ret;
 
   // if a pattern ends in **, delete the entire tree. ** doesn't work in
@@ -147,8 +150,11 @@ unordered_map<string, int64_t> DiskStore::delete_series(
       determinate_patterns.emplace_back(pattern);
     }
   }
+  profiler->checkpoint("separate_determinate_patterns");
 
-  auto key_to_pattern = this->resolve_patterns(determinate_patterns, local_only);
+  auto key_to_pattern = this->resolve_patterns(determinate_patterns, local_only,
+      profiler);
+  profiler->checkpoint("resolve_patterns");
 
   for (const auto& key_it : key_to_pattern) {
     // if the token is a pattern, don't delete it - directory trees must be
@@ -193,6 +199,7 @@ unordered_map<string, int64_t> DiskStore::delete_series(
           key_it.first.c_str(), e.what());
     }
   }
+  profiler->checkpoint("delete_files");
 
   // make sure we return zeroes for patterns that didn't match anything
   for (const auto& pattern : patterns) {
@@ -203,9 +210,10 @@ unordered_map<string, int64_t> DiskStore::delete_series(
 
 unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
-  auto key_to_pattern = this->resolve_patterns(key_names, local_only);
+  auto key_to_pattern = this->resolve_patterns(key_names, local_only, profiler);
+  profiler->checkpoint("resolve_patterns");
 
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : key_to_pattern) {
@@ -238,12 +246,14 @@ unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
       r.error = e.what();
     }
   }
+  profiler->checkpoint("read_data");
 
   this->stats[0].report_read_request(ret);
   return ret;
 }
 
-ReadAllResult DiskStore::read_all(const string& key_name, bool local_only) {  
+ReadAllResult DiskStore::read_all(const string& key_name, bool local_only,
+    BaseFunctionProfiler* profiler) {
   ReadAllResult ret;
   try {
     WhisperArchive d(this->filename_for_key(key_name));
@@ -271,7 +281,7 @@ ReadAllResult DiskStore::read_all(const string& key_name, bool local_only) {
 
 unordered_map<string, string> DiskStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, string> ret;
   for (const auto& it : data) {
     if (!this->key_name_is_valid(it.first)) {
@@ -294,7 +304,8 @@ unordered_map<string, string> DiskStore::write(
 
         } else {
           auto update_metadata_ret = this->update_metadata({{it.first, m}},
-              true, UpdateMetadataBehavior::Ignore, skip_buffering, local_only);
+              true, UpdateMetadataBehavior::Ignore, skip_buffering, local_only,
+              profiler);
           auto series_ret = update_metadata_ret.at(it.first);
 
           if (series_ret.empty() || (series_ret == "ignored")) {
@@ -320,7 +331,8 @@ unordered_map<string, string> DiskStore::write(
 
 void DiskStore::find_recursive(vector<string>& ret,
     const string& current_path_prefix, const string& current_key_prefix,
-    size_t part_index, const vector<string>& pattern_parts) {
+    size_t part_index, const vector<string>& pattern_parts,
+    BaseFunctionProfiler* profiler) {
 
   if (part_index >= pattern_parts.size()) {
     ret.push_back(current_key_prefix + "*");
@@ -350,7 +362,7 @@ void DiskStore::find_recursive(vector<string>& ret,
       // part_index so deeper levels will also see the **
       this->find_recursive(ret, full_path + "/",
           current_key_prefix + filename + ".",
-          part_index + !is_find_all_recursive, pattern_parts);
+          part_index + !is_find_all_recursive, pattern_parts, profiler);
 
     } else {
       if (part_index != pattern_parts.size() - 1) {
@@ -368,16 +380,19 @@ void DiskStore::find_recursive(vector<string>& ret,
       ret.push_back(current_key_prefix + filename);
     }
   }
+  profiler->checkpoint("list_directory:" + current_path_prefix);
 }
 
 unordered_map<string, FindResult> DiskStore::find(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, FindResult> ret;
   for (const auto& pattern : patterns) {
     FindResult& r = ret[pattern];
     try {
       vector<string> pattern_parts = split(pattern, '.');
-      this->find_recursive(r.results, this->directory + "/", "", 0, pattern_parts);
+      this->find_recursive(r.results, this->directory + "/", "", 0,
+          pattern_parts, profiler);
     } catch (const exception& e) {
       r.error = e.what();
     }

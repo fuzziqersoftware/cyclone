@@ -87,7 +87,8 @@ void DatagramServer::on_client_input(int fd, short events) {
     }
 
     // send it to the store
-    for (const auto& it : this->store->write(data, false, false)) {
+    auto profiler = create_profiler("DatagramServer::write");
+    for (const auto& it : this->store->write(data, false, false, profiler.get())) {
       if (it.second.empty()) {
         continue;
       }

@@ -35,12 +35,12 @@ void MultiStore::set_autocreate_rules(
 unordered_map<string, string> MultiStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   unordered_map<string, string> ret;
   for (const auto& it : this->stores) {
     auto results = it.second->update_metadata(metadata, create_new,
-        update_behavior, skip_buffering, local_only);
+        update_behavior, skip_buffering, local_only, profiler);
     for (const auto& result_it : results) {
       ret.emplace(move(result_it.first), move(result_it.second));
     }
@@ -49,11 +49,12 @@ unordered_map<string, string> MultiStore::update_metadata(
 }
 
 unordered_map<string, int64_t> MultiStore::delete_series(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
 
   unordered_map<string, int64_t> ret;
   for (const auto& it : this->stores) {
-    auto results = it.second->delete_series(patterns, local_only);
+    auto results = it.second->delete_series(patterns, local_only, profiler);
     for (const auto& result_it : results) {
       ret[result_it.first] += result_it.second;
     }
@@ -63,19 +64,21 @@ unordered_map<string, int64_t> MultiStore::delete_series(
 
 unordered_map<string, unordered_map<string, ReadResult>> MultiStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : this->stores) {
-    auto results = it.second->read(key_names, start_time, end_time, local_only);
+    auto results = it.second->read(key_names, start_time, end_time, local_only,
+        profiler);
     this->combine_read_results(ret, move(results));
   }
   return ret;
 }
 
-ReadAllResult MultiStore::read_all(const string& key_name, bool local_only) {  
+ReadAllResult MultiStore::read_all(const string& key_name, bool local_only,
+    BaseFunctionProfiler* profiler) {
   ReadAllResult ret;
   for (const auto& it : this->stores) {
-    auto result = it.second->read_all(key_name, local_only);
+    auto result = it.second->read_all(key_name, local_only, profiler);
     if (result.metadata.archive_args.empty()) {
       continue;
     }
@@ -90,10 +93,10 @@ ReadAllResult MultiStore::read_all(const string& key_name, bool local_only) {
 
 unordered_map<string, string> MultiStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, string> ret;
   for (const auto& it : this->stores) {
-    auto results = it.second->write(data, skip_buffering, local_only);
+    auto results = it.second->write(data, skip_buffering, local_only, profiler);
     for (const auto& result_it : results) {
       ret.emplace(move(result_it.first), move(result_it.second));
     }
@@ -102,10 +105,11 @@ unordered_map<string, string> MultiStore::write(
 }
 
 unordered_map<string, FindResult> MultiStore::find(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, FindResult> ret;
   for (const auto it : this->stores) {
-    auto results = it.second->find(patterns, local_only);
+    auto results = it.second->find(patterns, local_only, profiler);
     this->combine_find_results(ret, move(results));
   }
   return ret;

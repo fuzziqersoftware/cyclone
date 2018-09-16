@@ -27,6 +27,7 @@ private:
     struct sockaddr remote_addr;
     int fd;
     Protocol protocol;
+    bool profiler_enabled;
 
     Client(int fd, const struct sockaddr& remote_addr, Protocol protocol);
   };
@@ -67,7 +68,8 @@ private:
   void on_client_error(WorkerThread& wt, struct bufferevent *bev, short events);
   void check_for_thread_exit(WorkerThread& wt, evutil_socket_t fd, short what);
 
-  void execute_shell_command(const char* command, struct evbuffer* out_buffer);
+  void execute_shell_command(const char* command, struct evbuffer* out_buffer,
+      Client* client);
 
   void run_thread(int thread_id);
 

@@ -180,9 +180,12 @@ string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,
     start_time = end_time - 60 * 60;
   }
 
+  auto profiler = create_profiler("CycloneHTTPServer::read");
   auto r = this->create_renderer(format, out_buffer);
-  auto data = this->store->read(targets, start_time, end_time, false);
+  auto data = this->store->read(targets, start_time, end_time, false, profiler.get());
+  profiler->checkpoint("store_read");
   r->render_data(data);
+  profiler->checkpoint("render");
   return r->content_type();
 }
 
@@ -206,9 +209,12 @@ string CycloneHTTPServer::handle_graphite_find_request(struct Thread& t,
     queries.emplace_back(its.first->second);
   }
 
+  auto profiler = create_profiler("CycloneHTTPServer::find");
   auto r = this->create_renderer(format, out_buffer);
-  auto ret = this->store->find(queries, false);
+  auto ret = this->store->find(queries, false, profiler.get());
+  profiler->checkpoint("store_find");
   r->render_find_results(ret);
+  profiler->checkpoint("render");
   return r->content_type();
 }
 
@@ -234,7 +240,9 @@ string CycloneHTTPServer::handle_read_all_request(struct Thread& t,
     }
   }
 
-  auto result = this->store->read_all(target, false);
+  auto profiler = create_profiler("CycloneHTTPServer::read_all");
+  auto result = this->store->read_all(target, false, profiler.get());
+  profiler->checkpoint("store_read_all");
 
   if (result.error.empty()) {
     evbuffer_add(out_buffer, "[", 1);
@@ -254,6 +262,7 @@ string CycloneHTTPServer::handle_read_all_request(struct Thread& t,
   } else {
     evbuffer_add_printf(out_buffer, "\"error: %s\"", result.error.c_str());
   }
+  profiler->checkpoint("render");
 
   return "application/json";
 }

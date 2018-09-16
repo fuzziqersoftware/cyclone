@@ -202,7 +202,8 @@ SeriesMetadata Store::get_autocreate_metadata_for_key(const string& key_name) {
 }
 
 unordered_map<string, string> Store::resolve_patterns(
-    const vector<string>& key_names, bool local_only) {
+    const vector<string>& key_names, bool local_only,
+    BaseFunctionProfiler* profiler) {
 
   // if some of the key names are patterns, execute find queries on them to get
   // the actual key names
@@ -217,7 +218,7 @@ unordered_map<string, string> Store::resolve_patterns(
   }
 
   if (!patterns.empty()) {
-    for (auto it : this->find(patterns, local_only)) {
+    for (auto it : this->find(patterns, local_only, profiler)) {
       if (!it.second.error.empty()) {
         continue;
       }

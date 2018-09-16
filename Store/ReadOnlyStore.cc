@@ -25,7 +25,7 @@ shared_ptr<Store> ReadOnlyStore::get_substore() const {
 unordered_map<string, string> ReadOnlyStore::update_metadata(
       const SeriesMetadataMap& metadata_map, bool create_new,
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
-      bool local_only) {
+      bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, string> ret;
   for (const auto& it : metadata_map) {
     ret.emplace(it.first, "writes not allowed");
@@ -34,7 +34,8 @@ unordered_map<string, string> ReadOnlyStore::update_metadata(
 }
 
 unordered_map<string, int64_t> ReadOnlyStore::delete_series(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, int64_t> ret;
   for (const auto& pattern : patterns) {
     ret.emplace(pattern, 0);
@@ -44,17 +45,19 @@ unordered_map<string, int64_t> ReadOnlyStore::delete_series(
 
 unordered_map<string, unordered_map<string, ReadResult>> ReadOnlyStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only) {
-  return this->store->read(key_names, start_time, end_time, local_only);
+    bool local_only, BaseFunctionProfiler* profiler) {
+  return this->store->read(key_names, start_time, end_time, local_only,
+      profiler);
 }
 
-ReadAllResult ReadOnlyStore::read_all(const string& key_name, bool local_only) {  
-  return this->store->read_all(key_name, local_only);
+ReadAllResult ReadOnlyStore::read_all(const string& key_name, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  return this->store->read_all(key_name, local_only, profiler);
 }
 
 unordered_map<string, string> ReadOnlyStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, string> ret;
   for (const auto& it : data) {
     ret.emplace(it.first, "writes not allowed");
@@ -63,8 +66,9 @@ unordered_map<string, string> ReadOnlyStore::write(
 }
 
 unordered_map<string, FindResult> ReadOnlyStore::find(
-    const vector<string>& patterns, bool local_only) {
-  return this->store->find(patterns, local_only);
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  return this->store->find(patterns, local_only, profiler);
 }
 
 unordered_map<string, int64_t> ReadOnlyStore::get_stats(bool rotate) {

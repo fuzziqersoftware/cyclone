@@ -41,6 +41,7 @@ struct Options {
   uint64_t stats_report_usecs;
   size_t open_file_cache_size;
   size_t prepopulate_depth;
+  int64_t profiler_threshold_usecs;
   int log_level;
 
   shared_ptr<JSONObject> store_config;
@@ -67,6 +68,11 @@ struct Options {
       this->prepopulate_depth = (*json)["prepopulate_depth"]->as_int();
     } catch (const JSONObject::key_error& e) {
       this->prepopulate_depth = 0;
+    }
+    try {
+      this->profiler_threshold_usecs = (*json)["profiler_threshold_usecs"]->as_int();
+    } catch (const JSONObject::key_error& e) {
+      this->profiler_threshold_usecs = -1;
     }
     try {
       this->log_level = (*json)["log_level"]->as_int();
@@ -456,6 +462,8 @@ int main(int argc, char **argv) {
   signal(SIGTERM, signal_handler);
   signal(SIGUSR1, signal_handler);
 
+  set_profiler_threshold(opt.profiler_threshold_usecs);
+
   if (opt.prepopulate_depth) {
     log(INFO, "populating cache directories to depth %zu", opt.prepopulate_depth);
 
@@ -469,7 +477,10 @@ int main(int argc, char **argv) {
       pending_patterns.pop_front();
 
       log(INFO, "[prepopulate] find %s (level %zu)", pattern.c_str(), level);
-      auto find_result_map = opt.store->find({pattern}, true);
+      auto profiler = create_profiler("prepopulate_find");
+      auto find_result_map = opt.store->find({pattern}, true, profiler.get());
+      profiler.reset();
+
       if (level >= opt.prepopulate_depth) {
         continue;
       }
@@ -589,6 +600,13 @@ int main(int argc, char **argv) {
           set_log_level(opt.log_level);
         }
 
+        if (new_opt.profiler_threshold_usecs != opt.profiler_threshold_usecs) {
+          log(INFO, "profiler_threshold_usecs changed from %" PRId64 " to %" PRId64,
+              opt.profiler_threshold_usecs, new_opt.profiler_threshold_usecs);
+          opt.profiler_threshold_usecs = new_opt.profiler_threshold_usecs;
+          set_profiler_threshold(opt.profiler_threshold_usecs);
+        }
+
         apply_store_config(opt.store_config, new_opt.store_config, opt.store);
         opt.store_config = new_opt.store_config;
 
@@ -615,7 +633,8 @@ int main(int argc, char **argv) {
       }
 
       try {
-        opt.store->write(data_to_write, false, false);
+        auto profiler = create_profiler("stats_write");
+        opt.store->write(data_to_write, false, false, profiler.get());
       } catch (const exception& e) {
         log(INFO, "failed to report stats: %s\n", e.what());
       }

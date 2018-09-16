@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../gen-cpp/Cyclone.h"
+#include "FunctionProfiler.hh"
 
 
 class Store {
@@ -30,20 +31,23 @@ public:
   virtual std::unordered_map<std::string, std::string> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
-      bool local_only) = 0;
+      bool local_only, BaseFunctionProfiler* profiler) = 0;
   virtual std::unordered_map<std::string, int64_t> delete_series(
-      const std::vector<std::string>& patterns, bool local_only) = 0;
+      const std::vector<std::string>& patterns, bool local_only,
+      BaseFunctionProfiler* profiler) = 0;
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
-      int64_t end_time, bool local_only) = 0;
-  virtual ReadAllResult read_all(const std::string& key_name, bool local_only) = 0;
+      int64_t end_time, bool local_only, BaseFunctionProfiler* profiler) = 0;
+  virtual ReadAllResult read_all(const std::string& key_name, bool local_only,
+      BaseFunctionProfiler* profiler) = 0;
   virtual std::unordered_map<std::string, std::string> write(
       const std::unordered_map<std::string, Series>& data, bool skip_buffering,
-      bool local_only) = 0;
+      bool local_only, BaseFunctionProfiler* profiler) = 0;
 
   virtual std::unordered_map<std::string, FindResult> find(
-      const std::vector<std::string>& patterns, bool local_only) = 0;
+      const std::vector<std::string>& patterns, bool local_only,
+      BaseFunctionProfiler* profiler) = 0;
 
   virtual void flush();
 
@@ -76,7 +80,8 @@ protected:
   SeriesMetadata get_autocreate_metadata_for_key(const std::string& key_name);
 
   std::unordered_map<std::string, std::string> resolve_patterns(
-      const std::vector<std::string>& key_names, bool local_only);
+      const std::vector<std::string>& key_names, bool local_only,
+      BaseFunctionProfiler* profiler);
 
   struct Stats {
     std::atomic<uint64_t> start_time;

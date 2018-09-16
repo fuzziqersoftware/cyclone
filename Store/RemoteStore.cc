@@ -57,20 +57,26 @@ void RemoteStore::set_netloc(const std::string& new_hostname, int new_port) {
 unordered_map<string, string> RemoteStore::update_metadata(
     const SeriesMetadataMap& metadata_map, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, string> ret;
   if (local_only) {
+    profiler->add_metadata("local_only", "true");
     return ret;
   }
 
   try {
     auto c = this->get_client();
+    profiler->checkpoint("get_client");
     c->client->update_metadata(ret, metadata_map, create_new,
         (update_behavior == UpdateMetadataBehavior::Ignore),
         (update_behavior == UpdateMetadataBehavior::Recreate), skip_buffering,
         true);
+    profiler->checkpoint("remote_call");
     this->return_client(move(c));
+
   } catch (const exception& e) {
+    profiler->checkpoint("remote_call");
+    profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : metadata_map) {
       ret.emplace(it.first, e.what());
@@ -81,17 +87,24 @@ unordered_map<string, string> RemoteStore::update_metadata(
 }
 
 unordered_map<string, int64_t> RemoteStore::delete_series(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, int64_t> ret;
   if (local_only) {
+    profiler->add_metadata("local_only", "true");
     return ret;
   }
 
   try {
     auto c = this->get_client();
+    profiler->checkpoint("get_client");
     c->client->delete_series(ret, patterns, true);
+    profiler->checkpoint("remote_call");
     this->return_client(move(c));
+
   } catch (const exception& e) {
+    profiler->checkpoint("remote_call");
+    profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : patterns) {
       ret.emplace(it, 0);
@@ -103,20 +116,26 @@ unordered_map<string, int64_t> RemoteStore::delete_series(
 
 unordered_map<string, unordered_map<string, ReadResult>> RemoteStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   if (key_names.empty()) {
     return ret;
   }
   if (local_only) {
+    profiler->add_metadata("local_only", "true");
     return ret;
   }
 
   try {
     auto c = this->get_client();
+    profiler->checkpoint("get_client");
     c->client->read(ret, key_names, start_time, end_time, true);
+    profiler->checkpoint("remote_call");
     this->return_client(move(c));
+
   } catch (const exception& e) {
+    profiler->checkpoint("remote_call");
+    profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : key_names) {
       ret[it][it].error = e.what();
@@ -126,17 +145,24 @@ unordered_map<string, unordered_map<string, ReadResult>> RemoteStore::read(
   return ret;
 }
 
-ReadAllResult RemoteStore::read_all(const string& key_name, bool local_only) {  
+ReadAllResult RemoteStore::read_all(const string& key_name, bool local_only,
+    BaseFunctionProfiler* profiler) {
   ReadAllResult ret;
   if (local_only) {
+    profiler->add_metadata("local_only", "true");
     return ret;
   }
 
   try {
     auto c = this->get_client();
+    profiler->checkpoint("get_client");
     c->client->read_all(ret, key_name, true);
+    profiler->checkpoint("remote_call");
     this->return_client(move(c));
+
   } catch (const exception& e) {
+    profiler->checkpoint("remote_call");
+    profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     ret.error = e.what();
   }
@@ -146,20 +172,26 @@ ReadAllResult RemoteStore::read_all(const string& key_name, bool local_only) {
 
 unordered_map<string, string> RemoteStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, string> ret;
   if (data.empty()) {
     return ret;
   }
   if (local_only) {
+    profiler->add_metadata("local_only", "true");
     return ret;
   }
 
   try {
     auto c = this->get_client();
+    profiler->checkpoint("get_client");
     c->client->write(ret, data, skip_buffering, true);
+    profiler->checkpoint("remote_call");
     this->return_client(move(c));
+
   } catch (const exception& e) {
+    profiler->checkpoint("remote_call");
+    profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : data) {
       ret.emplace(it.first, e.what());
@@ -170,17 +202,24 @@ unordered_map<string, string> RemoteStore::write(
 }
 
 unordered_map<string, FindResult> RemoteStore::find(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, FindResult> ret;
   if (local_only) {
+    profiler->add_metadata("local_only", "true");
     return ret;
   }
 
   try {
     auto c = this->get_client();
+    profiler->checkpoint("get_client");
     c->client->find(ret, patterns, true);
+    profiler->checkpoint("remote_call");
     this->return_client(move(c));
+
   } catch (const exception& e) {
+    profiler->checkpoint("remote_call");
+    profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : patterns) {
       ret[it].error = e.what();

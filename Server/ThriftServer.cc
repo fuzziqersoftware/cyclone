@@ -37,6 +37,7 @@ public:
       bool skip_existing_series, bool truncate_existing_series,
       bool skip_buffering, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
+    auto profiler = create_profiler("ThriftServer::update_metadata");
 
     Store::UpdateMetadataBehavior update_behavior;
     if (skip_existing_series) {
@@ -49,13 +50,14 @@ public:
       }
     }
     _return = this->store->update_metadata(metadata, create_new,
-        update_behavior, skip_buffering, local_only);
+        update_behavior, skip_buffering, local_only, profiler.get());
   }
 
   void delete_series(unordered_map<string, int64_t>& _return,
       const vector<string>& key_names, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    _return = this->store->delete_series(key_names, local_only);
+    auto profiler = create_profiler("ThriftServer::delete_series");
+    _return = this->store->delete_series(key_names, local_only, profiler.get());
   }
 
   void read(
@@ -63,26 +65,32 @@ public:
       const vector<string>& targets, const int64_t start_time,
       const int64_t end_time, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    _return = this->store->read(targets, start_time, end_time, local_only);
+    auto profiler = create_profiler("ThriftServer::read");
+    _return = this->store->read(targets, start_time, end_time, local_only,
+        profiler.get());
   }
 
   void read_all(ReadAllResult& _return, const string& key_name,
       bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    _return = this->store->read_all(key_name, local_only);
+    auto profiler = create_profiler("ThriftServer::read_all");
+    _return = this->store->read_all(key_name, local_only, profiler.get());
   }
 
   void write(unordered_map<string, string>& _return,
       const unordered_map<string, Series>& data, bool skip_buffering,
       bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    _return = this->store->write(data, skip_buffering, local_only);
+    auto profiler = create_profiler("ThriftServer::write");
+    _return = this->store->write(data, skip_buffering, local_only,
+        profiler.get());
   }
 
   void find(unordered_map<string, FindResult>& _return,
       const vector<string>& patterns, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    _return = this->store->find(patterns, local_only);
+    auto profiler = create_profiler("ThriftServer::find");
+    _return = this->store->find(patterns, local_only, profiler.get());
   }
 
   void stats(unordered_map<string, int64_t>& _return) {

@@ -48,19 +48,20 @@ void ConsistentHashMultiStore::set_precision(int64_t new_precision) {
 unordered_map<string, string> ConsistentHashMultiStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<uint8_t, unordered_map<string, SeriesMetadata>> partitioned_data;
 
   for (const auto& it : metadata) {
     uint8_t store_id = this->ring->host_id_for_key(it.first);
     partitioned_data[store_id].emplace(it.first, it.second);
   }
+  profiler->checkpoint("partition_series");
 
   unordered_map<string, string> ret;
   for (const auto& it : partitioned_data) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->update_metadata(it.second,
-        create_new, update_behavior, skip_buffering, local_only);
+        create_new, update_behavior, skip_buffering, local_only, profiler);
     for (const auto& result_it : results) {
       ret.emplace(move(result_it.first), move(result_it.second));
     }
@@ -69,13 +70,15 @@ unordered_map<string, string> ConsistentHashMultiStore::update_metadata(
 }
 
 unordered_map<string, int64_t> ConsistentHashMultiStore::delete_series(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
 
   // if a verify is in progress, we need to forward all deletes everywhere
   // because there could be keys on wrong backends. so we'll use the parent
   // class' method to do this
   if (this->read_from_all || (this->verify_progress.in_progress() && this->verify_progress.repair)) {
-    return this->MultiStore::delete_series(patterns, local_only);
+    profiler->add_metadata("read_from_all", "true");
+    return this->MultiStore::delete_series(patterns, local_only, profiler);
   }
 
   size_t host_count = this->ring->all_hosts().size();
@@ -93,11 +96,13 @@ unordered_map<string, int64_t> ConsistentHashMultiStore::delete_series(
       partitioned_data[store_id].push_back(pattern);
     }
   }
+  profiler->checkpoint("partition_series");
 
   unordered_map<string, int64_t> ret;
   for (const auto& it : partitioned_data) {
     const string& store_name = this->ring->host_for_id(it.first).name;
-    auto results = this->stores[store_name]->delete_series(it.second, local_only);
+    auto results = this->stores[store_name]->delete_series(it.second,
+        local_only, profiler);
     for (const auto& result_it : results) {
       ret[result_it.first] += result_it.second;
     }
@@ -107,11 +112,13 @@ unordered_map<string, int64_t> ConsistentHashMultiStore::delete_series(
 
 unordered_map<string, unordered_map<string, ReadResult>> ConsistentHashMultiStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   // see comment in delete_series about this
   if (this->read_from_all || (this->verify_progress.in_progress() && this->verify_progress.repair)) {
-    return this->MultiStore::read(key_names, start_time, end_time, local_only);
+    profiler->add_metadata("read_from_all", "true");
+    return this->MultiStore::read(key_names, start_time, end_time, local_only,
+        profiler);
   }
 
   unordered_map<size_t, vector<string>> partitioned_data;
@@ -126,45 +133,48 @@ unordered_map<string, unordered_map<string, ReadResult>> ConsistentHashMultiStor
       partitioned_data[store_id].push_back(key_names[x]);
     }
   }
+  profiler->checkpoint("partition_series");
 
   // TODO: we should find some way to make the reads happen in parallel
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : partitioned_data) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->read(it.second, start_time,
-        end_time, local_only);
+        end_time, local_only, profiler);
     this->combine_read_results(ret, move(results));
   }
   return ret;
 }
 
 ReadAllResult ConsistentHashMultiStore::read_all(const string& key_name,
-    bool local_only) {  
+    bool local_only, BaseFunctionProfiler* profiler) {
   // see comment in delete_series about this
   if (this->read_from_all || (this->verify_progress.in_progress() && this->verify_progress.repair)) {
-    return this->MultiStore::read_all(key_name, local_only);
+    profiler->add_metadata("read_from_all", "true");
+    return this->MultiStore::read_all(key_name, local_only, profiler);
   }
 
   size_t store_id = this->ring->host_id_for_key(key_name);
   const string& store_name = this->ring->host_for_id(store_id).name;
-  return this->stores[store_name]->read_all(key_name, local_only);
+  return this->stores[store_name]->read_all(key_name, local_only, profiler);
 }
 
 unordered_map<string, string> ConsistentHashMultiStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   unordered_map<uint8_t, unordered_map<string, Series>> partitioned_data;
   for (const auto& it : data) {
     uint8_t store_id = this->ring->host_id_for_key(it.first);
     partitioned_data[store_id].emplace(it.first, it.second);
   }
+  profiler->checkpoint("partition_series");
 
   unordered_map<string, string> ret;
   for (const auto& it : partitioned_data) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->write(it.second, skip_buffering,
-        local_only);
+        local_only, profiler);
     for (const auto& result_it : results) {
       ret.emplace(move(result_it.first), move(result_it.second));
     }
@@ -256,7 +266,12 @@ void ConsistentHashMultiStore::verify_thread_routine() {
     string pattern = pending_patterns.back();
     pending_patterns.pop_back();
 
-    auto find_results = this->find({pattern}, false);
+    string function_name = string_printf("verify_%s", pattern.c_str());
+    auto profiler = create_profiler(function_name.c_str());
+
+    auto find_results = this->find({pattern}, false, profiler.get());
+    profiler->checkpoint("find");
+
     auto find_result_it = find_results.find(pattern);
     this->verify_progress.find_queries_executed++;
     if (find_result_it == find_results.end()) {
@@ -299,7 +314,9 @@ void ConsistentHashMultiStore::verify_thread_routine() {
         // note: we set local_only = true here because the verify procedure
         // must run on ALL nodes in the cluster, so it makes sense for each
         // node to only be responsible for the series on its local disk
-        auto read_all_result = store_it.second->read_all(key_name, true);
+        auto read_all_result = store_it.second->read_all(key_name, true,
+            profiler.get());
+        profiler->checkpoint("read_all");
         if (!read_all_result.error.empty()) {
           log(WARNING, "[ConsistentHashMultiStore] key %s could not be read from %s (error: %s)",
               key_name.c_str(), store_it.first.c_str(), read_all_result.error.c_str());
@@ -318,7 +335,9 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           // exist already
           SeriesMetadataMap metadata_map({{key_name, read_all_result.metadata}});
           auto update_metadata_ret = responsible_store->update_metadata(
-              metadata_map, true, UpdateMetadataBehavior::Ignore, true, false);
+              metadata_map, true, UpdateMetadataBehavior::Ignore, true, false,
+              profiler.get());
+          profiler->checkpoint("update_metadata");
           try {
             const string& error = update_metadata_ret.at(key_name);
             if (!error.empty() && (error != "ignored")) {
@@ -337,7 +356,9 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           // move step 2: write all the data from the local series into the
           // remote series
           SeriesMap write_map({{key_name, move(read_all_result.data)}});
-          auto write_ret = responsible_store->write(write_map, true, false);
+          auto write_ret = responsible_store->write(write_map, true, false,
+              profiler.get());
+          profiler->checkpoint("write");
           try {
             const string& error = write_ret.at(key_name);
             if (!error.empty()) {
@@ -359,7 +380,9 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           // move step 3: delete the original series. note that we use
           // local_only = true here because we also did so when read_all'ing
           // this series' data
-          auto delete_ret = store_it.second->delete_series({key_name}, true);
+          auto delete_ret = store_it.second->delete_series({key_name}, true,
+              profiler.get());
+          profiler->checkpoint("delete_series");
           int64_t num_deleted = delete_ret[key_name];
           if (num_deleted == 1) {
             log(INFO, "[ConsistentHashMultiStore] key %s moved from %s to %s",

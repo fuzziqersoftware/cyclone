@@ -34,19 +34,20 @@ void QueryStore::set_autocreate_rules(
 unordered_map<string, string> QueryStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   return this->store->update_metadata(metadata, create_new, update_behavior,
-      skip_buffering, local_only);
+      skip_buffering, local_only, profiler);
 }
 
 unordered_map<string, int64_t> QueryStore::delete_series(
-    const vector<string>& patterns, bool local_only) {
-  return this->store->delete_series(patterns, local_only);
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  return this->store->delete_series(patterns, local_only, profiler);
 }
 
 unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   unordered_map<string, Query> parsed_queries;
   unordered_map<string, unordered_map<string, ReadResult>> ret;
@@ -58,6 +59,7 @@ unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
       ret[query][query].error = e.what();
     }
   }
+  profiler->checkpoint("parse_query");
 
   // find all the read patterns and execute them all
   // TODO: we can probably do something better than this (copying the
@@ -71,8 +73,11 @@ unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
     substore_reads.insert(substore_reads.end(), substore_reads_set.begin(),
         substore_reads_set.end());
   }
+  profiler->checkpoint("extract_series_references");
+
   auto substore_results = this->store->read(substore_reads, start_time,
-      end_time, local_only);
+      end_time, local_only, profiler);
+  profiler->checkpoint("query_substore_read");
 
   // now apply the relevant functions on top of them
   // TODO: if a series is only referenced once, we probably can move the data
@@ -81,23 +86,26 @@ unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
     this->execute_query(it.second, substore_results);
     ret.emplace(it.first, it.second.series_data);
   }
+  profiler->checkpoint("execute_query");
 
   return ret;
 }
 
-ReadAllResult QueryStore::read_all(const string& key_name, bool local_only) {  
-  return this->store->read_all(key_name, local_only);
+ReadAllResult QueryStore::read_all(const string& key_name, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  return this->store->read_all(key_name, local_only, profiler);
 }
 
 unordered_map<string, string> QueryStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only) {
-  return this->store->write(data, skip_buffering, local_only);
+    bool local_only, BaseFunctionProfiler* profiler) {
+  return this->store->write(data, skip_buffering, local_only, profiler);
 }
 
 unordered_map<string, FindResult> QueryStore::find(
-    const vector<string>& patterns, bool local_only) {
-  return this->store->find(patterns, local_only);
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  return this->store->find(patterns, local_only, profiler);
 }
 
 unordered_map<string, int64_t> QueryStore::get_stats(bool rotate) {

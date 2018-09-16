@@ -18,7 +18,7 @@ using namespace std;
 unordered_map<string, string> EmptyStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   unordered_map<string, string> ret;
   for (const auto& it : metadata) {
@@ -28,7 +28,8 @@ unordered_map<string, string> EmptyStore::update_metadata(
 }
 
 unordered_map<string, int64_t> EmptyStore::delete_series(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, int64_t> ret;
   for (const auto& pattern : patterns) {
     ret.emplace(pattern, 0);
@@ -38,7 +39,7 @@ unordered_map<string, int64_t> EmptyStore::delete_series(
 
 unordered_map<string, unordered_map<string, ReadResult>> EmptyStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : key_names) {
@@ -47,13 +48,14 @@ unordered_map<string, unordered_map<string, ReadResult>> EmptyStore::read(
   return ret;
 }
 
-ReadAllResult EmptyStore::read_all(const string& key_name, bool local_only) {  
+ReadAllResult EmptyStore::read_all(const string& key_name, bool local_only,
+    BaseFunctionProfiler* profiler) {
   return ReadAllResult();
 }
 
 unordered_map<string, string> EmptyStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   unordered_map<string, string> ret;
   for (const auto& it : data) {
@@ -63,7 +65,8 @@ unordered_map<string, string> EmptyStore::write(
 }
 
 unordered_map<string, FindResult> EmptyStore::find(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
 
   unordered_map<string, FindResult> ret;
   for (const auto& it : patterns) {

@@ -284,7 +284,7 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
 unordered_map<string, string> CachedDiskStore::update_metadata(
     const SeriesMetadataMap& metadata_map, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   unordered_map<string, string> ret;
   for (auto& it : metadata_map) {
@@ -394,7 +394,8 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
 }
 
 unordered_map<string, int64_t> CachedDiskStore::delete_series(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, int64_t> ret;
 
   // if a pattern ends in **, delete the entire tree. ** doesn't work in
@@ -429,8 +430,11 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
       determinate_patterns.emplace_back(pattern);
     }
   }
+  profiler->checkpoint("separate_determinate_patterns");
 
-  auto key_to_pattern = this->resolve_patterns(determinate_patterns, local_only);
+  auto key_to_pattern = this->resolve_patterns(determinate_patterns, local_only,
+      profiler);
+  profiler->checkpoint("resolve_patterns");
 
   for (auto key_it : key_to_pattern) {
     // if the token is a pattern, don't delete it - directory trees must be
@@ -461,6 +465,7 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
           key_it.first.c_str(), e.what());
     }
   }
+  profiler->checkpoint("delete_files");
 
   for (const string& pattern : determinate_patterns) {
     ret.emplace(pattern, 0);
@@ -470,10 +475,11 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
 
 unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
 
   unordered_map<string, string> key_to_pattern = this->resolve_patterns(
-      key_names, local_only);
+      key_names, local_only, profiler);
+  profiler->checkpoint("resolve_patterns");
 
   unordered_map<string, unordered_map<string, ReadResult>> ret;
   for (const auto& it : key_to_pattern) {
@@ -515,13 +521,14 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
       r.error = e.what();
     }
   }
+  profiler->checkpoint("read_data");
 
   this->stats[0].report_read_request(ret);
   return ret;
 }
 
 ReadAllResult CachedDiskStore::read_all(const string& key_name,
-    bool local_only) {  
+    bool local_only, BaseFunctionProfiler* profiler) {  
   ReadAllResult ret;
 
   KeyPath p(key_name);
@@ -559,7 +566,7 @@ ReadAllResult CachedDiskStore::read_all(const string& key_name,
 
 unordered_map<string, string> CachedDiskStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only) {
+    bool local_only, BaseFunctionProfiler* profiler) {
   unordered_map<string, string> ret;
   for (auto& it : data) {
     if (!this->key_name_is_valid(it.first)) {
@@ -613,14 +620,16 @@ static string path_join(const string& a, const string& b) {
 }
 
 void CachedDiskStore::find_all_recursive(FindResult& r,
-    CachedDirectoryContents* level, const string& level_path) {
+    CachedDirectoryContents* level, const string& level_path,
+    BaseFunctionProfiler* profiler) {
   {
     rw_guard g(level->subdirectories_lock, false);
     for (const auto& it : level->subdirectories) {
       this->find_all_recursive(r, it.second.get(),
-          path_join(level_path, it.first));
+          path_join(level_path, it.first), profiler);
     }
   }
+  profiler->checkpoint("find_all_recursive_iterate_subdirs_" + level_path);
 
   {
     rw_guard g(level->files_lock, false);
@@ -628,10 +637,12 @@ void CachedDiskStore::find_all_recursive(FindResult& r,
       r.results.emplace_back(path_join(level_path, it.first));
     }
   }
+  profiler->checkpoint("find_all_recursive_iterate_files_" + level_path);
 }
 
 unordered_map<string, FindResult> CachedDiskStore::find(
-    const vector<string>& patterns, bool local_only) {
+    const vector<string>& patterns, bool local_only,
+    BaseFunctionProfiler* profiler) {
 
   unordered_map<string, FindResult> ret;
   for (const auto& pattern : patterns) {
@@ -644,6 +655,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
 
     try {
       KeyPath p(pattern);
+      profiler->checkpoint("start_pattern_" + pattern);
 
       unordered_map<CachedDirectoryContents*, string> current_levels, next_levels;
       current_levels.emplace(&this->cache_root, "");
@@ -662,6 +674,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
           if (this->token_is_pattern(item)) {
             // make sure the current level is complete
             this->populate_cache_level(level, this->filename_for_key(current_level_path, false));
+            profiler->checkpoint("populate_" + current_level_path);
 
             // scan through its directories for the ones we want
             bool keep_lock = false;
@@ -684,6 +697,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             if (keep_lock) {
               guards.emplace_back(move(g));
             }
+            profiler->checkpoint("resolve_token_" + item);
 
           // this token isn't a pattern; we can directly look up the subdirectory
           // (and not populate + scan the current directory)
@@ -701,6 +715,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
               string next_level_path = path_join(current_level_path, item);
               next_levels.emplace(next_level, next_level_path);
               this->stats[0].directory_hits++;
+              profiler->checkpoint("resolve_token_hit_" + item);
 
             } catch (const out_of_range& e) {
               this->stats[0].directory_misses++;
@@ -721,6 +736,9 @@ unordered_map<string, FindResult> CachedDiskStore::find(
                   guards.emplace_back(level->subdirectories_lock, false);
                   next_levels.emplace(level->subdirectories.at(item).get(), new_level_path);
                 } catch (const out_of_range& e) { }
+                profiler->checkpoint("resolve_token_miss_from_disk_" + item);
+              } else {
+                profiler->checkpoint("resolve_token_miss_" + item);
               }
             }
           }
@@ -730,6 +748,8 @@ unordered_map<string, FindResult> CachedDiskStore::find(
         current_levels.clear();
         next_levels.swap(current_levels);
       }
+
+      profiler->checkpoint("directory_resolution_" + pattern);
 
       // at this point current_levels is the set of directories that (should)
       // contain the files we're looking for; scan through their directories and
@@ -741,9 +761,11 @@ unordered_map<string, FindResult> CachedDiskStore::find(
 
         if (this->token_is_pattern(p.basename)) {
           this->populate_cache_level(level, this->filename_for_key(level_path, false));
+          profiler->checkpoint("populate_" + level_path);
 
           if (basename_is_find_all) {
-            this->find_all_recursive(r, level, level_path);
+            this->find_all_recursive(r, level, level_path, profiler);
+            profiler->checkpoint("find_all_recursive");
 
           } else {
             {
@@ -758,6 +780,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
                 }
               }
             }
+            profiler->checkpoint("iterate_subdirs_" + level_path);
 
             {
               rw_guard g(level->files_lock, false);
@@ -767,6 +790,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
                 }
               }
             }
+            profiler->checkpoint("iterate_files_" + level_path);
           }
 
         } else {
@@ -791,6 +815,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             rw_guard g(level->subdirectories_lock, true);
             this->create_cache_directory_locked(level, p.basename);
           }
+          profiler->checkpoint("subdirectory_lookup_" + level_path);
 
           {
             rw_guard g(level->files_lock, false);
@@ -810,6 +835,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
               this->create_cache_file_locked(level, p.basename, filename);
             }
           }
+          profiler->checkpoint("file_lookup_" + level_path);
         }
       }
 
