@@ -571,8 +571,6 @@ int main(int argc, char **argv) {
     it->start();
   }
 
-  // TODO: also check the config file for updates periodically
-
   // collect stats periodically and report them to the store
   uint64_t next_stats_report_time = opt.stats_report_usecs ?
       ((now() / opt.stats_report_usecs) * opt.stats_report_usecs) : 0;
