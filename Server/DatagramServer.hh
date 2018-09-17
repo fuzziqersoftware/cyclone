@@ -28,7 +28,6 @@ private:
   };
 
   std::atomic<bool> should_exit;
-  uint64_t exit_check_usecs;
   std::vector<WorkerThread> threads;
   std::unordered_set<int> fds;
   std::shared_ptr<Store> store;
@@ -41,8 +40,7 @@ private:
 
 public:
   DatagramServer() = delete;
-  DatagramServer(std::shared_ptr<Store> store, size_t num_threads,
-      uint64_t exit_check_usecs);
+  DatagramServer(std::shared_ptr<Store> store, size_t num_threads);
   ~DatagramServer() = default;
 
   void listen(const std::string& socket_path);

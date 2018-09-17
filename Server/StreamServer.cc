@@ -727,7 +727,7 @@ void StreamServer::execute_shell_command(const char* line_data,
 void StreamServer::run_thread(int worker_num) {
   WorkerThread& wt = this->threads[worker_num];
 
-  struct timeval tv = usecs_to_timeval(this->exit_check_usecs);
+  struct timeval tv = usecs_to_timeval(2000000);
 
   struct event* ev = event_new(wt.base.get(), -1, EV_PERSIST,
       &WorkerThread::dispatch_check_for_thread_exit, &wt);
@@ -740,10 +740,9 @@ void StreamServer::run_thread(int worker_num) {
 
 StreamServer::StreamServer(shared_ptr<Store> store,
     const vector<shared_ptr<ConsistentHashMultiStore>>& hash_stores,
-    size_t num_threads, uint64_t exit_check_usecs) :
+    size_t num_threads) :
     Server("stream_server", num_threads), should_exit(false),
-    exit_check_usecs(exit_check_usecs), client_count(0), store(store),
-    hash_stores(hash_stores) {
+    client_count(0), store(store), hash_stores(hash_stores) {
   for (size_t x = 0; x < num_threads; x++) {
     this->threads.emplace_back(this, x);
   }

@@ -11,7 +11,7 @@ class CycloneHTTPServer : public HTTPServer {
 public:
   CycloneHTTPServer() = delete;
   CycloneHTTPServer(std::shared_ptr<Store> store, size_t num_threads,
-      uint64_t exit_check_interval, const std::string& config_filename);
+      const std::string& config_filename);
   virtual ~CycloneHTTPServer() = default;
 
 protected:

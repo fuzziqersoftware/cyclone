@@ -100,7 +100,7 @@ void DatagramServer::on_client_input(int fd, short events) {
 void DatagramServer::run_thread(int worker_num) {
   WorkerThread& ti = this->threads[worker_num];
 
-  struct timeval tv = usecs_to_timeval(this->exit_check_usecs);
+  struct timeval tv = usecs_to_timeval(2000000);
   struct event* ev = event_new(ti.base.get(), -1, EV_PERSIST,
       &DatagramServer::dispatch_check_for_thread_exit, &ti);
   event_add(ev, &tv);
@@ -110,9 +110,8 @@ void DatagramServer::run_thread(int worker_num) {
   event_del(ev);
 }
 
-DatagramServer::DatagramServer(shared_ptr<Store> store, size_t num_threads,
-    uint64_t exit_check_usecs) : Server("datagram_server", num_threads),
-    should_exit(false), exit_check_usecs(exit_check_usecs), store(store) {
+DatagramServer::DatagramServer(shared_ptr<Store> store, size_t num_threads) :
+    Server("datagram_server", num_threads), should_exit(false), store(store) {
   for (size_t x = 0; x < num_threads; x++) {
     this->threads.emplace_back(this, x);
   }

@@ -11,9 +11,9 @@
 using namespace std;
 
 
-HTTPServer::HTTPServer(size_t num_threads, uint64_t exit_check_usecs) :
+HTTPServer::HTTPServer(size_t num_threads) :
     Server("http_server", num_threads), should_exit(false),
-    exit_check_usecs(exit_check_usecs), num_threads(num_threads), threads() { }
+    num_threads(num_threads), threads() { }
 
 void HTTPServer::listen(const string& path) {
   int fd = ::listen(path, 0, SOMAXCONN);
@@ -213,7 +213,7 @@ HTTPServer::Thread::Thread(HTTPServer* s) : server(s),
     evhttp_accept_socket(this->http.get(), fd);
   }
 
-  struct timeval exit_check_interval = usecs_to_timeval(s->exit_check_usecs);
+  struct timeval exit_check_interval = usecs_to_timeval(2000000);
   event_add(this->exit_check_event.get(), &exit_check_interval);
 
   t = thread(&HTTPServer::worker_thread_routine, s, this);

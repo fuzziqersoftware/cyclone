@@ -37,7 +37,6 @@ struct Options {
   size_t stream_threads;
   size_t datagram_threads;
   size_t thrift_threads;
-  uint64_t exit_check_usecs;
   uint64_t stats_report_usecs;
   size_t open_file_cache_size;
   size_t prepopulate_depth;
@@ -99,11 +98,6 @@ struct Options {
       this->stream_threads = (*json)["stream_threads"]->as_int();
       this->datagram_threads = (*json)["datagram_threads"]->as_int();
       this->thrift_threads = (*json)["thrift_threads"]->as_int();
-      try {
-        this->exit_check_usecs = (*json)["exit_check_usecs"]->as_int();
-      } catch (const JSONObject::key_error& e) {
-        this->exit_check_usecs = 2000000; // 2 seconds
-      }
 
       auto parse_ret = this->parse_store_config(this->store_config);
       this->store = parse_ret.first;
@@ -509,7 +503,7 @@ int main(int argc, char **argv) {
   vector<shared_ptr<Server>> servers;
   if (!opt.http_listen_addrs.empty()) {
     shared_ptr<HTTPServer> s(new CycloneHTTPServer(opt.store, opt.http_threads,
-        opt.exit_check_usecs, opt.filename));
+        opt.filename));
     for (const auto& addr : opt.http_listen_addrs) {
       if (addr.second == 0) {
         s->listen(addr.first);
@@ -523,7 +517,7 @@ int main(int argc, char **argv) {
   if (!opt.line_stream_listen_addrs.empty() || !opt.pickle_listen_addrs.empty() ||
       !opt.shell_listen_addrs.empty()) {
     shared_ptr<StreamServer> s(new StreamServer(opt.store, opt.hash_stores,
-        opt.stream_threads, opt.exit_check_usecs));
+        opt.stream_threads));
     for (const auto& addr : opt.line_stream_listen_addrs) {
       if (addr.second == 0) {
         s->listen(addr.first, StreamServer::Protocol::Line);
@@ -550,7 +544,7 @@ int main(int argc, char **argv) {
 
   if (!opt.line_datagram_listen_addrs.empty()) {
     shared_ptr<DatagramServer> s(new DatagramServer(opt.store,
-        opt.datagram_threads, opt.exit_check_usecs));
+        opt.datagram_threads));
     for (const auto& addr : opt.line_datagram_listen_addrs) {
       if (addr.second == 0) {
         s->listen(addr.first);

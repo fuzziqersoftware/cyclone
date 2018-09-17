@@ -54,7 +54,6 @@ private:
   };
 
   std::atomic<bool> should_exit;
-  uint64_t exit_check_usecs;
   std::vector<WorkerThread> threads;
   std::unordered_map<int, Protocol> listen_fd_to_protocol;
   std::atomic<size_t> client_count;
@@ -83,7 +82,7 @@ public:
   StreamServer(StreamServer&&) = delete;
   StreamServer(std::shared_ptr<Store> store,
       const std::vector<std::shared_ptr<ConsistentHashMultiStore>>& hash_stores,
-      size_t num_threads, uint64_t exit_check_usecs);
+      size_t num_threads);
   virtual ~StreamServer() = default;
 
   void listen(const std::string& socket_path, Protocol protocol);

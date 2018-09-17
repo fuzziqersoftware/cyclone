@@ -21,10 +21,8 @@ using namespace std;
 
 
 CycloneHTTPServer::CycloneHTTPServer(shared_ptr<Store> store,
-    size_t num_threads, uint64_t exit_check_interval,
-    const string& config_filename) :
-    HTTPServer(num_threads, exit_check_interval), store(store),
-    config_filename(config_filename) { }
+    size_t num_threads, const string& config_filename) :
+    HTTPServer(num_threads), store(store), config_filename(config_filename) { }
 
 void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* req) {
   BusyThreadGuard g(&this->idle_thread_count);

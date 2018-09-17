@@ -19,7 +19,7 @@ public:
   HTTPServer() = delete;
   HTTPServer(const HTTPServer&) = delete;
   HTTPServer(HTTPServer&&) = delete;
-  HTTPServer(size_t num_threads, uint64_t exit_check_usecs);
+  HTTPServer(size_t num_threads);
   virtual ~HTTPServer() = default;
 
   void listen(const std::string& path);
@@ -72,7 +72,6 @@ protected:
   std::unordered_set<int> listen_fds;
 
   std::atomic<bool> should_exit;
-  uint64_t exit_check_usecs;
   size_t num_threads;
   std::vector<Thread> threads;
 
