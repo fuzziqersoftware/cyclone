@@ -298,10 +298,14 @@ std::unique_ptr<RemoteStore::Client> RemoteStore::get_client() {
   int port;
   {
     lock_guard<mutex> g(this->clients_lock);
-    if (!this->clients.empty()) {
+    while (!this->clients.empty()) {
       auto ret = move(this->clients.front());
       this->clients.pop_front();
-      return ret;
+
+      // don't return any clients that were created before the netloc changed
+      if (ret->netloc_token == this->netloc_token) {
+        return ret;
+      }
     }
 
     // we have to do this while holding the lock because set_netloc can change
@@ -326,12 +330,19 @@ std::unique_ptr<RemoteStore::Client> RemoteStore::get_client() {
 }
 
 void RemoteStore::return_client(unique_ptr<RemoteStore::Client>&& client) {
+  // don't return a client that was created before the netloc changed
+  if (client->netloc_token != this->netloc_token) {
+    this->stats[0].client_disconnects++;
+    return;
+  }
+
   lock_guard<mutex> g(this->clients_lock);
   if (this->connection_limit &&
       (this->clients.size() >= this->connection_limit)) {
     this->stats[0].client_disconnects++;
     return;
   }
+
   this->clients.emplace_back(move(client));
 }
 
