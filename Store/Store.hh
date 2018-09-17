@@ -79,7 +79,7 @@ protected:
       const std::vector<std::pair<std::string, SeriesMetadata>> autocreate_rules);
   SeriesMetadata get_autocreate_metadata_for_key(const std::string& key_name);
 
-  std::unordered_map<std::string, std::string> resolve_patterns(
+  std::unordered_map<std::string, std::vector<std::string>> resolve_patterns(
       const std::vector<std::string>& key_names, bool local_only,
       BaseFunctionProfiler* profiler);
 

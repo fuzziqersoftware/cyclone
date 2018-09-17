@@ -201,19 +201,19 @@ SeriesMetadata Store::get_autocreate_metadata_for_key(const string& key_name) {
   return SeriesMetadata();
 }
 
-unordered_map<string, string> Store::resolve_patterns(
+unordered_map<string, vector<string>> Store::resolve_patterns(
     const vector<string>& key_names, bool local_only,
     BaseFunctionProfiler* profiler) {
 
   // if some of the key names are patterns, execute find queries on them to get
   // the actual key names
-  unordered_map<string, string> key_to_pattern;
+  unordered_map<string, vector<string>> key_to_patterns;
   vector<string> patterns;
   for (const string& key_name : key_names) {
     if (this->token_is_pattern(key_name)) {
       patterns.emplace_back(key_name);
     } else {
-      key_to_pattern.emplace(key_name, key_name);
+      key_to_patterns[key_name].emplace_back(key_name);
     }
   }
 
@@ -223,12 +223,12 @@ unordered_map<string, string> Store::resolve_patterns(
         continue;
       }
       for (auto& k : it.second.results) {
-        key_to_pattern.emplace(k, it.first);
+        key_to_patterns[k].emplace_back(it.first);
       }
     }
   }
 
-  return key_to_pattern;
+  return key_to_patterns;
 }
 
 Store::Stats::Stats() : start_time(now()), duration(0) { }

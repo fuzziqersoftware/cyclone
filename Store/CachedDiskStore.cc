@@ -432,11 +432,11 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
   }
   profiler->checkpoint("separate_determinate_patterns");
 
-  auto key_to_pattern = this->resolve_patterns(determinate_patterns, local_only,
-      profiler);
+  auto key_to_patterns = this->resolve_patterns(determinate_patterns,
+      local_only, profiler);
   profiler->checkpoint("resolve_patterns");
 
-  for (auto key_it : key_to_pattern) {
+  for (auto key_it : key_to_patterns) {
     // if the token is a pattern, don't delete it - directory trees must be
     // deleted with the .** form of this command instead
     if (this->token_is_pattern(key_it.first)) {
@@ -458,7 +458,9 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
       // indirectly called in check_and_delete_cache_path
       this->check_and_delete_cache_path(p);
 
-      ret[key_it.second]++;
+      for (const string& pattern : key_it.second) {
+        ret[pattern]++;
+      }
 
     } catch (const exception& e) {
       log(INFO, "[CachedDiskStore] failed to delete series %s (%s)",
@@ -477,48 +479,60 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
     bool local_only, BaseFunctionProfiler* profiler) {
 
-  unordered_map<string, string> key_to_pattern = this->resolve_patterns(
-      key_names, local_only, profiler);
+  auto key_to_patterns = this->resolve_patterns(key_names, local_only,
+      profiler);
   profiler->checkpoint("resolve_patterns");
 
+  unordered_map<string, ReadResult*> key_to_read_result;
   unordered_map<string, unordered_map<string, ReadResult>> ret;
-  for (const auto& it : key_to_pattern) {
+  for (const auto& it : key_to_patterns) {
     const string& key_name = it.first;
-    const string& pattern = it.second;
+    const vector<string>& patterns = it.second;
 
-    unordered_map<string, ReadResult>& read_results = ret[pattern];
-    ReadResult& r = read_results[key_name];
+    for (const string& pattern : patterns) {
+      unordered_map<string, ReadResult>& read_results = ret[pattern];
+      ReadResult& r = read_results[key_name];
 
-    KeyPath p(key_name);
-    try {
-      CacheTraversal t = this->traverse_cache_tree(p);
-      if (start_time && end_time) {
-        auto res = t.archive->read(start_time, end_time);
-        r.data = move(res.data);
-        r.start_time = res.start_time;
-        r.end_time = res.end_time;
-        r.step = res.step;
+      // if we've already read this key during this query, don't read it again;
+      // just copy the first ReadResult to it
+      try {
+        r = *key_to_read_result.at(key_name);
+        continue;
+      } catch (const out_of_range&) {
+        key_to_read_result.emplace(key_name, &r);
       }
 
-    } catch (const out_of_range& e) {
-      // one of the directories doesn't exist
-      r.start_time = start_time;
-      r.end_time = end_time;
-      r.step = 0;
+      KeyPath p(key_name);
+      try {
+        CacheTraversal t = this->traverse_cache_tree(p);
+        if (start_time && end_time) {
+          auto res = t.archive->read(start_time, end_time);
+          r.data = move(res.data);
+          r.start_time = res.start_time;
+          r.end_time = res.end_time;
+          r.step = res.step;
+        }
 
-    } catch (const cannot_open_file& e) {
-      if (e.error == ENOENT) {
-        // apparently the file was deleted; remove it from the cache
-        this->check_and_delete_cache_path(p);
+      } catch (const out_of_range& e) {
+        // one of the directories doesn't exist
         r.start_time = start_time;
         r.end_time = end_time;
         r.step = 0;
-      } else {
+
+      } catch (const cannot_open_file& e) {
+        if (e.error == ENOENT) {
+          // apparently the file was deleted; remove it from the cache
+          this->check_and_delete_cache_path(p);
+          r.start_time = start_time;
+          r.end_time = end_time;
+          r.step = 0;
+        } else {
+          r.error = e.what();
+        }
+
+      } catch (const exception& e) {
         r.error = e.what();
       }
-
-    } catch (const exception& e) {
-      r.error = e.what();
     }
   }
   profiler->checkpoint("read_data");
