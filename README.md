@@ -173,7 +173,6 @@ There's a lot to do here.
 
 - Add a `flush_series` call to the Thrift interface to support blocking on buffered writes.
 - Make write buffer merging work with in-progress writes.
-- Make write buffer merging work with find patterns.
 - Support new storage formats.
 - Build out query execution functionality.
 - Support rendering graphs as images (perhaps even as SVGs).
