@@ -55,7 +55,8 @@ void DatagramServer::on_client_input(int fd, short events) {
     if (bytes_received == -1) {
       if ((errno != EAGAIN) && (errno != EWOULDBLOCK)) {
         string error_str = string_for_error(errno);
-        log(WARNING, "[DatagramServer] failed to read message from udp socket %d: %s", fd, error_str.c_str());
+        log(WARNING, "[DatagramServer] failed to read message from udp socket %d: %s",
+            fd, error_str.c_str());
       }
       break;
     }
@@ -73,17 +74,29 @@ void DatagramServer::on_client_input(int fd, short events) {
         continue;
       }
 
-      // keyname value timestamp_secs
-      auto tokens = split(buffer, ' ');
-      if (tokens.size() != 3) {
-        log(WARNING, "[DatagramServer] received bad message from udp socket %d: %s", fd, buffer.c_str());
-        continue;
-      }
+      try {
+        // keyname value timestamp_secs
+        auto tokens = split(buffer, ' ');
+        if (tokens.size() < 2 || tokens.size() > 3) {
+          log(WARNING, "[DatagramServer] received bad message from udp socket %d: %s",
+              fd, buffer.c_str());
+          continue;
+        }
 
-      auto& series = data[tokens[0]];
-      series.emplace_back();
-      series.back().timestamp = stoul(tokens[2]);
-      series.back().value = stod(tokens[1]);
+        uint32_t t = (tokens.size() == 3) ? parse_relative_time(tokens[2]) : 0;
+        if (t == 0) {
+          t = time(NULL);
+        }
+
+        auto& series = data[tokens[0]];
+        series.emplace_back();
+        series.back().timestamp = t;
+        series.back().value = stod(tokens[1]);
+
+      } catch (const exception& e) {
+        log(WARNING, "[DatagramServer] received bad message from udp socket %d: %s (%s)",
+            fd, buffer.c_str(), e.what());
+      }
     }
 
     // send it to the store

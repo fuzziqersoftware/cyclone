@@ -211,7 +211,7 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
         try {
           auto& series = data[tokens[0]];
           double value = stod(tokens[1]);
-          uint32_t t = (tokens.size() == 3) ? stoul(tokens[2]) : 0;
+          uint32_t t = (tokens.size() == 3) ? parse_relative_time(tokens[2]) : 0;
           if (!t) {
             t = time(NULL);
           }
