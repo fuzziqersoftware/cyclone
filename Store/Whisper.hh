@@ -117,6 +117,7 @@ private:
 
   size_t get_file_size_locked() const;
   uint32_t get_base_interval_locked(int fd, uint32_t archive_index);
+  void write_sorted_locked(const Series& data, int64_t t);
   void write_archive_locked(int fd, uint32_t archive_index, const Series& data,
       uint32_t start_index, uint32_t end_index);
   bool propagate_write_locked(int fd, uint64_t interval, uint32_t archive_index,

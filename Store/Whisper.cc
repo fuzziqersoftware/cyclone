@@ -470,15 +470,17 @@ void WhisperArchive::write(const Series& data) {
   // the datapoints need to be sorted in decreasing time order for this
   // procedure to work properly
   Series sorted_data = data;
-  sort(sorted_data.begin(), sorted_data.end(), [](Datapoint a, Datapoint b) {
+  sort(sorted_data.begin(), sorted_data.end(), [](const Datapoint& a, const Datapoint& b) {
     return a.timestamp > b.timestamp;
   });
 
-  int64_t t = time(NULL);
+  rw_guard g(this->lock, true);
+  this->write_sorted_locked(sorted_data, time(NULL));
+}
+
+void WhisperArchive::write_sorted_locked(const Series& sorted_data, int64_t t) {
   uint32_t archive_index = 0;
   uint32_t next_commit_point = 0;
-
-  rw_guard g(this->lock, true);
 
   // TODO: wtf is going on here? after a create, this open call is super slow,
   // but subsequent open calls are fast
@@ -542,24 +544,60 @@ void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
     this->create_file_locked(lease.fd);
 
   } else {
-    // TODO: support changing archive_args (this will probably be very tedious)
-    // for now, archive_args must either be empty (meaning no change) or exactly
-    // match the existing archive config
+    // if archive_args was changed in any way, we need to resample the data.
+    // this means reading all datapoints from the file, truncating the file,
+    // recreating the file, and writing the datapoints back
+    bool needs_resample = false;
     if (!archive_args.empty()) {
       if (archive_args.size() != this->metadata->num_archives) {
-        throw runtime_error("can\'t change archive config for existing files");
-      }
-      const ArchiveMetadata* this_archives = &this->metadata->archives[0];
-      const ArchiveArg* those_archives = archive_args.data();
-      for (size_t x = 0; x < this->metadata->num_archives; x++) {
-        if ((this_archives[x].seconds_per_point != static_cast<uint32_t>(those_archives[x].precision)) ||
-            (this_archives[x].points != static_cast<uint32_t>(those_archives[x].points))) {
-          throw runtime_error("can\'t change archive config for existing files");
+        needs_resample = true;
+      } else {
+        const ArchiveMetadata* this_archives = &this->metadata->archives[0];
+        const ArchiveArg* those_archives = archive_args.data();
+        for (size_t x = 0; x < this->metadata->num_archives; x++) {
+          if ((this_archives[x].seconds_per_point != static_cast<uint32_t>(those_archives[x].precision)) ||
+              (this_archives[x].points != static_cast<uint32_t>(those_archives[x].points))) {
+            needs_resample = true;
+          break;
+          }
         }
       }
     }
 
-    bool should_write_header = false;
+    Series data_to_write;
+    if (needs_resample) {
+      string data;
+      int64_t offset = sizeof(FileHeader) + this->metadata->num_archives * sizeof(FileArchiveHeader);
+      int64_t file_size = this->get_file_size_locked();
+
+      auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
+      data = preadx(lease.fd, file_size - offset, offset);
+
+      const FilePoint* file_points = reinterpret_cast<const FilePoint*>(data.data());
+      size_t num_points = (file_size - offset) / sizeof(FilePoint);
+      for (size_t x = 0; x < num_points; x++) {
+        if (file_points[x].time == 0) {
+          continue;
+        }
+
+        double value = bswap64f(file_points[x].value);
+        if (isnan(value)) {
+          continue;
+        }
+
+        data_to_write.emplace_back();
+        auto& point = data_to_write.back();
+        point.timestamp = bswap32(file_points[x].time);
+        point.value = value;
+      }
+
+      // for write_sorted_locked(), data must be sorted in decreasing time order
+      sort(data_to_write.begin(), data_to_write.end(), [](const Datapoint& a, const Datapoint& b) {
+        return a.timestamp > b.timestamp;
+      });
+    }
+
+    bool should_write_header = needs_resample;
     if (x_files_factor != this->metadata->x_files_factor) {
       this->metadata->x_files_factor = x_files_factor;
       should_write_header = true;
@@ -569,9 +607,40 @@ void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
       should_write_header = true;
     }
 
-    if (should_write_header) {
-      auto lease = WhisperArchive::file_cache.lease(filename, 0);
-      this->write_header_locked(lease.fd);
+    if (!should_write_header && !needs_resample) {
+      return;
+    }
+
+    // recreate the file
+    {
+      auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
+      if (needs_resample) {
+        // recreate cached metadata to get archive_args changes
+        this->metadata = shared_ptr<Metadata>((Metadata*)malloc(sizeof(Metadata) + archive_args.size() * sizeof(ArchiveMetadata)), free);
+
+        const auto& last_archive_args = archive_args.back();
+        this->metadata->aggregation_method = (AggregationMethod)agg_method;
+        this->metadata->max_retention = last_archive_args.precision * last_archive_args.points;
+        this->metadata->x_files_factor = x_files_factor;
+        this->metadata->num_archives = archive_args.size();
+
+        int64_t offset = sizeof(FileHeader) + this->metadata->num_archives * sizeof(FileArchiveHeader);
+        for (size_t x = 0; x < archive_args.size(); x++) {
+          this->metadata->archives[x].offset = offset;
+          this->metadata->archives[x].seconds_per_point = archive_args[x].precision;
+          this->metadata->archives[x].points = archive_args[x].points;
+          offset += archive_args[x].points * sizeof(FilePoint);
+        }
+
+        this->create_file_locked(lease.fd);
+      } else {
+        this->write_header_locked(lease.fd);
+      }
+    }
+
+    // write the resampled data to the new file
+    if (!data_to_write.empty()) {
+      this->write_sorted_locked(data_to_write, time(NULL));
     }
   }
 }

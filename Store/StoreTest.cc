@@ -540,6 +540,81 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   }
 
   {
+    printf("-- [%s:basic_test] update_metadata (resample)\n", store_name.c_str());
+
+    printf("---- write\n");
+    unordered_map<string, Series> write_data;
+    for (size_t x = 0; x < 60 * 60 * 24; x += 300) {
+      // write the past day's worth of data, five-minutely
+      write_data[key_name1].emplace_back();
+      write_data[key_name1].back().timestamp = test_now - x;
+      write_data[key_name1].back().value = x;
+    }
+    s->write(write_data, false, false, profiler.get());
+    s->flush();
+
+    printf("---- read\n");
+    auto ret = s->read({key_name1}, test_now - 24 * 60 * 60 - 60, test_now, false,
+        profiler.get());
+    expect_eq(1, ret.size());
+    expect_eq(1, ret.at(key_name1).size());
+    auto result = ret.at(key_name1).at(key_name1);
+    expect_eq("", result.error);
+    expect_eq(60, result.step);
+    expect_eq(((test_now - 60 * 60 * 24) / 60) * 60, result.start_time);
+    expect_eq(((test_now + 60) / 60) * 60, result.end_time);
+
+    unordered_set<uint32_t> pending_timestamps;
+    for (size_t x = 0; x < 60 * 60 * 24; x += 300) {
+      pending_timestamps.insert(((test_now - x) / 60) * 60);
+    }
+    for (size_t x = 0; x < result.data.size(); x++) {
+      expect(pending_timestamps.erase(result.data[x].timestamp));
+      expect_eq((static_cast<int64_t>(test_now - result.data[x].value) / 60) * 60,
+          result.data[x].timestamp);
+    }
+    expect(pending_timestamps.empty());
+
+    printf("---- update_metadata\n");
+    SeriesMetadataMap new_metadata_map;
+    auto& metadata = new_metadata_map[key_name1];
+    metadata.archive_args.emplace_back();
+    metadata.archive_args.back().precision = 300;
+    metadata.archive_args.back().points = 12 * 24 * 30;
+    metadata.archive_args.emplace_back();
+    metadata.archive_args.back().precision = 3600;
+    metadata.archive_args.back().points = 24 * 365;
+    metadata.x_files_factor = 1.0;
+    metadata.agg_method = (int32_t)AggregationMethod::Average;
+    s->update_metadata(new_metadata_map, true,
+        Store::UpdateMetadataBehavior::Update, false, false, profiler.get());
+    s->flush();
+
+    printf("---- read\n");
+    ret = s->read({key_name1}, test_now - 24 * 60 * 60 - 300, test_now, false,
+        profiler.get());
+    expect_eq(1, ret.size());
+    expect_eq(1, ret.at(key_name1).size());
+    result = ret.at(key_name1).at(key_name1);
+    expect_eq("", result.error);
+    expect_eq(300, result.step);
+    expect_eq(((test_now - 60 * 60 * 24) / 300) * 300, result.start_time);
+    expect_eq(((test_now + 300) / 300) * 300, result.end_time);
+
+    for (size_t x = 0; x < 60 * 60 * 24; x += 300) {
+      pending_timestamps.insert(((test_now - x) / 300) * 300);
+    }
+    for (size_t x = 0; x < result.data.size(); x++) {
+      expect(pending_timestamps.erase(result.data[x].timestamp));
+      expect_eq((static_cast<int64_t>(test_now - result.data[x].value) / 300) * 300,
+          result.data[x].timestamp);
+    }
+    expect(pending_timestamps.empty());
+
+    expect(isfile(key_filename1));
+  }
+
+  {
     printf("-- [%s:basic_test] delete file with wildcard\n", store_name.c_str());
     auto ret = s->delete_series({pattern1}, false, profiler.get());
     expect_eq(1, ret.at(pattern1));

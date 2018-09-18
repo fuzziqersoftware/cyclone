@@ -64,6 +64,10 @@ Cyclone provides the following functions.
 
 This command creates series or modifies the storage format of existing series. The caller provides a map of series name to metadata (which includes the archive sizes and resolutions, and propagation/aggregation options), as well as flags to define the behavior (whether existing series should be overwritten or resampled, and whether missing series should be created).
 
+If the series does not exist and create_new is true, it is created. If the series exists and skip_existing_series is true, no operation is performed. If the series exists and truncate_existing_series is true, all datapoints are deleted from the series and it is recreated with the specified storage format.
+
+If the series exists and skip_existing_series and truncate_existing_series are both false, then Cyclone resamples the existing data into the new storage format. This is implemented by reading all non-null datapoints from the existing archive, creating a new storage file, then writing these datapoints back to it. This entire process happens under a write lock and may be considered atomic, with one caveat: the new resolution may not be visible to clients until the changes are actually committed to disk, which may take some time if write buffering is used. If the new storage format has a lower resolution or a shorter retention window than the original storage format, then some datapoints may be lost. Furthermore, if multiple non-null datapoints map to the same interval in the new storage format, they are not aggregated - only one of them will be chosen as the datapoint for that interval.
+
 If write buffering is used and skip_buffering is false (the default), this command returns before the changes are committed to disk.
 
 #### delete_series
@@ -79,7 +83,7 @@ This command does not return until the changes are committed to disk, even if wr
 This command reads datapoints from one or more series. Patterns may be given for the series names; the read will be performed on all series matching the pattern.
 
 There are currently some unfixed edge cases with write buffering, which are:
-- If there are buffered writes for a series that doesn't exist and a read is performed with a mattern that would match this series, the series is not returned.
+- If there are buffered writes for a series that doesn't exist and a read is performed with a pattern that would match this series, the series is not returned.
 - If there are writes in progress for a series that is returned, the values written by the in-progress writes may or may not be returned.
 
 The second case is expected to be fixed soon.
