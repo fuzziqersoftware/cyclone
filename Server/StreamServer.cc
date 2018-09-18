@@ -424,7 +424,7 @@ void StreamServer::execute_shell_command(const char* line_data,
     bool create_new = (command_name == "create");
     Store::UpdateMetadataBehavior update_behavior =
         Store::UpdateMetadataBehavior::Update;
-    for (size_t x = 2; x < tokens.size(); x++) {
+    for (size_t x = 4; x < tokens.size(); x++) {
       if (tokens[x] == "+create") {
         create_new = true;
       } else if (tokens[x] == "+ignore-existing") {
