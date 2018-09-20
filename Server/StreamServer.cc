@@ -315,11 +315,11 @@ Commands:\n\
 \n\
   update-metadata <series> <archives> <x-files-factor> <agg-method> [+create]\n\
       [+skip-existing] [+truncate]\n\
-    Create a new series.\n\
+    Create a new series or change metadata of an existing series.\n\
     - <archives> is a comma-separated list of pairs, e.g. 60:90d,3600:5y to\n\
       store minutely data for 90 days and hourly data for 5 years.\n\
     - <x-files-factor> is the proportion of datapoints in each interval that\n\
-      must be present for an aggregation to occur to a lower-reolution archive.\n\
+      must exist for an aggregation to occur to a lower-resolution archive.\n\
     - <agg-method> is the aggregation method to use when updating lower-\n\
       resolution archives. Valid values are average, sum, min, max, and last.\n\
     - +create creates a new series if it doesn\'t exist. (By default, series\n\
