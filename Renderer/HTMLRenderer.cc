@@ -16,7 +16,8 @@ const char* HTMLRenderer::content_type() const {
 }
 
 void HTMLRenderer::render_data(
-    const unordered_map<string, unordered_map<string, ReadResult>>& results) const {
+    const unordered_map<string, unordered_map<string, ReadResult>>& results,
+    int64_t start_time, int64_t end_time) const {
   throw runtime_error("HTML renderer cannot render data");
 }
 

@@ -17,7 +17,8 @@ const char* JSONRenderer::content_type() const {
 }
 
 void JSONRenderer::render_data(
-    const unordered_map<string, unordered_map<string, ReadResult>>& results) const {
+    const unordered_map<string, unordered_map<string, ReadResult>>& results,
+    int64_t start_time, int64_t end_time) const {
 
   evbuffer_add(this->buf, "[", 1);
 

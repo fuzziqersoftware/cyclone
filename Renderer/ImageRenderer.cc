@@ -18,7 +18,8 @@ const char* ImageRenderer::content_type() const {
 }
 
 void ImageRenderer::render_data(
-    const unordered_map<string, unordered_map<string, ReadResult>>& results) const {
+    const unordered_map<string, unordered_map<string, ReadResult>>& results,
+    int64_t start_time, int64_t end_time) const {
 
   // find the first series
   const ReadResult* first_series = NULL;

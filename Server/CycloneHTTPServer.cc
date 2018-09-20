@@ -182,7 +182,7 @@ string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,
   auto r = this->create_renderer(format, out_buffer);
   auto data = this->store->read(targets, start_time, end_time, false, profiler.get());
   profiler->checkpoint("store_read");
-  r->render_data(data);
+  r->render_data(data, start_time, end_time);
   profiler->checkpoint("render");
   return r->content_type();
 }
