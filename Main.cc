@@ -153,11 +153,7 @@ struct Options {
         hash_stores.insert(hash_stores.end(), parse_ret.second.begin(), parse_ret.second.end());
       }
 
-      int64_t precision = -100;
-      try {
-        precision = (*store_config)["precision"]->as_int();
-      } catch (const JSONObject::key_error& e) { }
-
+      int64_t precision = (*store_config)["precision"]->as_int();
       shared_ptr<ConsistentHashMultiStore> store(new ConsistentHashMultiStore(stores, precision));
       hash_stores.emplace_back(store);
       return make_pair(store, hash_stores);

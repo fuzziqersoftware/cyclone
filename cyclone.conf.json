@@ -144,8 +144,7 @@
   // resharding, the store names must be of the form
   // "('hostname', 'graphite_instance_name')" to work around what appears to be
   // a bug in Carbon's consistent hashing logic. Changing the precision after
-  // keys have been created will cause keys to exist in the wrong stores. The
-  // default precision is -100.
+  // keys have been created will cause keys to exist in the wrong stores.
   // {
   //   "store_type": "hash",
   //   "precision": 20,
