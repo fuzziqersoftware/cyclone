@@ -340,7 +340,8 @@
   //    "sum", "last", "min", "max". This specifies how to combine datapoints
   //    into lower-resolution archives.
   //
-  // The autocreate rules can be changed without restarting the server.
+  // The default rule autocreates any key that doesn't exist, with a minutely
+  // retention for the past 90 days.
   "autocreate_rules": [
     ["**", "60:90d", 0, "average"],
   ],
