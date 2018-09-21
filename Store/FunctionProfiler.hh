@@ -47,8 +47,10 @@ private:
 };
 
 
-void set_profiler_threshold(int64_t threshold_usecs);
+void set_profiler_threshold(bool internal, int64_t threshold_usecs);
 std::unique_ptr<BaseFunctionProfiler> create_profiler(
+    const char* function_name);
+std::unique_ptr<BaseFunctionProfiler> create_internal_profiler(
     const char* function_name);
 std::unique_ptr<BaseFunctionProfiler> create_profiler(
     const char* function_name, int64_t threshold_usecs);

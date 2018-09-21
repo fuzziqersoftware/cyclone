@@ -92,9 +92,14 @@ std::string FunctionProfiler::output(uint64_t end_time) {
 
 
 static atomic<int64_t> default_threshold_usecs(-1);
+static atomic<int64_t> default_internal_threshold_usecs(-1);
 
-void set_profiler_threshold(int64_t threshold_usecs) {
-  default_threshold_usecs = threshold_usecs;
+void set_profiler_threshold(bool internal, int64_t threshold_usecs) {
+  if (internal) {
+    default_threshold_usecs = threshold_usecs;
+  } else {
+    default_internal_threshold_usecs = threshold_usecs;
+  }
 }
 
 unique_ptr<BaseFunctionProfiler> create_profiler(const char* function_name,
@@ -109,4 +114,9 @@ unique_ptr<BaseFunctionProfiler> create_profiler(const char* function_name,
 
 unique_ptr<BaseFunctionProfiler> create_profiler(const char* function_name) {
   return create_profiler(function_name, default_threshold_usecs);
+}
+
+unique_ptr<BaseFunctionProfiler> create_internal_profiler(
+    const char* function_name) {
+  return create_profiler(function_name, default_internal_threshold_usecs);
 }

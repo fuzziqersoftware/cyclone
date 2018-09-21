@@ -88,12 +88,14 @@
 
   // Slow query threshold. Any query that takes longer than this amount of time
   // will be logged, including debugging information about various steps within
-  // the query. This also applies to internal queries, such as those done by the
-  // verify procedure or write buffer threads. If set to zero, all queries will
-  // be logged. If set to a negative value, no queries will be logged. Note that
-  // queries are logged at the info level (1), so if log_level is greater than
-  // 1, this field is meaningless.
+  // the query. If set to zero, all queries will be logged. If set to a negative
+  // value, no queries will be logged. Note that queries are logged at the info
+  // level (1), so if log_level is greater than 1, this field is meaningless.
   "profiler_threshold_usecs": -1,
+
+  // Same as above, but this only applies to internal queries, such as those
+  // done by the verify procedure or write buffer threads.
+  "internal_profiler_threshold_usecs": -1,
 
   // The store configuration specifies how data is accessed. This configuration
   // consists of one or more types of stores organized in a hierarchy. There are

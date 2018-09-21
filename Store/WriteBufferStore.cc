@@ -506,7 +506,7 @@ unordered_map<string, FindResult> WriteBufferStore::find(
 
 
 void WriteBufferStore::flush() {
-  auto profiler = create_profiler("WriteBufferStore::flush");
+  auto profiler = create_internal_profiler("WriteBufferStore::flush");
   unordered_map<string, Series> write_batch;
   uint64_t start_time = now();
   {
@@ -680,7 +680,7 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
   while (!this->should_exit) {
     bool enable_rate_limits = true;
 
-    auto profiler = create_profiler("WriteBufferStore::write_thread_routine");
+    auto profiler = create_internal_profiler("WriteBufferStore::write_thread_routine");
 
     // pick out a batch of creates from the create queue
     map<string, QueueItem> commands;

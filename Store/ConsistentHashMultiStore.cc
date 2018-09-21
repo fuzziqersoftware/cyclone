@@ -267,7 +267,7 @@ void ConsistentHashMultiStore::verify_thread_routine() {
     pending_patterns.pop_back();
 
     string function_name = string_printf("verify_%s", pattern.c_str());
-    auto profiler = create_profiler(function_name.c_str());
+    auto profiler = create_internal_profiler(function_name.c_str());
 
     auto find_results = this->find({pattern}, false, profiler.get());
     profiler->checkpoint("find");
