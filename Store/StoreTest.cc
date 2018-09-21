@@ -130,6 +130,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   string pattern3 = "test.DiskStore.no_such_key*";
   string pattern4 = "test.DiskStore.*";
   string pattern5 = "test.**";
+  string pattern6 = "test.nonexistent_dir.**";
 
   {
     printf("-- [%s:basic_test] read from nonexistent series\n", store_name.c_str());
@@ -172,6 +173,15 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.size());
     expect(ret.at(pattern5).error.empty());
     expect(ret.at(pattern5).results.empty());
+  }
+
+  {
+    printf("-- [%s:basic_test] find all with no results through missing directory\n",
+        store_name.c_str());
+    auto ret = s->find({pattern6}, false, profiler.get());
+    expect_eq(1, ret.size());
+    expect(ret.at(pattern6).error.empty());
+    expect(ret.at(pattern6).results.empty());
   }
 
   SeriesMetadataMap metadata_map;
@@ -650,6 +660,14 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect(!isdir(data_directory + "/test/autocreate/dir1"));
     expect(!isdir(data_directory + "/test/autocreate"));
     expect(!isdir(data_directory + "/test"));
+  }
+
+  {
+    printf("-- [%s:basic_test] find all with no results\n", store_name.c_str());
+    auto ret = s->find({pattern5}, false, profiler.get());
+    expect_eq(1, ret.size());
+    expect(ret.at(pattern5).error.empty());
+    expect(ret.at(pattern5).results.empty());
   }
 }
 

@@ -398,39 +398,105 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
     BaseFunctionProfiler* profiler) {
   unordered_map<string, int64_t> ret;
 
-  // if a pattern ends in **, delete the entire tree. ** doesn't work in
+  // if a pattern ends in **, delete the entire subtree. ** doesn't work in
   // resolve_patterns and isn't allowed anywhere else in patterns, so
   // special-case it here
   vector<string> determinate_patterns;
+  vector<string> delete_all_patterns;
   for (const auto& pattern : patterns) {
     if (ends_with(pattern, ".**")) {
-      string directory_pattern = pattern.substr(0, pattern.size() - 3);
-      string directory_path = this->filename_for_key(directory_pattern, false);
-      int64_t& deleted_count = ret[pattern];
-
-      vector<string> paths_to_count;
-      paths_to_count.emplace_back(directory_path);
-      while (!paths_to_count.empty()) {
-        string path = paths_to_count.back();
-        paths_to_count.pop_back();
-
-        for (const string& item : list_directory(path)) {
-          string item_path = path + "/" + item;
-          if (isdir(item_path)) {
-            paths_to_count.emplace_back(item_path);
-          } else {
-            deleted_count += 1;
-          }
-        }
-      }
-
-      unlink(directory_path, true);
-
+      delete_all_patterns.emplace_back(pattern);
     } else {
       determinate_patterns.emplace_back(pattern);
     }
   }
   profiler->checkpoint("separate_determinate_patterns");
+
+  if (!delete_all_patterns.empty()) {
+    for (const string& pattern : delete_all_patterns) {
+
+      std::unique_ptr<CachedDirectoryContents> deleted_level;
+      string path_to_delete;
+      try {
+        // p.directories is the path to the directory which is to be deleted.
+        // after the traversal, the last level in t.levels is actually the one
+        // that needs to be deleted, so the second-to-last entry in t.levels is
+        // the one that gets modified
+        KeyPath p(pattern);
+        {
+          auto t = this->traverse_cache_tree(p.directories, false);
+
+          if (t.levels.size() < 2) {
+            throw out_of_range("cannot delete root recursively");
+          }
+
+          // unlock levels[-2]. note that levels[-1] is already not locked
+          t.guards.pop_back();
+
+          // re-lock levels[-2] for writing
+          auto parent_level = t.levels[t.levels.size() - 2];
+          t.guards.emplace_back(parent_level->subdirectories_lock, true);
+
+          // while holding the write lock, pull the directory out of the parent
+          auto it = parent_level->subdirectories.find(p.directories[p.directories.size() - 1]);
+          if (it != parent_level->subdirectories.end()) {
+            deleted_level = move(it->second);
+            parent_level->subdirectories.erase(it);
+          }
+
+          // also rename the directory to something unique, so we can recursively
+          // delete it outside of the lock scope
+          path_to_delete = t.filesystem_path + "+cyclone-delete-in-progress";
+          if (rename(t.filesystem_path.c_str(), path_to_delete.c_str())) {
+            path_to_delete.clear();
+          }
+
+          // the locks are all released here. we can now delete the cache
+          // directory and directory on disk at our leisure
+        }
+
+        size_t files_deleted = 0;
+        if (!path_to_delete.empty()) {
+          // delete the directory recursively, and count how many files were
+          // deleted. note that we can't trust deleted_level->get_counts() because
+          // some directories may not be complete, and we don't want to waste time
+          // listing them twice
+          vector<string> items_to_delete;
+          items_to_delete.emplace_back(path_to_delete);
+
+          while (!items_to_delete.empty()) {
+            const string& item = items_to_delete.back();
+
+            // if item is an empty directory, delete it immediately. if it's a
+            // non-empty directory, put its contents on the deletion stack and
+            // leave the directory there (so it will be empty the next time we
+            // come to it).
+            if (isdir(item)) {
+              auto dir_items = list_directory(item);
+              if (dir_items.empty()) {
+                rmdir(item.c_str());
+                items_to_delete.pop_back();
+              } else {
+                for (const auto& dir_item : dir_items) {
+                  items_to_delete.emplace_back(item + "/" + dir_item);
+                }
+              }
+            } else {
+              unlink(item.c_str());
+              files_deleted++;
+              items_to_delete.pop_back();
+            }
+          }
+        }
+        ret.emplace(pattern, files_deleted);
+
+      } catch (const exception& e) {
+        ret.emplace(pattern, 0);
+      }
+    }
+
+    profiler->checkpoint("delete_indeterminate_patterns");
+  }
 
   auto key_to_patterns = this->resolve_patterns(determinate_patterns,
       local_only, profiler);
@@ -636,6 +702,8 @@ static string path_join(const string& a, const string& b) {
 void CachedDiskStore::find_all_recursive(FindResult& r,
     CachedDirectoryContents* level, const string& level_path,
     BaseFunctionProfiler* profiler) {
+  this->populate_cache_level(level, this->filename_for_key(level_path, false));
+
   {
     rw_guard g(level->subdirectories_lock, false);
     for (const auto& it : level->subdirectories) {
@@ -807,7 +875,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             profiler->checkpoint("iterate_files_" + level_path);
           }
 
-        } else {
+        } else { // basename isn't a pattern
           bool directory_in_cache = false, file_in_cache = false;
 
           {
