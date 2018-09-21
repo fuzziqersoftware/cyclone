@@ -721,6 +721,7 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
           uint64_t delay = this->update_metadata_rate_limiter.delay_until_next_action();
           if (delay) {
             usleep(delay);
+            profiler->checkpoint("update_metadata_rate_limit_sleep");
           }
         }
 
@@ -756,6 +757,7 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
         uint64_t delay = this->write_batch_rate_limiter.delay_until_next_action();
         if (delay) {
           usleep(delay);
+            profiler->checkpoint("write_rate_limit_sleep");
         }
       }
 
@@ -774,6 +776,8 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
             write_batch.size(), e.what());
       }
       profiler->checkpoint("execute_writes");
+      profiler->add_metadata("write_series", to_string(write_batch.size()));
+      profiler->add_metadata("write_datapoints", to_string(write_batch_datapoints));
     }
 
     // TODO: if there were failed items, put them back in the queue
