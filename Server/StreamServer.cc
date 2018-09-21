@@ -316,6 +316,8 @@ Commands:\n\
   update-metadata <series> <archives> <x-files-factor> <agg-method> [+create]\n\
       [+skip-existing] [+truncate]\n\
     Create a new series or change metadata of an existing series.\n\
+    If a pattern is given for the series name, multiple series may be affected;\n\
+    in this case, the +skip-existing and +create options are not valid.\n\
     - <archives> is a comma-separated list of pairs, e.g. 60:90d,3600:5y to\n\
       store minutely data for 90 days and hourly data for 5 years.\n\
     - <x-files-factor> is the proportion of datapoints in each interval that\n\
@@ -403,6 +405,8 @@ void StreamServer::execute_shell_command(const char* line_data,
       throw runtime_error("incorrect argument count");
     }
 
+    bool is_pattern = Store::token_is_pattern(tokens[0]);
+
     unordered_map<string, SeriesMetadata> metadata_map;
     SeriesMetadata& m = metadata_map[tokens[0]];
     m.archive_args = WhisperArchive::parse_archive_args(tokens[1]);
@@ -429,15 +433,43 @@ void StreamServer::execute_shell_command(const char* line_data,
         create_new = true;
       } else if (tokens[x] == "+ignore-existing") {
         update_behavior = Store::UpdateMetadataBehavior::Ignore;
-      } else if (tokens[x] == "+truncate-existing") {
+      } else if (tokens[x] == "+truncate") {
         update_behavior = Store::UpdateMetadataBehavior::Recreate;
       } else {
         throw runtime_error("unknown argument");
       }
     }
 
+    if (is_pattern && create_new) {
+      throw runtime_error("+create may not be used when a pattern is given");
+    }
+    if (is_pattern && (update_behavior == Store::UpdateMetadataBehavior::Ignore)) {
+      throw runtime_error("+skip-existing may not be used when a pattern is given");
+    }
+
     auto profiler = create_shell_profiler("StreamServer::shell_update_metadata",
         client->profiler_enabled);
+
+    if (is_pattern) {
+      auto find_result_map = this->store->find({tokens[0]}, false, profiler.get());
+      const auto& find_result = find_result_map.at(tokens[0]);
+      if (!find_result.error.empty()) {
+        throw runtime_error("find failed: " + find_result.error);
+      }
+      profiler->checkpoint("store_find");
+
+      // copy the metadata to all the found keys
+      auto source_metadata_it = metadata_map.find(tokens[0]);
+      const auto& source_metadata = source_metadata_it->second;
+      for (const auto& result : find_result.results) {
+        if (ends_with(result, ".*")) {
+          continue;
+        }
+        metadata_map.emplace(result, source_metadata);
+      }
+      metadata_map.erase(source_metadata_it);
+    }
+
     auto result = this->store->update_metadata(metadata_map, create_new,
         update_behavior, false, false, profiler.get());
     flush_profiler(client, profiler, out_buffer);
