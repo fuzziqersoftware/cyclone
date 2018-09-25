@@ -57,6 +57,26 @@ public:
   virtual int64_t delete_from_cache(const std::string& paths, bool local_only);
   virtual int64_t delete_pending_writes(const std::string& paths, bool local_only);
 
+
+
+  static std::string string_for_update_metadata(
+      const SeriesMetadataMap& metadata, bool create_new,
+      UpdateMetadataBehavior update_behavior, bool skip_buffering,
+      bool local_only);
+  static std::string string_for_delete_series(
+      const std::vector<std::string>& patterns, bool local_only);
+  static std::string string_for_read(const std::vector<std::string>& key_names,
+      int64_t start_time, int64_t end_time, bool local_only);
+  static std::string string_for_read_all(const std::string& key_name,
+      bool local_only);
+  static std::string string_for_write(
+      const std::unordered_map<std::string, Series>& data, bool skip_buffering,
+      bool local_only);
+  static std::string string_for_find(const std::vector<std::string>& patterns,
+      bool local_only);
+
+
+
   virtual std::string str() const = 0;
 
   static bool token_is_pattern(const std::string& token);

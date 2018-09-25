@@ -22,7 +22,10 @@ using namespace std;
 
 DatagramServer::WorkerThread::WorkerThread(DatagramServer* server,
     int worker_num) : server(server), worker_num(worker_num),
-    base(event_base_new(), event_base_free), fd_to_event(), t() { }
+    base(event_base_new(), event_base_free), fd_to_event(), t() {
+  this->thread_name = string_printf("DatagramServer::run_thread (worker_num=%d)",
+      worker_num);
+}
 
 void DatagramServer::WorkerThread::check_for_thread_exit(evutil_socket_t fd,
     short what) {
@@ -32,15 +35,17 @@ void DatagramServer::WorkerThread::check_for_thread_exit(evutil_socket_t fd,
 }
 
 void DatagramServer::dispatch_on_client_input(int fd, short events, void *ctx) {
-  (reinterpret_cast<DatagramServer*>(ctx))->on_client_input(fd, events);
+  auto* wt = reinterpret_cast<DatagramServer::WorkerThread*>(ctx);
+  wt->server->on_client_input(wt, fd, events);
 }
 
 void DatagramServer::dispatch_check_for_thread_exit(
     evutil_socket_t fd, short what, void* ctx) {
-  (reinterpret_cast<WorkerThread*>(ctx))->check_for_thread_exit(fd, what);
+  auto* wt = reinterpret_cast<DatagramServer::WorkerThread*>(ctx);
+  wt->check_for_thread_exit(fd, what);
 }
 
-void DatagramServer::on_client_input(int fd, short events) {
+void DatagramServer::on_client_input(WorkerThread* wt, int fd, short events) {
   BusyThreadGuard g(&this->idle_thread_count);
 
   struct sockaddr_storage ss;
@@ -100,8 +105,9 @@ void DatagramServer::on_client_input(int fd, short events) {
     }
 
     // send it to the store
-    auto profiler = create_profiler("DatagramServer::write");
-    for (const auto& it : this->store->write(data, false, false, profiler.get())) {
+    ProfilerGuard pg(create_profiler(wt->thread_name, Store::string_for_write(
+        data, false, false)));
+    for (const auto& it : this->store->write(data, false, false, pg.profiler.get())) {
       if (it.second.empty()) {
         continue;
       }
@@ -160,7 +166,7 @@ void DatagramServer::start() {
           forward_as_tuple(fd),
           forward_as_tuple(event_new(ti.base.get(), fd,
               EV_READ | EV_PERSIST, DatagramServer::dispatch_on_client_input,
-              this), event_free)).first->second.get();
+              &ti), event_free)).first->second.get();
       event_add(ev, NULL);
     }
     ti.t = thread(&DatagramServer::run_thread, this, ti.worker_num);

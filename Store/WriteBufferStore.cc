@@ -506,7 +506,8 @@ unordered_map<string, FindResult> WriteBufferStore::find(
 
 
 void WriteBufferStore::flush() {
-  auto profiler = create_internal_profiler("WriteBufferStore::flush");
+  auto profiler = create_profiler("WriteBufferStore::flush", "flush()", -1);
+
   unordered_map<string, Series> write_batch;
   uint64_t start_time = now();
   {
@@ -672,121 +673,125 @@ WriteBufferStore::WriteThread::WriteThread() : t(), last_queue_restart(0),
 
 void WriteBufferStore::write_thread_routine(size_t thread_index) {
   string queue_position;
+  string thread_name = string_printf("WriteBufferStore::write_thread_routine (thread_id=%zu)",
+      this_thread::get_id());
 
   auto& wt = this->write_threads[thread_index];
   wt->last_queue_restart = now();
   wt->queue_sweep_time = -1;
 
   while (!this->should_exit) {
-    bool enable_rate_limits = true;
-
-    auto profiler = create_internal_profiler("WriteBufferStore::write_thread_routine");
-
-    // pick out a batch of creates from the create queue
-    map<string, QueueItem> commands;
+    bool commands_were_fetched = false;
     {
-      rw_guard g(this->queue_lock, true);
+      ProfilerGuard pg(create_internal_profiler(thread_name,
+          "WriteBufferStore::write_thread_routine"));
 
-      ssize_t disable_rate_limit_threshold = this->disable_rate_limit_for_queue_length;
-      if ((disable_rate_limit_threshold >= 0) &&
-          (this->queue.size() >= static_cast<size_t>(disable_rate_limit_threshold))) {
-        enable_rate_limits = false;
+      bool enable_rate_limits = true;
+
+      // pick out a batch of creates from the create queue
+      map<string, QueueItem> commands;
+      {
+        rw_guard g(this->queue_lock, true);
+
+        ssize_t disable_rate_limit_threshold = this->disable_rate_limit_for_queue_length;
+        if ((disable_rate_limit_threshold >= 0) &&
+            (this->queue.size() >= static_cast<size_t>(disable_rate_limit_threshold))) {
+          enable_rate_limits = false;
+        }
+
+        auto it = this->queue.lower_bound(queue_position);
+        while (it != this->queue.end() && commands.size() < this->batch_size) {
+          commands.emplace(it->first, move(it->second));
+          it = this->queue.erase(it);
+        }
+        if (it == this->queue.end()) {
+          queue_position.clear();
+          wt->queue_sweep_time = now() - wt->last_queue_restart;
+          wt->last_queue_restart += wt->queue_sweep_time;
+        } else {
+          queue_position = it->first;
+        }
       }
+      pg.profiler->checkpoint("get_queue_items");
+      commands_were_fetched = !commands.empty();
 
-      auto it = this->queue.lower_bound(queue_position);
-      while (it != this->queue.end() && commands.size() < this->batch_size) {
-        commands.emplace(it->first, move(it->second));
-        it = this->queue.erase(it);
+      // execute the creates in order, and batch the writes
+      size_t write_batch_datapoints = 0;
+      unordered_map<string, Series> write_batch;
+      for (const auto& it : commands) {
+        const auto& key_name = it.first;
+        auto& command = it.second;
+
+        // if archive_args isn't empty, there was a create request
+        if (!command.metadata.archive_args.empty()) {
+          if (enable_rate_limits && this->max_update_metadatas_per_second) {
+            uint64_t delay = this->update_metadata_rate_limiter.delay_until_next_action();
+            if (delay) {
+              usleep(delay);
+              pg.profiler->checkpoint("update_metadata_rate_limit_sleep");
+            }
+          }
+
+          try {
+            this->store->update_metadata({{key_name, command.metadata}},
+                command.create_new, command.update_behavior, false, false,
+                pg.profiler.get());
+            this->queued_update_metadatas--;
+          } catch (const exception& e) {
+            log(WARNING, "[WriteBufferStore] update_metadata failed on key=%s (%s)",
+                key_name.c_str(), e.what());
+            continue;
+          }
+        }
+
+        // if data isn't empty, there was a write request
+        if (!command.data.empty()) {
+          auto& series = write_batch.emplace(piecewise_construct,
+              forward_as_tuple(key_name), forward_as_tuple()).first->second;
+          for (const auto& pt : command.data) {
+            series.emplace_back();
+            series.back().timestamp = pt.first;
+            series.back().value = pt.second;
+          }
+          write_batch_datapoints += command.data.size();
+          this->queued_writes--;
+        }
       }
-      if (it == this->queue.end()) {
-        queue_position.clear();
-        wt->queue_sweep_time = now() - wt->last_queue_restart;
-        wt->last_queue_restart += wt->queue_sweep_time;
-      } else {
-        queue_position = it->first;
-      }
-    }
-    profiler->checkpoint("get_queue_items");
+      pg.profiler->checkpoint("execute_update_metadatas");
 
-    // execute the creates in order, and batch the writes
-    size_t write_batch_datapoints = 0;
-    unordered_map<string, Series> write_batch;
-    for (const auto& it : commands) {
-      const auto& key_name = it.first;
-      auto& command = it.second;
-
-      // if archive_args isn't empty, there was a create request
-      if (!command.metadata.archive_args.empty()) {
-        if (enable_rate_limits && this->max_update_metadatas_per_second) {
-          uint64_t delay = this->update_metadata_rate_limiter.delay_until_next_action();
+      if (!write_batch.empty()) {
+        if (enable_rate_limits && this->max_write_batches_per_second) {
+          uint64_t delay = this->write_batch_rate_limiter.delay_until_next_action();
           if (delay) {
             usleep(delay);
-            profiler->checkpoint("update_metadata_rate_limit_sleep");
+              pg.profiler->checkpoint("write_rate_limit_sleep");
           }
         }
 
+        this->queued_datapoints -= write_batch_datapoints;
         try {
-          this->store->update_metadata({{key_name, command.metadata}},
-              command.create_new, command.update_behavior, false, false,
-              profiler.get());
-          this->queued_update_metadatas--;
-        } catch (const exception& e) {
-          log(WARNING, "[WriteBufferStore] update_metadata failed on key=%s (%s)",
-              key_name.c_str(), e.what());
-          continue;
-        }
-      }
-
-      // if data isn't empty, there was a write request
-      if (!command.data.empty()) {
-        auto& series = write_batch.emplace(piecewise_construct,
-            forward_as_tuple(key_name), forward_as_tuple()).first->second;
-        for (const auto& pt : command.data) {
-          series.emplace_back();
-          series.back().timestamp = pt.first;
-          series.back().value = pt.second;
-        }
-        write_batch_datapoints += command.data.size();
-        this->queued_writes--;
-      }
-    }
-    profiler->checkpoint("execute_update_metadatas");
-
-    if (!write_batch.empty()) {
-      if (enable_rate_limits && this->max_write_batches_per_second) {
-        uint64_t delay = this->write_batch_rate_limiter.delay_until_next_action();
-        if (delay) {
-          usleep(delay);
-            profiler->checkpoint("write_rate_limit_sleep");
-        }
-      }
-
-      this->queued_datapoints -= write_batch_datapoints;
-      try {
-        auto write_errors = this->store->write(write_batch, false, false,
-            profiler.get());
-        for (const auto& it : write_errors) {
-          if (!it.second.empty()) {
-            log(WARNING, "[WriteBufferStore] write error on key %s: %s",
-                it.first.c_str(), it.second.c_str());
+          auto write_errors = this->store->write(write_batch, false, false,
+              pg.profiler.get());
+          for (const auto& it : write_errors) {
+            if (!it.second.empty()) {
+              log(WARNING, "[WriteBufferStore] write error on key %s: %s",
+                  it.first.c_str(), it.second.c_str());
+            }
           }
+        } catch (const exception& e) {
+          log(WARNING, "[WriteBufferStore] write failed for batch of %zu keys (%s)",
+              write_batch.size(), e.what());
         }
-      } catch (const exception& e) {
-        log(WARNING, "[WriteBufferStore] write failed for batch of %zu keys (%s)",
-            write_batch.size(), e.what());
+        pg.profiler->checkpoint("execute_writes");
+        pg.profiler->add_metadata("write_series", to_string(write_batch.size()));
+        pg.profiler->add_metadata("write_datapoints", to_string(write_batch_datapoints));
       }
-      profiler->checkpoint("execute_writes");
-      profiler->add_metadata("write_series", to_string(write_batch.size()));
-      profiler->add_metadata("write_datapoints", to_string(write_batch_datapoints));
-    }
 
-    // TODO: if there were failed items, put them back in the queue
-
-    // don't profile the sleep call below
-    profiler.reset();
+      // TODO: if there were failed items, put them back in the queue
+    } // this ends the profiler scope
 
     // if there was nothing to do, wait a second
-    if (commands.empty()) {
+    if (!commands_were_fetched) {
       sleep(1);
     }
   }

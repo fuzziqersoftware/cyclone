@@ -25,19 +25,24 @@ using namespace std;
 
 class CycloneHandler : virtual public CycloneIf {
 public:
-  CycloneHandler(shared_ptr<Store> store,
+  CycloneHandler(shared_ptr<Store> store, size_t num_threads,
       const vector<shared_ptr<ConsistentHashMultiStore>>& hash_stores,
       atomic<size_t>* idle_thread_count,
       const vector<shared_ptr<Server>>* all_servers) : store(store),
       hash_stores(hash_stores), idle_thread_count(idle_thread_count),
       all_servers(all_servers) { }
 
+  ProfilerGuard create_profiler(const string& function_name) {
+    string thread_name = string_printf("ThriftServer::serve (thread_id=%zu)",
+        this_thread::get_id());
+    return ProfilerGuard(::create_profiler(thread_name, function_name));
+  }
+
   void update_metadata(unordered_map<string, string>& _return,
       const SeriesMetadataMap& metadata, bool create_new,
       bool skip_existing_series, bool truncate_existing_series,
       bool skip_buffering, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    auto profiler = create_profiler("ThriftServer::update_metadata");
 
     Store::UpdateMetadataBehavior update_behavior;
     if (skip_existing_series) {
@@ -49,15 +54,20 @@ public:
         update_behavior = Store::UpdateMetadataBehavior::Update;
       }
     }
+
+    auto pg = this->create_profiler(Store::string_for_update_metadata(
+        metadata, create_new, update_behavior, skip_buffering, local_only));
     _return = this->store->update_metadata(metadata, create_new,
-        update_behavior, skip_buffering, local_only, profiler.get());
+        update_behavior, skip_buffering, local_only, pg.profiler.get());
   }
 
   void delete_series(unordered_map<string, int64_t>& _return,
       const vector<string>& key_names, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    auto profiler = create_profiler("ThriftServer::delete_series");
-    _return = this->store->delete_series(key_names, local_only, profiler.get());
+
+    auto pg = this->create_profiler(Store::string_for_delete_series(
+        key_names, local_only));
+    _return = this->store->delete_series(key_names, local_only, pg.profiler.get());
   }
 
   void read(
@@ -65,32 +75,39 @@ public:
       const vector<string>& targets, const int64_t start_time,
       const int64_t end_time, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    auto profiler = create_profiler("ThriftServer::read");
+
+    auto pg = this->create_profiler(Store::string_for_read(targets,
+        start_time, end_time, local_only));
     _return = this->store->read(targets, start_time, end_time, local_only,
-        profiler.get());
+        pg.profiler.get());
   }
 
   void read_all(ReadAllResult& _return, const string& key_name,
       bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    auto profiler = create_profiler("ThriftServer::read_all");
-    _return = this->store->read_all(key_name, local_only, profiler.get());
+
+    auto pg = this->create_profiler(Store::string_for_read_all(key_name,
+        local_only));
+    _return = this->store->read_all(key_name, local_only, pg.profiler.get());
   }
 
   void write(unordered_map<string, string>& _return,
       const unordered_map<string, Series>& data, bool skip_buffering,
       bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    auto profiler = create_profiler("ThriftServer::write");
-    _return = this->store->write(data, skip_buffering, local_only,
-        profiler.get());
+
+    auto pg = this->create_profiler(Store::string_for_write(data,
+        skip_buffering, local_only));
+    _return = this->store->write(data, skip_buffering, local_only, pg.profiler.get());
   }
 
   void find(unordered_map<string, FindResult>& _return,
       const vector<string>& patterns, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
-    auto profiler = create_profiler("ThriftServer::find");
-    _return = this->store->find(patterns, local_only, profiler.get());
+
+    auto pg = this->create_profiler(Store::string_for_find(patterns,
+        local_only));
+    _return = this->store->find(patterns, local_only, pg.profiler.get());
   }
 
   void stats(unordered_map<string, int64_t>& _return) {
@@ -172,6 +189,8 @@ private:
   const vector<shared_ptr<Server>>* all_servers;
 };
 
+
+
 ThriftServer::ThriftServer(shared_ptr<Store> store,
     const vector<shared_ptr<ConsistentHashMultiStore>>& hash_stores, int port,
     size_t num_threads) : Server("thrift_server", num_threads), store(store),
@@ -222,7 +241,8 @@ void ThriftServer::serve_thread_routine() {
       new apache::thrift::protocol::TBinaryProtocolFactory());
 
   thrift_ptr<CycloneHandler> handler(new CycloneHandler(this->store,
-      this->hash_stores, &this->idle_thread_count, &this->all_servers));
+      this->num_threads, this->hash_stores, &this->idle_thread_count,
+      &this->all_servers));
   thrift_ptr<CycloneProcessor::TProcessor> processor(new CycloneProcessor(handler));
 
   // TODO: unify these implementations

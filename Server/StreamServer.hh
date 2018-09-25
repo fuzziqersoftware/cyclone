@@ -39,6 +39,7 @@ private:
     std::unordered_set<std::unique_ptr<struct evconnlistener, void(*)(struct evconnlistener*)>> listeners;
     std::unordered_map<struct bufferevent*, Client> bev_to_client;
     std::thread t;
+    std::string thread_name;
 
     WorkerThread(StreamServer* server, int worker_num);
 
@@ -67,8 +68,8 @@ private:
   void on_client_error(WorkerThread& wt, struct bufferevent *bev, short events);
   void check_for_thread_exit(WorkerThread& wt, evutil_socket_t fd, short what);
 
-  void execute_shell_command(const char* command, struct evbuffer* out_buffer,
-      Client* client);
+  void execute_shell_command(const char* line_data, struct evbuffer* out_buffer,
+      Client* client, const std::string& thread_name);
 
   void run_thread(int thread_id);
 

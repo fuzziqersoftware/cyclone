@@ -266,11 +266,12 @@ void ConsistentHashMultiStore::verify_thread_routine() {
     string pattern = pending_patterns.back();
     pending_patterns.pop_back();
 
-    string function_name = string_printf("verify_%s", pattern.c_str());
-    auto profiler = create_internal_profiler(function_name.c_str());
+    string function_name = string_printf("verify(%s)", pattern.c_str());
+    ProfilerGuard pg(create_internal_profiler(
+        "ConsistentHashMultiStore::verify_thread_routine", function_name.c_str()));
 
-    auto find_results = this->find({pattern}, false, profiler.get());
-    profiler->checkpoint("find");
+    auto find_results = this->find({pattern}, false, pg.profiler.get());
+    pg.profiler->checkpoint("find");
 
     auto find_result_it = find_results.find(pattern);
     this->verify_progress.find_queries_executed++;
@@ -315,8 +316,8 @@ void ConsistentHashMultiStore::verify_thread_routine() {
         // must run on ALL nodes in the cluster, so it makes sense for each
         // node to only be responsible for the series on its local disk
         auto read_all_result = store_it.second->read_all(key_name, true,
-            profiler.get());
-        profiler->checkpoint("read_all");
+            pg.profiler.get());
+        pg.profiler->checkpoint("read_all");
         if (!read_all_result.error.empty()) {
           log(WARNING, "[ConsistentHashMultiStore] key %s could not be read from %s (error: %s)",
               key_name.c_str(), store_it.first.c_str(), read_all_result.error.c_str());
@@ -336,8 +337,8 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           SeriesMetadataMap metadata_map({{key_name, read_all_result.metadata}});
           auto update_metadata_ret = responsible_store->update_metadata(
               metadata_map, true, UpdateMetadataBehavior::Ignore, true, false,
-              profiler.get());
-          profiler->checkpoint("update_metadata");
+              pg.profiler.get());
+          pg.profiler->checkpoint("update_metadata");
           try {
             const string& error = update_metadata_ret.at(key_name);
             if (!error.empty() && (error != "ignored")) {
@@ -357,8 +358,8 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           // remote series
           SeriesMap write_map({{key_name, move(read_all_result.data)}});
           auto write_ret = responsible_store->write(write_map, true, false,
-              profiler.get());
-          profiler->checkpoint("write");
+              pg.profiler.get());
+          pg.profiler->checkpoint("write");
           try {
             const string& error = write_ret.at(key_name);
             if (!error.empty()) {
@@ -381,8 +382,8 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           // local_only = true here because we also did so when read_all'ing
           // this series' data
           auto delete_ret = store_it.second->delete_series({key_name}, true,
-              profiler.get());
-          profiler->checkpoint("delete_series");
+              pg.profiler.get());
+          pg.profiler->checkpoint("delete_series");
           int64_t num_deleted = delete_ret[key_name];
           if (num_deleted == 1) {
             log(INFO, "[ConsistentHashMultiStore] key %s moved from %s to %s",

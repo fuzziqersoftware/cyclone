@@ -21,6 +21,7 @@ private:
     std::unique_ptr<struct event_base, void(*)(struct event_base*)> base;
     std::unordered_map<int, std::unique_ptr<struct event, void(*)(struct event*)>> fd_to_event;
     std::thread t;
+    std::string thread_name;
 
     WorkerThread(DatagramServer* server, int worker_num);
 
@@ -34,7 +35,7 @@ private:
 
   static void dispatch_on_client_input(int fd, short int events, void *ctx);
   static void dispatch_check_for_thread_exit(evutil_socket_t fd, short what, void* ctx);
-  void on_client_input(int fd, short int events);
+  void on_client_input(WorkerThread* wt, int fd, short int events);
 
   void run_thread(int thread_id);
 

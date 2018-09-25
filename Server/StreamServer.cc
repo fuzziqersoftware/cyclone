@@ -34,7 +34,10 @@ StreamServer::Client::Client(int fd, const struct sockaddr& remote_addr,
 
 StreamServer::WorkerThread::WorkerThread(StreamServer* server, int worker_num) :
     server(server), worker_num(worker_num),
-    base(event_base_new(), event_base_free), t() { }
+    base(event_base_new(), event_base_free), t() {
+  this->thread_name = string_printf("StreamServer::run_thread (worker_num=%d)",
+      worker_num);
+}
 
 void StreamServer::WorkerThread::disconnect_client(struct bufferevent* bev) {
   this->bev_to_client.erase(bev);
@@ -231,7 +234,7 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
       size_t line_length = 0;
       while ((line_data = evbuffer_readln(in_buffer, &line_length, EVBUFFER_EOL_CRLF))) {
         try {
-          this->execute_shell_command(line_data, out_buffer, c);
+          this->execute_shell_command(line_data, out_buffer, c, wt.thread_name);
           evbuffer_add_reference(out_buffer, "\n\ncyclone> ", 11, NULL, NULL);
         } catch (const exception& e) {
           evbuffer_add_printf(out_buffer, "FAILED: %s\n\ncyclone> ", e.what());
@@ -243,8 +246,9 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
   }
 
   if (!data.empty()) {
-    auto profiler = create_profiler("StreamServer::write");
-    for (const auto& it : this->store->write(data, false, false, profiler.get())) {
+    ProfilerGuard pg(create_profiler(wt.thread_name, Store::string_for_write(
+        data, false, false)));
+    for (const auto& it : this->store->write(data, false, false, pg.profiler.get())) {
       if (it.second.empty()) {
         continue;
       }
@@ -288,7 +292,7 @@ Commands:\n\
   profiler [on|off]\n\
     Get or set the profiling state for this shell connection.\n\
     Profiling can be useful to diagnose performance problems. When profiling is\n\
-    enabled, performance debugging information is printed before the result of\n\
+    enabled, performance debugging information is printed after the result of\n\
     each query run from the current shell connection.\n\
 \n\
   find [<pattern> ...]\n\
@@ -332,6 +336,11 @@ Commands:\n\
   stats\n\
     Get the current store and server stats.\n\
 \n\
+  thread-status\n\
+    Show what all the worker threads are doing. This list only contains threads\n\
+    that have executed at least one query; threads that exist but have done no\n\
+    work are omitted.\n\
+\n\
   verify start [repair]\n\
     Start a verify procedure. This procedure checks that all keys are in the\n\
     correct substores in all hash multistores. This procedure does not block\n\
@@ -353,8 +362,24 @@ Commands:\n\
     that keys exist in the wrong substores if a verify+repair is running.\n\
 ");
 
+struct ShellProfilerGuard {
+  ShellProfilerGuard(struct evbuffer* out_buffer, bool enabled) : profiler(),
+      out_buffer(out_buffer), enabled(enabled) { }
+
+  ~ShellProfilerGuard() {
+    if (this->enabled) {
+      auto result = profiler->output();
+      evbuffer_add_printf(out_buffer, "Profiler result: %s\n\n", result.c_str());
+    }
+  }
+
+  shared_ptr<BaseFunctionProfiler> profiler;
+  struct evbuffer* out_buffer;
+  bool enabled;
+};
+
 void StreamServer::execute_shell_command(const char* line_data,
-    struct evbuffer* out_buffer, Client* client) {
+    struct evbuffer* out_buffer, Client* client, const string& thread_name) {
   auto tokens = split(line_data, ' ');
   if (tokens.size() == 0) {
     throw runtime_error("command is empty; try \'help\'");
@@ -363,22 +388,16 @@ void StreamServer::execute_shell_command(const char* line_data,
   string command_name = move(tokens[0]);
   tokens.erase(tokens.begin());
 
-  auto create_shell_profiler = +[](const char* function_name, bool enabled)
-      -> unique_ptr<BaseFunctionProfiler> {
-    if (enabled) {
-      return create_profiler(function_name, 0);
-    } else {
-      return create_profiler(function_name);
-    }
-  };
-  auto flush_profiler = +[](Client* client,
-      unique_ptr<BaseFunctionProfiler>& profiler, struct evbuffer* out_buffer) {
+  ShellProfilerGuard pg(out_buffer, client->profiler_enabled);
+  {
+    string function_name("(shell) ");
+    function_name += line_data;
     if (client->profiler_enabled) {
-      auto result = profiler->output();
-      evbuffer_add_printf(out_buffer, "Profiler result: %s\n\n", result.c_str());
+      pg.profiler = create_profiler(thread_name, function_name, 0);
+    } else {
+      pg.profiler = create_profiler(thread_name, function_name);
     }
-    profiler.reset();
-  };
+  }
 
   if (command_name == "help") {
     evbuffer_add_reference(out_buffer, HELP_STRING.data(), HELP_STRING.size(), NULL, NULL);
@@ -398,6 +417,22 @@ void StreamServer::execute_shell_command(const char* line_data,
 
     for (const auto& line : lines) {
       evbuffer_add(out_buffer, line.data(), line.size());
+    }
+
+  } else if (command_name == "thread-status") {
+    if (!tokens.empty()) {
+      throw runtime_error("incorrect argument count");
+    }
+
+    auto profilers = get_active_profilers();
+    for (const auto& it : profilers) {
+      if (it.second->done()) {
+        evbuffer_add_printf(out_buffer, "[%s] idle\n", it.first.c_str());
+      } else {
+        string function_name = it.second->get_function_name();
+        evbuffer_add_printf(out_buffer, "[%s] %s\n", it.first.c_str(),
+            function_name.c_str());
+      }
     }
 
   } else if ((command_name == "update-metadata") || (command_name == "create")) {
@@ -447,16 +482,13 @@ void StreamServer::execute_shell_command(const char* line_data,
       throw runtime_error("+skip-existing may not be used when a pattern is given");
     }
 
-    auto profiler = create_shell_profiler("StreamServer::shell_update_metadata",
-        client->profiler_enabled);
-
     if (is_pattern) {
-      auto find_result_map = this->store->find({tokens[0]}, false, profiler.get());
+      auto find_result_map = this->store->find({tokens[0]}, false, pg.profiler.get());
       const auto& find_result = find_result_map.at(tokens[0]);
       if (!find_result.error.empty()) {
         throw runtime_error("find failed: " + find_result.error);
       }
-      profiler->checkpoint("store_find");
+      pg.profiler->checkpoint("store_find");
 
       // copy the metadata to all the found keys
       auto source_metadata_it = metadata_map.find(tokens[0]);
@@ -468,11 +500,11 @@ void StreamServer::execute_shell_command(const char* line_data,
         metadata_map.emplace(result, source_metadata);
       }
       metadata_map.erase(source_metadata_it);
+      pg.profiler->checkpoint("generate_metadata_map");
     }
 
     auto result = this->store->update_metadata(metadata_map, create_new,
-        update_behavior, false, false, profiler.get());
-    flush_profiler(client, profiler, out_buffer);
+        update_behavior, false, false, pg.profiler.get());
 
     for (const auto& result_it : result) {
       if (result_it.second.empty()) {
@@ -489,10 +521,7 @@ void StreamServer::execute_shell_command(const char* line_data,
       throw runtime_error("no series given");
     }
 
-    auto profiler = create_shell_profiler("StreamServer::shell_delete_series",
-        client->profiler_enabled);
-    auto result = this->store->delete_series(tokens, false, profiler.get());
-    flush_profiler(client, profiler, out_buffer);
+    auto result = this->store->delete_series(tokens, false, pg.profiler.get());
 
     for (const auto& it : result) {
       evbuffer_add_printf(out_buffer, "[%s] %" PRId64 " series deleted\n",
@@ -504,10 +533,7 @@ void StreamServer::execute_shell_command(const char* line_data,
       tokens.emplace_back("*");
     }
 
-    auto profiler = create_shell_profiler("StreamServer::shell_find",
-        client->profiler_enabled);
-    auto find_result = this->store->find(tokens, false, profiler.get());
-    flush_profiler(client, profiler, out_buffer);
+    auto find_result = this->store->find(tokens, false, pg.profiler.get());
 
     if (find_result.size() == 1) {
       auto& result = find_result.begin()->second;
@@ -558,10 +584,7 @@ void StreamServer::execute_shell_command(const char* line_data,
       }
     }
 
-    auto profiler = create_shell_profiler("StreamServer::shell_write",
-        client->profiler_enabled);
-    auto result = this->store->write(write_map, false, false, profiler.get());
-    flush_profiler(client, profiler, out_buffer);
+    auto result = this->store->write(write_map, false, false, pg.profiler.get());
 
     for (const auto& result_it : result) {
       if (result_it.second.empty()) {
@@ -598,11 +621,8 @@ void StreamServer::execute_shell_command(const char* line_data,
       start_time = end_time - (60 * 60);
     }
 
-    auto profiler = create_shell_profiler("StreamServer::shell_read",
-        client->profiler_enabled);
     auto read_results = this->store->read(patterns, start_time, end_time, false,
-        profiler.get());
-    flush_profiler(client, profiler, out_buffer);
+        pg.profiler.get());
 
     for (const auto& result_it : read_results) {
       const string& pattern = result_it.first;

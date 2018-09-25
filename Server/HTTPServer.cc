@@ -207,6 +207,10 @@ HTTPServer::Thread::Thread(HTTPServer* s) : server(s),
     exit_check_event(event_new(this->base.get(), -1, EV_TIMEOUT | EV_PERSIST,
         &HTTPServer::Thread::dispatch_exit_check, this), event_free),
     http(evhttp_new(this->base.get()), evhttp_free), t() {
+
+  this->thread_name = string_printf("HTTPServer::worker_thread_routine (base=0x%016" PRIX64 ")",
+      reinterpret_cast<uint64_t>(base.get()));
+
   evhttp_set_gencb(this->http.get(), HTTPServer::dispatch_handle_request, this);
 
   for (int fd : this->server->listen_fds) {
@@ -216,7 +220,7 @@ HTTPServer::Thread::Thread(HTTPServer* s) : server(s),
   struct timeval exit_check_interval = usecs_to_timeval(2000000);
   event_add(this->exit_check_event.get(), &exit_check_interval);
 
-  t = thread(&HTTPServer::worker_thread_routine, s, this);
+  this->t = thread(&HTTPServer::worker_thread_routine, s, this);
 }
 
 HTTPServer::Thread::~Thread() {

@@ -115,7 +115,7 @@ void run_internal_functions_test() {
 void run_basic_test(shared_ptr<Store> s, const string& store_name,
     const string& data_directory, bool is_write_buffer = false) {
   time_t test_now = time(NULL);
-  unique_ptr<BaseFunctionProfiler> profiler(new BaseFunctionProfiler());
+  auto profiler = create_profiler("StoreTest", "run_basic_test", 1000000000);
 
   string key_name1 = "test.DiskStore.key1";
   string key_name2 = "test.key2";

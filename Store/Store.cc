@@ -32,6 +32,107 @@ int64_t Store::delete_pending_writes(const std::string& paths, bool local_only) 
   return 0;
 }
 
+
+
+static const char* string_for_update_metadata_behavior(
+    Store::UpdateMetadataBehavior b) {
+  switch (b) {
+    case Store::UpdateMetadataBehavior::Ignore:
+      return "Ignore";
+    case Store::UpdateMetadataBehavior::Update:
+      return "Update";
+    case Store::UpdateMetadataBehavior::Recreate:
+      return "Recreate";
+  }
+  return "Unknown";
+}
+
+static const char* string_for_bool(bool b) {
+  return (b ? "true" : "false");
+}
+
+template <typename V>
+static string comma_list_limit(const unordered_map<string, V>& m, size_t limit) {
+  if (m.size() == 0) {
+    return "[]";
+  }
+
+  auto it = m.begin();
+  string ret = "[" + it->first;
+  size_t count = 1;
+  for (it++; (it != m.end()) && (count < limit); it++) {
+    ret += ", ";
+    ret += it->first;
+  }
+  if (it != m.end()) {
+    return ret + string_printf("] + <%zu more items>", limit - count);
+  }
+  return ret + "]";
+}
+
+static string comma_list_limit(const vector<string>& m, size_t limit) {
+  if (m.size() == 0) {
+    return "[]";
+  }
+
+  auto it = m.begin();
+  string ret = "[" + *it;
+  size_t count = 1;
+  for (it++; (it != m.end()) && (count < limit); it++) {
+    ret += ", ";
+    ret += *it;
+  }
+  if (it != m.end()) {
+    return ret + string_printf("] + <%zu more items>", limit - count);
+  }
+  return ret + "]";
+}
+
+string Store::string_for_update_metadata(const SeriesMetadataMap& metadata,
+    bool create_new, UpdateMetadataBehavior update_behavior,
+    bool skip_buffering, bool local_only) {
+  string series_list = comma_list_limit(metadata, 10);
+  return string_printf("update_metadata(%s, create_new=%s, update_behavior=%s, skip_buffering=%s, local_only=%s)",
+      series_list.c_str(), string_for_bool(create_new),
+      string_for_update_metadata_behavior(update_behavior),
+      string_for_bool(skip_buffering), string_for_bool(local_only));
+}
+
+string Store::string_for_delete_series(const vector<string>& patterns,
+    bool local_only) {
+  string series_list = comma_list_limit(patterns, 10);
+  return string_printf("delete_series(%s, local_only=%s)", series_list.c_str(),
+      string_for_bool(local_only));
+}
+
+string Store::string_for_read(const vector<string>& key_names,
+    int64_t start_time, int64_t end_time, bool local_only) {
+  string series_list = comma_list_limit(key_names, 10);
+  return string_printf("read(%s, %" PRId64 ", %" PRId64 ", local_only=%s)",
+      series_list.c_str(), start_time, end_time, string_for_bool(local_only));
+}
+
+string Store::string_for_read_all(const string& key_name, bool local_only) {
+  return string_printf("read_all(%s, local_only=%s)", key_name.c_str(),
+      string_for_bool(local_only));
+}
+
+string Store::string_for_write(const unordered_map<string, Series>& data,
+    bool skip_buffering, bool local_only) {
+  string series_list = comma_list_limit(data, 10);
+  return string_printf("write(%s, skip_buffering=%s, local_only=%s)",
+      series_list.c_str(), string_for_bool(skip_buffering),
+      string_for_bool(local_only));
+}
+
+string Store::string_for_find(const vector<string>& patterns, bool local_only) {
+  string series_list = comma_list_limit(patterns, 10);
+  return string_printf("find(%s, local_only=%s)", series_list.c_str(),
+      string_for_bool(local_only));
+}
+
+
+
 bool Store::token_is_pattern(const string& token) {
   return token.find_first_of("[]{}*") != string::npos;
 }

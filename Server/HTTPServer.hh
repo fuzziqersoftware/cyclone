@@ -57,6 +57,7 @@ protected:
     std::unique_ptr<struct event, void(*)(struct event*)> exit_check_event;
     std::unique_ptr<struct evhttp, void(*)(struct evhttp*)> http;
     std::thread t;
+    std::string thread_name;
 
     Thread() = delete;
     Thread(const Thread& s) = delete;

@@ -486,9 +486,10 @@ int main(int argc, char **argv) {
       pending_patterns.pop_front();
 
       log(INFO, "[prepopulate] find %s (level %zu)", pattern.c_str(), level);
-      auto profiler = create_internal_profiler("prepopulate_find");
-      auto find_result_map = opt.store->find({pattern}, true, profiler.get());
-      profiler.reset();
+      vector<string> patterns({pattern});
+      string function_name = Store::string_for_find(patterns, true);
+      ProfilerGuard pg(create_internal_profiler("main", function_name));
+      auto find_result_map = opt.store->find({pattern}, true, pg.profiler.get());
 
       if (level >= opt.prepopulate_depth) {
         continue;
@@ -646,9 +647,11 @@ int main(int argc, char **argv) {
         series.back().value = stat.second;
       }
 
+      string function_name = Store::string_for_write(data_to_write, false,
+          false);
+      ProfilerGuard pg(create_internal_profiler("main", function_name));
       try {
-        auto profiler = create_internal_profiler("stats_write");
-        opt.store->write(data_to_write, false, false, profiler.get());
+        opt.store->write(data_to_write, false, false, pg.profiler.get());
       } catch (const exception& e) {
         log(INFO, "failed to report stats: %s\n", e.what());
       }
