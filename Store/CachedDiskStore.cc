@@ -1431,10 +1431,12 @@ bool CachedDiskStore::evict_items() {
           level->list_complete = false;
         }
       }
-      auto counts = deleted_level->get_counts();
-      this->stats[0].report_directory_delete(counts.first, counts.second);
-      this->directory_count -= counts.first;
-      this->file_count -= counts.second;
+      if (deleted_level.get()) {
+        auto counts = deleted_level->get_counts();
+        this->stats[0].report_directory_delete(counts.first, counts.second);
+        this->directory_count -= counts.first;
+        this->file_count -= counts.second;
+      }
 
       // if we're at the root, we're done (the root is allowed to be empty)
       if (level == &this->cache_root) {
