@@ -21,12 +21,13 @@ public:
 
   virtual void check_for_slow_query();
   virtual std::string output(uint64_t end_time = 0);
-  virtual bool done() const;
+  bool done() const;
 
   std::string get_function_name() const;
 
 protected:
   std::string function_name;
+  std::atomic<bool> output_called;
 };
 
 
@@ -45,14 +46,12 @@ public:
 
   virtual void check_for_slow_query();
   virtual std::string output(uint64_t end_time = 0);
-  virtual bool done() const;
 
 protected:
   uint64_t start_time;
   uint64_t threshold_usecs;
   std::map<std::string, std::string> metadata;
   std::map<uint64_t, std::string> checkpoints;
-  std::atomic<bool> output_called;
 };
 
 

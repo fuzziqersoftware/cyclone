@@ -373,8 +373,10 @@ struct ShellProfilerGuard {
 
   ~ShellProfilerGuard() {
     if (this->enabled) {
-      auto result = profiler->output();
+      auto result = this->profiler->output();
       evbuffer_add_printf(out_buffer, "Profiler result: %s\n\n", result.c_str());
+    } else {
+      this->profiler->check_for_slow_query();
     }
   }
 

@@ -15,21 +15,24 @@ using namespace std;
 
 
 BaseFunctionProfiler::BaseFunctionProfiler(const string& function_name) :
-    function_name(function_name) { }
+    function_name(function_name), output_called(false) { }
 
 void BaseFunctionProfiler::add_metadata(const string& key,
     const string& value) { }
 
 void BaseFunctionProfiler::checkpoint(const string& key) { }
 
-void BaseFunctionProfiler::check_for_slow_query() { }
+void BaseFunctionProfiler::check_for_slow_query() {
+  this->output_called.store(true);
+}
 
 string BaseFunctionProfiler::output(uint64_t end_time) {
+  this->output_called.store(true);
   return "";
 }
 
 bool BaseFunctionProfiler::done() const {
-  return true;
+  return this->output_called.load();
 }
 
 string BaseFunctionProfiler::get_function_name() const {
@@ -40,8 +43,7 @@ string BaseFunctionProfiler::get_function_name() const {
 
 FunctionProfiler::FunctionProfiler(const string& function_name,
     uint64_t threshold_usecs) : BaseFunctionProfiler(function_name),
-    start_time(now()), threshold_usecs(threshold_usecs),
-    output_called(false) { }
+    start_time(now()), threshold_usecs(threshold_usecs) { }
 
 void FunctionProfiler::add_metadata(const string& key, const string& value) {
   this->metadata.emplace(key, value);
@@ -105,10 +107,6 @@ string FunctionProfiler::output(uint64_t end_time) {
   }
   result += string_printf(" (overall: %" PRIu64 ")", total_time);
   return result;
-}
-
-bool FunctionProfiler::done() const {
-  return this->output_called.load();
 }
 
 
