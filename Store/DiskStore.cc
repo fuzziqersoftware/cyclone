@@ -533,6 +533,7 @@ DiskStore::Stats::Stats() : Store::Stats::Stats(),
     series_update_metadatas(0),
     series_autocreates(0),
     series_deletes(0),
+    series_renames(0),
     read_requests(0),
     read_series(0),
     read_datapoints(0),
@@ -556,6 +557,7 @@ DiskStore::Stats& DiskStore::Stats::operator=(const Stats& other) {
   this->series_update_metadatas = other.series_update_metadatas.load();
   this->series_autocreates = other.series_autocreates.load();
   this->series_deletes = other.series_deletes.load();
+  this->series_renames = other.series_renames.load();
   this->read_requests = other.read_requests.load();
   this->read_series = other.read_series.load();
   this->read_datapoints = other.read_datapoints.load();

@@ -380,6 +380,7 @@ RemoteStore::Stats::Stats() : Store::Stats::Stats(),
     client_disconnects(0),
     update_metadata_commands(0),
     delete_series_commands(0),
+    rename_series_commands(0),
     read_commands(0),
     read_all_commands(0),
     write_commands(0),
@@ -398,6 +399,7 @@ RemoteStore::Stats& RemoteStore::Stats::operator=(const Stats& other) {
   this->client_disconnects = other.client_disconnects.load();
   this->update_metadata_commands = other.update_metadata_commands.load();
   this->delete_series_commands = other.delete_series_commands.load();
+  this->rename_series_commands = other.rename_series_commands.load();
   this->read_commands = other.read_commands.load();
   this->read_all_commands = other.read_all_commands.load();
   this->write_commands = other.write_commands.load();
