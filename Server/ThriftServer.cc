@@ -70,6 +70,15 @@ public:
     _return = this->store->delete_series(key_names, local_only, pg.profiler.get());
   }
 
+  void rename_series(unordered_map<string, string>& _return,
+      const unordered_map<string, string>& renames, bool local_only) {
+    BusyThreadGuard g(this->idle_thread_count);
+
+    auto pg = this->create_profiler(Store::string_for_rename_series(renames,
+        local_only));
+    _return = this->store->rename_series(renames, local_only, pg.profiler.get());
+  }
+
   void read(
       unordered_map<string, unordered_map<string, ReadResult>>& _return,
       const vector<string>& targets, const int64_t start_time,

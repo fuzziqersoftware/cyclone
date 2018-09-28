@@ -541,6 +541,54 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
   return ret;
 }
 
+unordered_map<string, string> CachedDiskStore::rename_series(
+    const unordered_map<string, string>& renames, bool local_only,
+    BaseFunctionProfiler* profiler) {
+
+  unordered_map<string, string> ret;
+  for (auto rename_it : renames) {
+    const string& from_key_name = rename_it.first;
+    const string& to_key_name = rename_it.second;
+    if (from_key_name == to_key_name) {
+      ret.emplace(from_key_name, "");
+      continue;
+    }
+
+    try {
+      KeyPath from_path(from_key_name);
+      KeyPath to_path(to_key_name);
+      string from_filename = this->filename_for_key(from_key_name);
+      string to_filename = this->filename_for_key(to_key_name);
+
+      // get the cache directory that will soon contain the file
+      {
+        CacheTraversal t = this->traverse_cache_tree(to_path.directories, true);
+
+        // rename the file on disk
+        rename(from_filename, to_filename);
+        this->stats[0].series_renames++;
+
+        // add the file in the destination cache directory
+        rw_guard g(t.level->files_lock, true);
+        this->create_cache_file_locked(t.level, to_path.basename, to_filename);
+      }
+
+      // note: we don't need to explicitly close the fd in WhisperArchive's file
+      // cache; it should be closed in the WhisperArchive destructor, which is
+      // indirectly called in check_and_delete_cache_path
+      this->check_and_delete_cache_path(from_path);
+
+      ret.emplace(from_key_name, "");
+
+    } catch (const exception& e) {
+      ret.emplace(from_key_name, e.what());
+    }
+  }
+  profiler->checkpoint("rename_files");
+
+  return ret;
+  }
+
 unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
     bool local_only, BaseFunctionProfiler* profiler) {

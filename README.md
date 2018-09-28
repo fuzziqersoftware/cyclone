@@ -20,14 +20,14 @@ Cyclone is configured via a small JSON file. The comments in the example file (c
 
 Cyclone supports several protocols with varying capabilities:
 
-| Protocol | Graphite-compatible? | Python client class                 |   Read commands   |         Write commands         |    Admin commands     |
-| -------- |:--------------------:| ----------------------------------- |:-----------------:|:------------------------------:|:---------------------:|
-| Line     |         Yes          | `stream_client.CycloneLineClient`   |                   |         write, create*         |                       |
-| Datagram |         Yes          |                                     |                   |         write, create*         |                       |
-| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                   |         write, create*         |                       |
-| Shell    |         No           |                                     | read, find, stats | write, update_metadata, delete | verify, read-from-all |
-| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     | read, find, stats |                                |                       |
-| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats | write, update_metadata, delete | verify, read-from-all |
+| Protocol | Graphite-compatible? | Python client class                 |   Read commands   |             Write commands             |    Admin commands     |
+| -------- |:--------------------:| ----------------------------------- |:-----------------:|:--------------------------------------:|:---------------------:|
+| Line     |         Yes          | `stream_client.CycloneLineClient`   |                   |             write, create*             |                       |
+| Datagram |         Yes          |                                     |                   |             write, create*             |                       |
+| Pickle   |         Yes          | `stream_client.CyclonePickleClient` |                   |             write, create*             |                       |
+| Shell    |         No           |                                     | read, find, stats | write, update_metadata, rename, delete | verify, read-from-all |
+| HTTP     |         Yes          | `http_client.CycloneHTTPClient`     | read, find, stats |                                        |                       |
+| Thrift   |         No           | `thrift_client.CycloneThriftClient` | read, find, stats | write, update_metadata, rename, delete | verify, read-from-all |
 
 Note: the ability to create series through the line, datagram, and pickle protocols is limited to autocreates (according to predefined rules in the server configuration). For more fine-grained control over series schema, create series by using update_metadata through the Thrift or shell interfaces instead.
 
@@ -77,6 +77,14 @@ This command deletes one or more series, as well as all buffered writes in memor
 Patterns may be given here; all series that match the pattern will be deleted. Entire directory trees can also be deleted by providing a pattern ending in `.**` (this is a special case and does not work in other places or other commands).
 
 This command does not return until the changes are committed to disk, even if write buffering is used.
+
+#### rename_series
+
+This command renames one or more series. Patterns may be not given here.
+
+Any buffered writes for the renamed series will be reassigned to the new series name. If there is an uncommitted update_metadata action for a series, it cannot be renamed.
+
+This command does not return until the rename is committed to disk, even if write buffering is used.
 
 #### read
 

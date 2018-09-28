@@ -41,6 +41,9 @@ typedef map cpp_type 'std::unordered_map<std::string, Series>'
 typedef map cpp_type 'std::unordered_map<std::string, class SeriesMetadata>'
     <string, SeriesMetadata> SeriesMetadataMap;
 
+typedef map cpp_type 'std::unordered_map<std::string, std::string>'
+    <string, string> RenameSeriesMap;
+
 typedef map cpp_type 'std::unordered_map<std::string, std::unordered_map<std::string, class ReadResult>>'
     <string, map cpp_type 'std::unordered_map<std::string, class ReadResult>' <string, ReadResult>> ReadResultMap;
 
@@ -62,19 +65,23 @@ service Cyclone {
 
   // write commands
 
-  // updates metadata and/or creates series. returns the number of series
-  // modified (including creates and updates).
+  // updates metadata and/or creates series. returns error strings for each
+  // series; an empty error string signifies success.
   WriteResultMap update_metadata(1: SeriesMetadataMap metadata,
       2: bool create_new = true, 3: bool skip_existing_series = false,
       4: bool truncate_existing_series = false, 5: bool skip_buffering = false,
       6: bool local_only = false);
 
-  // deletes series. returns the number of series deleted.
+  // deletes series. returns the number of series deleted. for each pattern.
   DeleteResultMap delete_series(1: list<string> patterns,
       2: bool local_only = false);
 
+  // renames series. returns an error string for each series.
+  WriteResultMap rename_series(1: RenameSeriesMap renames,
+      2: bool local_only = false);
+
   // writes or deletes datapoints in a series. to delete datapoints, pass NaN as
-  // the value.
+  // the value. returns an error string for each series.
   WriteResultMap write(1: SeriesMap data, 2: bool skip_buffering = false,
       3: bool local_only = false);
 

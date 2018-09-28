@@ -310,8 +310,13 @@ Commands:\n\
     zero, the server\'s current time is used. Timestamps may also be relative,\n\
     like -5m or -12h.\n\
 \n\
-  delete <series> [<series> ...]\n\
-    Delete entire series.\n\
+  delete <pattern> [<pattern> ...]\n\
+    Delete entire series. All series matching any of the given patterns will be\n\
+    deleted.\n\
+\n\
+  rename <series> <series> [<series> <series> ...]\n\
+    Rename one or more series. Note that renames are not atomic; concurrent\n\
+    reads may see incomplete views of the series if write buffering is used.\n\
 \n\
   create <series> <archives> <x-files-factor> <agg-method> [+skip-existing]\n\
       [+truncate]\n\
@@ -526,6 +531,31 @@ void StreamServer::execute_shell_command(const char* line_data,
     for (const auto& it : result) {
       evbuffer_add_printf(out_buffer, "[%s] %" PRId64 " series deleted\n",
           it.first.c_str(), it.second);
+    }
+
+  } else if (command_name == "rename") {
+    if (tokens.empty()) {
+      throw runtime_error("no series given");
+    }
+
+    if (tokens.size() & 1) {
+      throw runtime_error("an even number of series names must be given");
+    }
+    unordered_map<string, string> renames;
+    for (size_t x = 0; x < tokens.size(); x += 2) {
+      renames.emplace(tokens[x], tokens[x + 1]);
+    }
+
+    auto result = this->store->rename_series(renames, false, pg.profiler.get());
+
+    for (const auto& it : result) {
+      if (it.second.empty()) {
+        evbuffer_add_printf(out_buffer, "[%s->%s] success\n",
+            it.first.c_str(), renames.at(it.first).c_str());
+      } else {
+        evbuffer_add_printf(out_buffer, "[%s->%s] FAILED: %s\n",
+            it.first.c_str(), renames.at(it.first).c_str(), it.second.c_str());
+      }
     }
 
   } else if (command_name == "find") {

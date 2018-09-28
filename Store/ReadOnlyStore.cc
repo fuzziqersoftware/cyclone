@@ -43,6 +43,16 @@ unordered_map<string, int64_t> ReadOnlyStore::delete_series(
   return ret;
 }
 
+unordered_map<string, string> ReadOnlyStore::rename_series(
+    const unordered_map<string, string>& renames, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  unordered_map<string, string> ret;
+  for (const auto& it : renames) {
+    ret.emplace(it.first, "writes not allowed");
+  }
+  return ret;
+}
+
 unordered_map<string, unordered_map<string, ReadResult>> ReadOnlyStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
     bool local_only, BaseFunctionProfiler* profiler) {

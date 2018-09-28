@@ -12,6 +12,7 @@
 #include "DiskStore.hh"
 #include "CachedDiskStore.hh"
 #include "MultiStore.hh"
+#include "ConsistentHashMultiStore.hh"
 #include "WriteBufferStore.hh"
 
 using namespace std;
@@ -120,17 +121,20 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   string key_name1 = "test.DiskStore.key1";
   string key_name2 = "test.key2";
   string autocreate_key_name1 = "test.autocreate.dir1.dir2.dir3.key1";
-  string autocreate_key_name2 = "test.autocreate.dir1.dir2.dir3.key2";
+  string rename_key_name = "test.rename.key1";
   string key_filename1 = data_directory + "/test/DiskStore/key1.wsp";
   string key_filename2 = data_directory + "/test/key2.wsp";
   string autocreate_key_filename1 = data_directory + "/test/autocreate/dir1/dir2/dir3/key1.wsp";
   string autocreate_key_filename2 = data_directory + "/test/autocreate/dir1/dir2/dir3/key2.wsp";
+  string rename_key_filename = data_directory + "/test/rename/key1.wsp";
   string pattern1 = "test.*";
   string pattern2 = "test.NoSuchDirectory*";
   string pattern3 = "test.DiskStore.no_such_key*";
   string pattern4 = "test.DiskStore.*";
   string pattern5 = "test.**";
   string pattern6 = "test.nonexistent_dir.**";
+  string autocreate_pattern = "test.autocreate.dir1.dir2.dir3.*";
+  string rename_pattern = "test.rename.*";
 
   {
     printf("-- [%s:basic_test] read from nonexistent series\n", store_name.c_str());
@@ -473,6 +477,60 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   }
 
   {
+    printf("-- [%s:basic_test] rename series\n", store_name.c_str());
+    auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
+    expect_eq(1, ret.size());
+    expect_eq("", ret.at(autocreate_key_name1));
+  }
+
+  {
+    printf("-- [%s:basic_test] read from renamed series\n", store_name.c_str());
+    auto ret = s->read({rename_key_name}, test_now - 10 * 60, test_now, false, profiler.get());
+    expect_eq(1, ret.size());
+    expect_eq(1, ret.at(rename_key_name).size());
+    expect(ret.at(rename_key_name).at(rename_key_name).error.empty());
+    expect_eq(1, ret.at(rename_key_name).at(rename_key_name).data.size());
+    expect_eq((test_now / 60) * 60, ret.at(rename_key_name).at(rename_key_name).data[0].timestamp);
+    expect_eq(2.0, ret.at(rename_key_name).at(rename_key_name).data[0].value);
+    metadata.x_files_factor = 0.0;
+    expect_eq(metadata.archive_args[0].precision, ret.at(rename_key_name).at(rename_key_name).step);
+  }
+
+  {
+    printf("-- [%s:basic_test] find returns renamed series and not original series\n", store_name.c_str());
+    auto ret = s->find({pattern5, autocreate_pattern, rename_pattern}, false, profiler.get());
+    expect_eq(3, ret.size());
+    expect(ret.at(pattern5).error.empty());
+    expect(ret.at(autocreate_pattern).error.empty());
+    expect(ret.at(rename_pattern).error.empty());
+
+    // some other keys should exist here; we only check that the renamed key
+    // appears under its new name and not its old name
+    bool renamed_key_found = false;
+    for (const auto& it : ret.at(pattern5).results) {
+      expect_ne(autocreate_key_name1, it);
+      if (it == rename_key_name) {
+        renamed_key_found = true;
+      }
+    }
+    expect(renamed_key_found);
+
+    auto& autocreate_pattern_results = ret.at(autocreate_pattern).results;
+    expect_eq(0, autocreate_pattern_results.size());
+
+    auto& rename_pattern_results = ret.at(rename_pattern).results;
+    expect_eq(1, rename_pattern_results.size());
+    expect_eq(rename_key_name, rename_pattern_results[0]);
+  }
+
+  {
+    printf("-- [%s:basic_test] rename series back\n", store_name.c_str());
+    auto ret = s->rename_series({{rename_key_name, autocreate_key_name1}}, false, profiler.get());
+    expect_eq(1, ret.size());
+    expect_eq("", ret.at(rename_key_name));
+  }
+
+  {
     printf("-- [%s:basic_test] read_all from series created by autocreate\n", store_name.c_str());
     auto ret = s->read_all(autocreate_key_name1, false, profiler.get());
     expect_eq("", ret.error);
@@ -671,11 +729,104 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   }
 }
 
-void recreate_directory(const string& dirname) {
+void run_rename_test(shared_ptr<Store> s, const string& store_name,
+    const string& data_directory, bool is_write_buffer = false) {
+  time_t test_now = time(NULL);
+  auto profiler = create_profiler("StoreTest", "run_rename_test", 1000000000);
+
+  for (size_t x = 0; x < 100; x++) {
+    string autocreate_key_name1 = string_printf("test.autocreate.dir1.dir2.dir3.key%zu", x);
+    string rename_key_name = string_printf("test.rename.key%zu", x);
+    string autocreate_key_filename1 = string_printf("%s/test/autocreate/dir1/dir2/dir3/key%zu.wsp", data_directory.c_str(), x);
+    string rename_key_filename = string_printf("/test/rename/key%zu.wsp", data_directory.c_str(), x);
+    string pattern5 = "test.**";
+    string autocreate_pattern = "test.autocreate.dir1.dir2.dir3.*";
+    string rename_pattern = "test.rename.*";
+
+    unordered_map<string, Series> write_data;
+    write_data[autocreate_key_name1].emplace_back();
+    write_data[autocreate_key_name1].back().timestamp = test_now;
+    write_data[autocreate_key_name1].back().value = 2.0;
+
+    {
+      printf("-- [%s:rename_test:%zu] rename nonexistent series\n", store_name.c_str(), x);
+      auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
+      expect_eq(1, ret.size());
+      expect_ne("", ret.at(autocreate_key_name1));
+    }
+
+    {
+      printf("-- [%s:rename_test:%zu] write to nonexistent series (autocreate)\n", store_name.c_str(), x);
+      auto ret = s->write(write_data, false, false, profiler.get());
+      expect_eq(1, ret.size());
+      expect(ret.at(autocreate_key_name1).empty());
+      expect_eq(is_write_buffer, !isfile(autocreate_key_filename1));
+      s->flush();
+      expect(isfile(autocreate_key_filename1));
+    }
+
+    {
+      printf("-- [%s:rename_test:%zu] rename series\n", store_name.c_str(), x);
+      auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
+      expect_eq(1, ret.size());
+      expect_eq("", ret.at(autocreate_key_name1));
+    }
+
+    {
+      printf("-- [%s:rename_test:%zu] read from renamed series\n", store_name.c_str(), x);
+      auto ret = s->read({rename_key_name}, test_now - 10 * 60, test_now, false, profiler.get());
+      expect_eq(1, ret.size());
+      expect_eq(1, ret.at(rename_key_name).size());
+      expect(ret.at(rename_key_name).at(rename_key_name).error.empty());
+      expect_eq(1, ret.at(rename_key_name).at(rename_key_name).data.size());
+      expect_eq((test_now / 60) * 60, ret.at(rename_key_name).at(rename_key_name).data[0].timestamp);
+      expect_eq(2.0, ret.at(rename_key_name).at(rename_key_name).data[0].value);
+    }
+
+    {
+      printf("-- [%s:rename_test:%zu] find returns renamed series and not original series\n", store_name.c_str(), x);
+      auto ret = s->find({pattern5, autocreate_pattern, rename_pattern}, false, profiler.get());
+      expect_eq(3, ret.size());
+      expect(ret.at(pattern5).error.empty());
+      expect(ret.at(autocreate_pattern).error.empty());
+      expect(ret.at(rename_pattern).error.empty());
+
+      auto& pattern5_results = ret.at(pattern5).results;
+      expect_eq(1, pattern5_results.size());
+      expect_eq(rename_key_name, pattern5_results[0]);
+
+      auto& autocreate_pattern_results = ret.at(autocreate_pattern).results;
+      expect_eq(0, autocreate_pattern_results.size());
+
+      auto& rename_pattern_results = ret.at(rename_pattern).results;
+      expect_eq(1, rename_pattern_results.size());
+      expect_eq(rename_key_name, rename_pattern_results[0]);
+    }
+
+    {
+      printf("-- [%s:rename_test:%zu] delete series\n", store_name.c_str(), x);
+      auto ret = s->delete_series({rename_key_name}, false, profiler.get());
+      expect_eq(1, ret.size());
+      expect_eq(1, ret.at(rename_key_name));
+    }
+  }
+}
+
+void reset_test_state(const string& dirname) {
   try {
     unlink(dirname, true);
   } catch (const runtime_error& e) { }
   mkdir(dirname.c_str(), 0755);
+
+  WhisperArchive::clear_files_lru();
+}
+
+void reset_and_run_all_tests(shared_ptr<Store> s, const string& store_name,
+    const string& data_directory, bool is_write_buffer = false) {
+  reset_test_state(data_directory);
+  run_basic_test(s, store_name, data_directory, is_write_buffer);
+  reset_test_state(data_directory);
+  run_rename_test(s, store_name, data_directory, is_write_buffer);
 }
 
 int main(int argc, char* argv[]) {
@@ -697,40 +848,51 @@ int main(int argc, char* argv[]) {
   try {
     run_internal_functions_test();
 
-    recreate_directory(data_directory);
-    shared_ptr<Store> disk_store(new DiskStore(data_directory));
-    disk_store->set_autocreate_rules(autocreate_rules);
-    run_basic_test(disk_store, "DiskStore", data_directory);
+    {
+      shared_ptr<Store> disk_store(new DiskStore(data_directory));
+      disk_store->set_autocreate_rules(autocreate_rules);
+      reset_and_run_all_tests(disk_store, "DiskStore", data_directory);
+    }
 
-    recreate_directory(data_directory);
-    shared_ptr<Store> multi_store_basic(new MultiStore({{"store1", disk_store}}));
-    run_basic_test(multi_store_basic, "MultiStore(DiskStore)", data_directory);
-    // TODO: test more complex MultiStores
+    {
+      shared_ptr<Store> disk_store(new DiskStore(data_directory));
+      shared_ptr<Store> multi_store(new MultiStore({{"store1", disk_store}}));
+      multi_store->set_autocreate_rules(autocreate_rules);
+      reset_and_run_all_tests(multi_store, "MultiStore(DiskStore)", data_directory);
+    }
 
-    recreate_directory(data_directory);
-    shared_ptr<Store> buffer_on_disk_store(new WriteBufferStore(disk_store, 0, 0, 0, 0, 0, false));
-    run_basic_test(buffer_on_disk_store, "WriteBufferStore(DiskStore)", data_directory, true);
+    {
+      shared_ptr<Store> disk_store1(new DiskStore(data_directory));
+      shared_ptr<Store> disk_store2(new DiskStore(data_directory));
+      shared_ptr<Store> hash_store(new ConsistentHashMultiStore({{"store1", disk_store1}, {"store2", disk_store2}}, 18));
+      hash_store->set_autocreate_rules(autocreate_rules);
+      reset_and_run_all_tests(hash_store, "ConsistentHashMultiStore(DiskStore, DiskStore)", data_directory);
+    }
 
-    // note: order is important here. the buffer_on_disk_store test will fail if
-    // it runs after any of the the cached_disk_store tests because the
-    // cached_disk_store leaves files open.
+    {
+      shared_ptr<Store> disk_store(new DiskStore(data_directory));
+      shared_ptr<Store> buffer_on_disk_store(new WriteBufferStore(disk_store, 0, 0, 0, 0, 0, false));
+      buffer_on_disk_store->set_autocreate_rules(autocreate_rules);
+      reset_and_run_all_tests(buffer_on_disk_store, "WriteBufferStore(DiskStore)", data_directory, true);
+    }
 
-    recreate_directory(data_directory);
-    shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 100, 100));
-    cached_disk_store->set_autocreate_rules(autocreate_rules);
-    run_basic_test(cached_disk_store, "CachedDiskStore", data_directory);
+    {
+      shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 100, 100));
+      cached_disk_store->set_autocreate_rules(autocreate_rules);
+      reset_and_run_all_tests(cached_disk_store, "CachedDiskStore", data_directory);
+    }
 
-    // have to recreate the CachedDiskStore for this test because it will
-    // remember test.key2
-    recreate_directory(data_directory);
-    cached_disk_store.reset(new CachedDiskStore(data_directory, 100, 100));
-    cached_disk_store->set_autocreate_rules(autocreate_rules);
-    shared_ptr<Store> buffer_on_cached_disk_store(new WriteBufferStore(cached_disk_store, 0, 0, 0, 0, 0, false));
-    run_basic_test(buffer_on_cached_disk_store, "WriteBufferStore(CachedDiskStore)", data_directory, true);
+    {
+      shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 100, 100));
+      shared_ptr<Store> buffer_on_cached_disk_store(new WriteBufferStore(cached_disk_store, 0, 0, 0, 0, 0, false));
+      buffer_on_cached_disk_store->set_autocreate_rules(autocreate_rules);
+      reset_and_run_all_tests(buffer_on_cached_disk_store, "WriteBufferStore(CachedDiskStore)", data_directory, true);
+    }
 
-    // TODO: test RemoteStore, EmptyStore
+    // TODO: test RemoteStore, EmptyStore, ReadOnlyStore
 
     printf("all tests passed\n");
+
   } catch (const exception& e) {
     printf("failure: %s\n", e.what());
     retcode = 1;

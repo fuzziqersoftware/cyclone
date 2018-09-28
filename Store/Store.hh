@@ -35,6 +35,9 @@ public:
   virtual std::unordered_map<std::string, int64_t> delete_series(
       const std::vector<std::string>& patterns, bool local_only,
       BaseFunctionProfiler* profiler) = 0;
+  virtual std::unordered_map<std::string, std::string> rename_series(
+      const std::unordered_map<std::string, std::string>& renames,
+      bool local_only, BaseFunctionProfiler* profiler) = 0;
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
@@ -65,6 +68,9 @@ public:
       bool local_only);
   static std::string string_for_delete_series(
       const std::vector<std::string>& patterns, bool local_only);
+  static std::string string_for_rename_series(
+      const std::unordered_map<std::string, std::string>& renames,
+      bool local_only);
   static std::string string_for_read(const std::vector<std::string>& key_names,
       int64_t start_time, int64_t end_time, bool local_only);
   static std::string string_for_read_all(const std::string& key_name,

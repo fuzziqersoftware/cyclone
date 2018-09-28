@@ -110,6 +110,108 @@ unordered_map<string, int64_t> ConsistentHashMultiStore::delete_series(
   return ret;
 }
 
+unordered_map<string, string> ConsistentHashMultiStore::rename_series(
+    const unordered_map<string, string>& renames, bool local_only,
+    BaseFunctionProfiler* profiler) {
+
+  // if a verify+repair is in progress or read_from_all is on, then renames
+  // can't be forwarded to substores as an optimization; we have to emulate them
+  // using read_all and write instead
+  bool can_forward = !this->read_from_all && (!this->verify_progress.in_progress() || !this->verify_progress.repair);
+
+  unordered_map<uint8_t, unordered_map<string, string>> renames_to_forward;
+  unordered_map<string, string> renames_to_emulate;
+  if (can_forward) {
+    for (const auto& it : renames) {
+      uint8_t from_store_id = this->ring->host_id_for_key(it.first);
+      uint8_t to_store_id = this->ring->host_id_for_key(it.second);
+      if (from_store_id == to_store_id) {
+        renames_to_forward[to_store_id].emplace(it.first, it.second);
+      } else {
+        renames_to_emulate.emplace(it.first, it.second);
+      }
+    }
+    profiler->add_metadata("can_forward", "true");
+  } else {
+    renames_to_emulate = renames;
+    profiler->add_metadata("can_forward", "false");
+  }
+  profiler->checkpoint("partition_series");
+
+  unordered_map<string, string> ret;
+  for (const auto& it : renames_to_forward) {
+    const string& store_name = this->ring->host_for_id(it.first).name;
+    auto results = this->stores[store_name]->rename_series(it.second,
+        local_only, profiler);
+    this->combine_simple_results(ret, move(results));
+    profiler->checkpoint(string_printf("forward_renames_store_%hhu", it.first));
+  }
+
+  for (const auto& it : renames_to_emulate) {
+    const string& from_key_name = it.first;
+    const string& to_key_name = it.second;
+    uint8_t from_store_id = this->ring->host_id_for_key(from_key_name);
+    uint8_t to_store_id = this->ring->host_id_for_key(to_key_name);
+    auto& from_store = this->stores[this->ring->host_for_id(from_store_id).name];
+    auto& to_store = this->stores[this->ring->host_for_id(to_store_id).name];
+
+    auto read_all_result = from_store->read_all(from_key_name, false, profiler);
+    profiler->checkpoint("read_all_" + it.first);
+    if (!read_all_result.error.empty()) {
+      ret.emplace(from_key_name, move(read_all_result.error));
+      continue;
+    }
+    if (read_all_result.metadata.archive_args.empty()) {
+      ret.emplace(from_key_name, "series does not exist");
+      continue;
+    }
+
+    // create the series in the remote store if it doesn't exist already
+    SeriesMetadataMap metadata_map({{to_key_name, read_all_result.metadata}});
+    auto update_metadata_ret = to_store->update_metadata(metadata_map, true,
+        UpdateMetadataBehavior::Recreate, true, false, profiler);
+    profiler->checkpoint("update_metadata_" + to_key_name);
+    try {
+      string& error = update_metadata_ret.at(to_key_name);
+      if (!error.empty()) {
+        ret.emplace(from_key_name, move(error));
+        continue;
+      }
+    } catch (const out_of_range&) {
+      ret.emplace(from_key_name, "update_metadata returned no results");
+      continue;
+    }
+
+    // write all the data from the from series into the to series
+    SeriesMap write_map({{to_key_name, move(read_all_result.data)}});
+    auto write_ret = to_store->write(write_map, true, false, profiler);
+    profiler->checkpoint("write_" + to_key_name);
+    try {
+      const string& error = write_ret.at(to_key_name);
+      if (!error.empty()) {
+        ret.emplace(from_key_name, move(error));
+        continue;
+      }
+    } catch (const out_of_range&) {
+      ret.emplace(from_key_name, "write returned no results");
+      continue;
+    }
+
+    // delete the original series
+    auto delete_ret = from_store->delete_series({from_key_name}, false,
+        profiler);
+    profiler->checkpoint("delete_series_" + from_key_name);
+    int64_t num_deleted = delete_ret[from_key_name];
+    if (num_deleted == 1) {
+      ret.emplace(from_key_name, "");
+    } else {
+      ret.emplace(from_key_name, "move successful, but delete failed");
+    }
+  }
+
+  return ret;
+}
+
 unordered_map<string, unordered_map<string, ReadResult>> ConsistentHashMultiStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
     bool local_only, BaseFunctionProfiler* profiler) {

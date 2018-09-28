@@ -203,6 +203,76 @@ unordered_map<string, int64_t> WriteBufferStore::delete_series(
   // pending writes from the queue and deleting the keys in the substore
 }
 
+unordered_map<string, string> WriteBufferStore::rename_series(
+    const unordered_map<string, string>& renames, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  profiler->add_metadata("rename_count",
+      string_printf("%zu", renames.size()));
+
+  unordered_map<string, string> renames_to_forward = renames;
+  unordered_map<string, string> ret;
+
+  // if there are queue items, temporarily remove them from the queue - this is
+  // necessary to make sure they don't get written during the rename. we don't
+  // allow a rename if there's a pending update_metadata or the key; this is
+  // mostly because I'm lazy and don't want to figure out the semantics of
+  // merging the two queue items if another update_metadata is enqueued during
+  // the rename operation
+  unordered_map<string, QueueItem> items_to_merge;
+  {
+    rw_guard g(this->queue_lock, true);
+    for (auto rename_it = renames_to_forward.begin(); rename_it != renames_to_forward.end();) {
+      auto queue_it = this->queue.find(rename_it->first);
+      if (queue_it == this->queue.end()) {
+        rename_it++;
+        continue;
+      }
+      if (queue_it->second.has_update_metadata()) {
+        ret.emplace(rename_it->first, "series has pending update_metadata");
+        rename_it = renames_to_forward.erase(rename_it);
+        continue;
+      }
+      items_to_merge.emplace(rename_it->second, move(queue_it->second));
+      this->queue.erase(queue_it);
+      rename_it++;
+    }
+  }
+
+  profiler->add_metadata("num_renamed_in_queue",
+      string_printf("%zu", items_to_merge.size()));
+  profiler->checkpoint("write_buffer_remove");
+
+  // issue the rename to the underlying store
+  for (const auto& it : this->store->rename_series(renames_to_forward, local_only, profiler)) {
+    ret.emplace(it.first, it.second);
+  }
+
+  // merge the renamed queue items back in
+  {
+    rw_guard g(this->queue_lock, true);
+    for (auto& merge_it : items_to_merge) {
+      auto emplace_ret = this->queue.emplace(piecewise_construct,
+          forward_as_tuple(merge_it.first), forward_as_tuple(move(merge_it.second)));
+      if (emplace_ret.second) {
+        continue;
+      }
+
+      // there's already a queue item for this key; need to merge the contents.
+      // unlike in write(), we merge the data under the existing data (that is,
+      // we drop the point to be merged if it would overwrite an existing point)
+      // because the merging data was received earlier than the existing data
+      auto& existing_key_data = emplace_ret.first->second.data;
+      for (const auto& merge_dp_it : merge_it.second.data) {
+        if (!existing_key_data.emplace(merge_dp_it.first, merge_dp_it.second).second) {
+          this->queued_datapoints--;
+        }
+      }
+    }
+  }
+
+  return ret;
+}
+
 unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
     bool local_only, BaseFunctionProfiler* profiler) {
@@ -245,7 +315,7 @@ unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
              (item.create_new && !series_exists_in_substore))) {
           // if there's data, reduce its resolution to that of the first archive
           result.data.clear();
-          if (!item.data.empty()) {
+          if (item.has_data()) {
             result.step = item.metadata.archive_args[0].precision;
             result.start_time = 0;
             result.end_time = 0;
@@ -379,12 +449,12 @@ unordered_map<string, string> WriteBufferStore::write(
     rw_guard g(this->queue_lock, true);
     for (auto& it : mutable_data) {
       auto emplace_ret = this->queue.emplace(piecewise_construct,
-          forward_as_tuple(it.first), forward_as_tuple(it.second));
+          forward_as_tuple(it.first), forward_as_tuple(move(it.second)));
       if (emplace_ret.second) {
         this->queued_writes++;
         this->queued_datapoints += emplace_ret.first->second.data.size();
       } else {
-        // there was already a queue for this key; need to merge the contents
+        // there's already a queue item for this key; need to merge the contents
         auto& existing_key_data = emplace_ret.first->second.data;
         for (const auto& it2 : it.second) {
           auto emplace_ret2 = existing_key_data.emplace(it2.timestamp, it2.value);
@@ -521,14 +591,14 @@ void WriteBufferStore::flush() {
       auto& command = it->second;
 
       // if archive_args isn't empty, there was an update_metadata request
-      if (!command.metadata.archive_args.empty()) {
+      if (command.has_update_metadata()) {
         this->store->update_metadata({{key_name, command.metadata}},
             command.create_new, command.update_behavior, false, false,
             profiler.get());
       }
 
       // if data isn't empty, there was a write request
-      if (!command.data.empty()) {
+      if (command.has_data()) {
         auto& series = write_batch.emplace(piecewise_construct,
             forward_as_tuple(key_name), forward_as_tuple()).first->second;
         for (const auto& pt : command.data) {
@@ -627,10 +697,10 @@ int64_t WriteBufferStore::delete_pending_writes(const string& pattern,
   for (auto it = this->queue.begin(); it != this->queue.end();) {
     if (this->name_matches_pattern(it->first, pattern)) {
       num_queue_items_deleted++;
-      if (!it->second.metadata.archive_args.empty()) {
+      if (it->second.has_update_metadata()) {
         num_update_metadatas_deleted++;
       }
-      if (!it->second.data.empty()) {
+      if (it->second.has_data()) {
         num_writes_deleted++;
         num_datapoints_deleted += it->second.data.size();
       }
@@ -664,6 +734,14 @@ WriteBufferStore::QueueItem::QueueItem(const Series& data) : create_new(true),
   for (const auto& dp : data) {
     this->data[dp.timestamp] = dp.value;
   }
+}
+
+bool WriteBufferStore::QueueItem::has_update_metadata() const {
+  return !this->metadata.archive_args.empty();
+}
+
+bool WriteBufferStore::QueueItem::has_data() const {
+  return !this->data.empty();
 }
 
 
@@ -723,7 +801,7 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
         auto& command = it.second;
 
         // if archive_args isn't empty, there was a create request
-        if (!command.metadata.archive_args.empty()) {
+        if (command.has_update_metadata()) {
           if (enable_rate_limits && this->max_update_metadatas_per_second) {
             uint64_t delay = this->update_metadata_rate_limiter.delay_until_next_action();
             if (delay) {
@@ -745,7 +823,7 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
         }
 
         // if data isn't empty, there was a write request
-        if (!command.data.empty()) {
+        if (command.has_data()) {
           auto& series = write_batch.emplace(piecewise_construct,
               forward_as_tuple(key_name), forward_as_tuple()).first->second;
           for (const auto& pt : command.data) {

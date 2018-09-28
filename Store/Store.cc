@@ -105,6 +105,13 @@ string Store::string_for_delete_series(const vector<string>& patterns,
       string_for_bool(local_only));
 }
 
+string Store::string_for_rename_series(
+    const unordered_map<string, string>& renames, bool local_only) {
+  string series_list = comma_list_limit(renames, 10);
+  return string_printf("rename_series(%s, local_only=%s)", series_list.c_str(),
+      string_for_bool(local_only));
+}
+
 string Store::string_for_read(const vector<string>& key_names,
     int64_t start_time, int64_t end_time, bool local_only) {
   string series_list = comma_list_limit(key_names, 10);

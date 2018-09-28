@@ -114,6 +114,34 @@ unordered_map<string, int64_t> RemoteStore::delete_series(
   return ret;
 }
 
+unordered_map<string, string> RemoteStore::rename_series(
+    const unordered_map<string, string>& renames, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  unordered_map<string, string> ret;
+  if (local_only) {
+    profiler->add_metadata("local_only", "true");
+    return ret;
+  }
+
+  try {
+    auto c = this->get_client();
+    profiler->checkpoint("get_client");
+    c->client->rename_series(ret, renames, true);
+    profiler->checkpoint("remote_call");
+    this->return_client(move(c));
+
+  } catch (const exception& e) {
+    profiler->checkpoint("remote_call");
+    profiler->add_metadata("remote_error", e.what());
+    this->stats[0].server_disconnects++;
+    for (const auto& it : renames) {
+      ret.emplace(it.first, e.what());
+    }
+  }
+  this->stats[0].rename_series_commands++;
+  return ret;
+}
+
 unordered_map<string, unordered_map<string, ReadResult>> RemoteStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
     bool local_only, BaseFunctionProfiler* profiler) {
@@ -388,6 +416,7 @@ unordered_map<string, int64_t> RemoteStore::Stats::to_map() const {
   ret.emplace("client_disconnects", this->client_disconnects.load());
   ret.emplace("remote_update_metadata_commands", this->update_metadata_commands.load());
   ret.emplace("remote_delete_series_commands", this->delete_series_commands.load());
+  ret.emplace("remote_rename_series_commands", this->rename_series_commands.load());
   ret.emplace("remote_read_commands", this->read_commands.load());
   ret.emplace("remote_read_all_commands", this->read_all_commands.load());
   ret.emplace("remote_write_commands", this->write_commands.load());

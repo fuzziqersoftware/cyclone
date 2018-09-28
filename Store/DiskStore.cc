@@ -21,6 +21,53 @@
 using namespace std;
 
 
+
+static size_t makedirs_for_file(string filename, int mode = 0755) {
+  size_t num_created = 0;
+  for (size_t p = filename.find('/'); p != string::npos; p = filename.find('/', p + 1)) {
+    if (p == 0) {
+      continue; // don't try to create the root directory
+    }
+
+    filename[p] = 0;
+    if (mkdir(filename.c_str(), 0755) == -1) {
+      if (errno != EEXIST) {
+        throw runtime_error("can\'t create directory " + filename);
+      }
+    } else {
+      num_created++;
+    }
+    filename[p] = '/';
+  }
+  return num_created;
+}
+
+static size_t delete_empty_directories_for_file(const string& base_directory,
+    string filename) {
+  size_t num_deleted = 0;
+  while (filename.size() > base_directory.size()) {
+    size_t slash_pos = filename.rfind('/');
+    if (slash_pos == string::npos) {
+      break;
+    }
+    filename.resize(slash_pos);
+
+    if (filename.size() <= base_directory.size()) {
+      break;
+    }
+    if (rmdir(filename.c_str())) {
+      if (errno != EBUSY && errno != ENOENT && errno != ENOTEMPTY) {
+        throw runtime_error("can\'t delete directory: " + filename);
+      }
+      break;
+    }
+    num_deleted++;
+  }
+  return num_deleted;
+}
+
+
+
 DiskStore::DiskStore(const string& directory) :
     directory(directory), stats(3) { }
 
@@ -57,22 +104,7 @@ unordered_map<string, string> DiskStore::update_metadata(
 
       // create directories if we need to
       if (create_new) {
-        string dirname = filename;
-        for (size_t p = dirname.find('/'); p != string::npos; p = dirname.find('/', p + 1)) {
-          if (p == 0) {
-            continue; // don't try to create the root directory
-          }
-
-          dirname[p] = 0;
-          if (mkdir(dirname.c_str(), 0755) == -1) {
-            if (errno != EEXIST) {
-              throw runtime_error("can\'t create directory " + dirname);
-            }
-          } else {
-            this->stats[0].directory_creates++;
-          }
-          dirname[p] = '/';
-        }
+        this->stats[0].directory_creates += makedirs_for_file(filename);
       }
 
       // create or update the series
@@ -134,7 +166,14 @@ unordered_map<string, int64_t> DiskStore::delete_series(
         string path = paths_to_count.back();
         paths_to_count.pop_back();
 
-        for (const string& item : list_directory(path)) {
+        // note: list_directory can fail if the directory doesn't exist; in this
+        // case we just treat it as empty
+        unordered_set<string> contents;
+        try {
+          contents = list_directory(path);
+        } catch (const exception& e) { }
+
+        for (const string& item : contents) {
           string item_path = path + "/" + item;
           if (isdir(item_path)) {
             paths_to_count.emplace_back(item_path);
@@ -144,7 +183,13 @@ unordered_map<string, int64_t> DiskStore::delete_series(
         }
       }
 
-      unlink(directory_path, true);
+      try {
+        unlink(directory_path, true);
+      } catch (const exception& e) {
+        log(INFO, "[DiskStore] failed to delete directory %s (%s)",
+            directory_path.c_str(), e.what());
+        deleted_count = 0;
+      }
 
     } else {
       determinate_patterns.emplace_back(pattern);
@@ -174,24 +219,7 @@ unordered_map<string, int64_t> DiskStore::delete_series(
 
       // then delete any empty directories in which the file resided. stop when
       // we reach the data directory or any directory isn't empty
-      while (filename.size() > this->directory.size()) {
-        size_t slash_pos = filename.rfind('/');
-        if (slash_pos == string::npos) {
-          break;
-        }
-        filename.resize(slash_pos);
-
-        if (filename.size() <= this->directory.size()) {
-          break;
-        }
-        if (rmdir(filename.c_str())) {
-          if (errno != EBUSY && errno != ENOENT && errno != ENOTEMPTY) {
-            throw runtime_error("can\'t delete directory: " + filename);
-          }
-          break;
-        }
-        this->stats[0].directory_deletes++;
-      }
+      delete_empty_directories_for_file(this->directory, filename);
 
       for (const auto& pattern : key_it.second) {
         ret[pattern]++;
@@ -207,6 +235,44 @@ unordered_map<string, int64_t> DiskStore::delete_series(
   for (const auto& pattern : patterns) {
     ret.emplace(pattern, 0);
   }
+  return ret;
+}
+
+unordered_map<string, string> DiskStore::rename_series(
+    const unordered_map<string, string>& renames, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  unordered_map<string, string> ret;
+
+  for (const auto& rename_it : renames) {
+    if (rename_it.first == rename_it.second) {
+      ret.emplace(rename_it.first, "");
+      continue;
+    }
+
+    try {
+      string from_filename = this->filename_for_key(rename_it.first);
+      string to_filename = this->filename_for_key(rename_it.second);
+
+      // create directories if we need to
+      this->stats[0].directory_creates += makedirs_for_file(to_filename);
+
+      // note: we don't need to explicitly close the fd in WhisperArchive's file
+      // cache; there shouldn't be an open file for this series because it was
+      // closed in the WhisperArchive destructor
+      rename(from_filename, to_filename);
+      this->stats[0].series_renames++;
+
+      // then delete any empty directories in which the original file resided
+      delete_empty_directories_for_file(this->directory, from_filename);
+
+      ret.emplace(rename_it.first, "");
+
+    } catch (const exception& e) {
+      ret.emplace(rename_it.first, e.what());
+    }
+  }
+  profiler->checkpoint("rename_files");
+
   return ret;
 }
 
@@ -514,6 +580,7 @@ unordered_map<string, int64_t> DiskStore::Stats::to_map() const {
   ret.emplace("series_update_metadatas", this->series_update_metadatas.load());
   ret.emplace("series_autocreates", this->series_autocreates.load());
   ret.emplace("series_deletes", this->series_deletes.load());
+  ret.emplace("series_renames", this->series_renames.load());
   ret.emplace("read_requests", this->read_requests.load());
   ret.emplace("read_series", this->read_series.load());
   ret.emplace("read_datapoints", this->read_datapoints.load());

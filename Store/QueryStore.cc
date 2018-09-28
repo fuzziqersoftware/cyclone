@@ -45,6 +45,12 @@ unordered_map<string, int64_t> QueryStore::delete_series(
   return this->store->delete_series(patterns, local_only, profiler);
 }
 
+unordered_map<string, string> QueryStore::rename_series(
+    const unordered_map<string, string>& renames, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  return this->store->rename_series(renames, local_only, profiler);
+}
+
 unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
     bool local_only, BaseFunctionProfiler* profiler) {

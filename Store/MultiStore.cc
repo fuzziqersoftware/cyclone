@@ -41,9 +41,7 @@ unordered_map<string, string> MultiStore::update_metadata(
   for (const auto& it : this->stores) {
     auto results = it.second->update_metadata(metadata, create_new,
         update_behavior, skip_buffering, local_only, profiler);
-    for (const auto& result_it : results) {
-      ret.emplace(move(result_it.first), move(result_it.second));
-    }
+    this->combine_simple_results(ret, move(results));
   }
   return ret;
 }
@@ -58,6 +56,18 @@ unordered_map<string, int64_t> MultiStore::delete_series(
     for (const auto& result_it : results) {
       ret[result_it.first] += result_it.second;
     }
+  }
+  return ret;
+}
+
+unordered_map<string, string> MultiStore::rename_series(
+    const unordered_map<string, string>& renames, bool local_only,
+    BaseFunctionProfiler* profiler) {
+
+  unordered_map<string, string> ret;
+  for (const auto& it : this->stores) {
+    auto results = it.second->rename_series(renames, local_only, profiler);
+    this->combine_simple_results(ret, move(results));
   }
   return ret;
 }
@@ -97,9 +107,7 @@ unordered_map<string, string> MultiStore::write(
   unordered_map<string, string> ret;
   for (const auto& it : this->stores) {
     auto results = it.second->write(data, skip_buffering, local_only, profiler);
-    for (const auto& result_it : results) {
-      ret.emplace(move(result_it.first), move(result_it.second));
-    }
+    this->combine_simple_results(ret, move(results));
   }
   return ret;
 }
@@ -166,6 +174,26 @@ string MultiStore::str() const {
 }
 
 
+
+void MultiStore::combine_simple_results(unordered_map<string, string>& into,
+    unordered_map<string, string>&& from) {
+
+  for (auto& from_it : from) {
+    const string& from_key = from_it.first;
+    auto& from_error = from_it.second;
+
+    auto emplace_ret = into.emplace(from_key, from_error);
+    if (!emplace_ret.second) {
+
+      // errors take precedence over success, which takes precedence over "ignored"
+      auto& into_error = emplace_ret.first->second;
+      if ((into_error == "ignored") ||
+          (into_error.empty() && (from_error != "ignored"))) {
+        into_error = from_error;
+      }
+    }
+  }
+}
 
 void MultiStore::combine_read_results(
     unordered_map<string, unordered_map<string, ReadResult>>& into,
