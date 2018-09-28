@@ -345,7 +345,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       }
 
       {
-        bool new_value = (*new_store_config)["merge_find_patterns"]->as_int();
+        bool new_value = (*new_store_config)["merge_find_patterns"]->as_bool();
         if (new_value != wb->get_merge_find_patterns()) {
           log(INFO, "%s.write_buffer.merge_find_patterns changed from %s to %s",
               prefix.c_str(), wb->get_merge_find_patterns() ? "true" : "false",
