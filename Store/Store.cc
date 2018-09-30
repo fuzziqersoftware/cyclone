@@ -60,7 +60,7 @@ static string comma_list_limit(const unordered_map<string, V>& m, size_t limit) 
   auto it = m.begin();
   string ret = "[" + it->first;
   size_t count = 1;
-  for (it++; (it != m.end()) && (count < limit); it++) {
+  for (it++; (it != m.end()) && (count < limit); it++, count++) {
     ret += ", ";
     ret += it->first;
   }
@@ -78,7 +78,7 @@ static string comma_list_limit(const vector<string>& m, size_t limit) {
   auto it = m.begin();
   string ret = "[" + *it;
   size_t count = 1;
-  for (it++; (it != m.end()) && (count < limit); it++) {
+  for (it++; (it != m.end()) && (count < limit); it++, count++) {
     ret += ", ";
     ret += *it;
   }
