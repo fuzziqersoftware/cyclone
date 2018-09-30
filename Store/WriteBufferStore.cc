@@ -213,11 +213,7 @@ unordered_map<string, string> WriteBufferStore::rename_series(
   unordered_map<string, string> ret;
 
   // if there are queue items, temporarily remove them from the queue - this is
-  // necessary to make sure they don't get written during the rename. we don't
-  // allow a rename if there's a pending update_metadata or the key; this is
-  // mostly because I'm lazy and don't want to figure out the semantics of
-  // merging the two queue items if another update_metadata is enqueued during
-  // the rename operation
+  // necessary to make sure they don't get written during the rename
   unordered_map<string, QueueItem> items_to_merge;
   {
     rw_guard g(this->queue_lock, true);
@@ -225,11 +221,6 @@ unordered_map<string, string> WriteBufferStore::rename_series(
       auto queue_it = this->queue.find(rename_it->first);
       if (queue_it == this->queue.end()) {
         rename_it++;
-        continue;
-      }
-      if (queue_it->second.has_update_metadata()) {
-        ret.emplace(rename_it->first, "series has pending update_metadata");
-        rename_it = renames_to_forward.erase(rename_it);
         continue;
       }
       items_to_merge.emplace(rename_it->second, move(queue_it->second));
@@ -250,24 +241,7 @@ unordered_map<string, string> WriteBufferStore::rename_series(
   // merge the renamed queue items back in
   {
     rw_guard g(this->queue_lock, true);
-    for (auto& merge_it : items_to_merge) {
-      auto emplace_ret = this->queue.emplace(piecewise_construct,
-          forward_as_tuple(merge_it.first), forward_as_tuple(move(merge_it.second)));
-      if (emplace_ret.second) {
-        continue;
-      }
-
-      // there's already a queue item for this key; need to merge the contents.
-      // unlike in write(), we merge the data under the existing data (that is,
-      // we drop the point to be merged if it would overwrite an existing point)
-      // because the merging data was received earlier than the existing data
-      auto& existing_key_data = emplace_ret.first->second.data;
-      for (const auto& merge_dp_it : merge_it.second.data) {
-        if (!existing_key_data.emplace(merge_dp_it.first, merge_dp_it.second).second) {
-          this->queued_datapoints--;
-        }
-      }
-    }
+    this->merge_earlier_queue_items_locked(move(items_to_merge));
   }
 
   return ret;
@@ -487,7 +461,7 @@ unordered_map<string, FindResult> WriteBufferStore::find(
 
     size_t pattern_start_offset = it.first.find_first_of("[{*");
     if (pattern_start_offset != string::npos) {
-      // if merging patterns is disabled, don't do anything
+      // if merging patterns is disabled, don't do anything (this can be slow)
       if (!this->merge_find_patterns) {
         continue;
       }
@@ -662,7 +636,7 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
   return ret;
 }
 
-int64_t WriteBufferStore::delete_from_cache(const std::string& path,
+int64_t WriteBufferStore::delete_from_cache(const string& path,
     bool local_only) {
   return this->store->delete_from_cache(path, local_only);
 }
@@ -744,6 +718,93 @@ bool WriteBufferStore::QueueItem::has_data() const {
   return !this->data.empty();
 }
 
+size_t WriteBufferStore::QueueItem::merge_earlier_item(QueueItem&& other) {
+  bool move_data = true;
+  bool move_update_metadata = false;
+  size_t datapoints_ignored = 0;
+
+  if (this->has_update_metadata() && other.has_update_metadata()) {
+    // merging update_metadata is kind of hard to understand. here's a table of
+    // what should happen:
+    //   this      other      result
+    //  Ignore     Ignore     other takes precedence
+    //  Ignore     Update     other takes precedence
+    //  Ignore    Recreate    other takes precedence
+    //  Update     Ignore     this takes precedence
+    //  Update     Update     this takes precedence
+    //  Update    Recreate    this takes precedence, but behavior is Recreate
+    // Recreate    Ignore     this takes precedence, and data from other is ignored
+    // Recreate    Update     this takes precedence, and data from other is ignored
+    // Recreate   Recreate    this takes precedence, and data from other is ignored
+    //
+    // so in summary, we use other's update_metadata command if this'
+    // update_metadata command has behavior Ignore, and otherwise don't use it
+    // at all. but if other's behavior was Recreate, we need to make sure that
+    // that happens, so we add that special case here (#2).
+
+    if (this->update_behavior == UpdateMetadataBehavior::Ignore) {
+      move_update_metadata = true;
+
+    } else if ((this->update_behavior == UpdateMetadataBehavior::Update) &&
+        (other.update_behavior == UpdateMetadataBehavior::Recreate)) {
+      this->update_behavior = UpdateMetadataBehavior::Recreate;
+
+    } else if (this->update_behavior == UpdateMetadataBehavior::Recreate) {
+      move_data = false;
+    }
+
+  } else if (other.has_update_metadata()) {
+    move_update_metadata = true;
+
+  } else if (this->has_update_metadata() &&
+      (this->update_behavior == UpdateMetadataBehavior::Recreate)) {
+    move_data = false;
+  }
+
+  if (move_update_metadata) {
+    this->metadata = move(other.metadata);
+    this->update_behavior = other.update_behavior;
+    this->create_new = other.create_new;
+  }
+
+  if (move_data) {
+    if (this->has_data() && other.has_data()) {
+      // put the other item's data into this item, but don't overwrite any
+      // existing datapoints
+      for (const auto& other_dp_it : other.data) {
+        datapoints_ignored += (!this->data.emplace(other_dp_it.first, other_dp_it.second).second);
+      }
+
+    } else if (other.has_data()) {
+      this->data = move(other.data);
+    }
+  }
+
+  return datapoints_ignored;
+}
+
+
+
+void WriteBufferStore::merge_earlier_queue_items_locked(
+    unordered_map<string, QueueItem>&& items) {
+  size_t datapoints_ignored = 0;
+  for (auto& merge_it : items) {
+    auto emplace_ret = this->queue.emplace(piecewise_construct,
+        forward_as_tuple(merge_it.first), forward_as_tuple(move(merge_it.second)));
+    if (emplace_ret.second) {
+      continue; // there wasn't an existing queue item
+    }
+
+    // there's already a queue item for this key; need to merge the contents.
+    // unlike in write(), we merge the data under the existing data (that is,
+    // we drop the point to be merged if it would overwrite an existing point)
+    // because the merging data was received earlier than the existing data
+    datapoints_ignored += emplace_ret.first->second.merge_earlier_item(move(merge_it.second));
+  }
+
+  this->queued_datapoints -= datapoints_ignored;
+}
+
 
 
 WriteBufferStore::WriteThread::WriteThread() : t(), last_queue_restart(0),
@@ -767,7 +828,7 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
       bool enable_rate_limits = true;
 
       // pick out a batch of creates from the create queue
-      map<string, QueueItem> commands;
+      unordered_map<string, QueueItem> commands;
       {
         rw_guard g(this->queue_lock, true);
 

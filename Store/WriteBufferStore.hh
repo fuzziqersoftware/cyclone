@@ -98,6 +98,8 @@ private:
 
     bool has_update_metadata() const;
     bool has_data() const;
+
+    size_t merge_earlier_item(QueueItem&& other);
   };
 
   // TODO: add writes-in-progress so they can be merged with reads too
@@ -107,8 +109,8 @@ private:
   std::map<std::string, QueueItem> queue;
   mutable rw_lock queue_lock;
 
-  static std::string get_directory_match_for_queue_item(
-      const std::string& queue_item, const std::string& pattern);
+  void merge_earlier_queue_items_locked(
+      std::unordered_map<std::string, QueueItem>&& items);
 
   RateLimiter update_metadata_rate_limiter;
   RateLimiter write_batch_rate_limiter;

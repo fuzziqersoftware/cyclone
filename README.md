@@ -82,7 +82,7 @@ This command does not return until the changes are committed to disk, even if wr
 
 This command renames one or more series. Patterns may be not given here.
 
-Any buffered writes for the renamed series will be reassigned to the new series name. If there is an uncommitted update_metadata action for a series, it cannot be renamed.
+Any buffered writes or update_metadata actions for the renamed series will be reassigned to the new series name. They will not be flushed immediately.
 
 This command does not return until the rename is committed to disk, even if write buffering is used.
 
