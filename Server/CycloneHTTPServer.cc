@@ -245,7 +245,7 @@ string CycloneHTTPServer::handle_read_all_request(struct Thread& t,
   auto result = this->store->read_all(target, false, pg.profiler.get());
   pg.profiler->checkpoint("store_read_all");
 
-  if (result.error.empty()) {
+  if (result.error.description.empty()) {
     evbuffer_add(out_buffer, "[", 1);
     size_t num_points = 0;
     for (const auto& pt : result.data) {
@@ -261,7 +261,8 @@ string CycloneHTTPServer::handle_read_all_request(struct Thread& t,
     }
     evbuffer_add(out_buffer, "]", 1);
   } else {
-    evbuffer_add_printf(out_buffer, "\"error: %s\"", result.error.c_str());
+    evbuffer_add_printf(out_buffer, "\"error: %s\"",
+        result.error.description.c_str());
   }
   pg.profiler->checkpoint("render");
 

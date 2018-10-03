@@ -82,20 +82,20 @@ void DiskStore::set_directory(const std::string& new_value) {
   WhisperArchive::clear_files_lru();
 }
 
-unordered_map<string, string> DiskStore::update_metadata(
+unordered_map<string, Error> DiskStore::update_metadata(
     const SeriesMetadataMap& m, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
 
   // TODO: add profiling metadata and checkpoints for this function
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (auto& it : m) {
     auto& key_name = it.first;
     auto& metadata = it.second;
 
     if (!this->key_name_is_valid(it.first)) {
-      ret.emplace(it.first, "key contains invalid characters");
+      ret.emplace(it.first, make_error("key contains invalid characters"));
       continue;
     }
 
@@ -110,18 +110,18 @@ unordered_map<string, string> DiskStore::update_metadata(
       // create or update the series
       if (isfile(filename)) {
         if (update_behavior == UpdateMetadataBehavior::Ignore) {
-          ret.emplace(key_name, "ignored");
+          ret.emplace(key_name, make_ignored());
 
         } else if (update_behavior == UpdateMetadataBehavior::Update) {
           WhisperArchive(filename).update_metadata(metadata.archive_args,
               metadata.x_files_factor, metadata.agg_method);
-          ret.emplace(key_name, "");
+          ret.emplace(key_name, make_success());
           this->stats[0].series_update_metadatas++;
 
         } else if (update_behavior == UpdateMetadataBehavior::Recreate) {
           WhisperArchive(filename, metadata.archive_args, metadata.x_files_factor,
               metadata.agg_method);
-          ret.emplace(key_name, "");
+          ret.emplace(key_name, make_success());
           this->stats[0].series_truncates++;
         }
 
@@ -129,16 +129,16 @@ unordered_map<string, string> DiskStore::update_metadata(
         if (create_new) {
           WhisperArchive(filename, metadata.archive_args, metadata.x_files_factor,
               metadata.agg_method);
-          ret.emplace(key_name, "");
+          ret.emplace(key_name, make_success());
           this->stats[0].series_creates++;
 
         } else {
-          ret.emplace(key_name, "ignored");
+          ret.emplace(key_name, make_ignored());
         }
       }
 
     } catch (const exception& e) {
-      ret.emplace(key_name, e.what());
+      ret.emplace(key_name, make_error(e.what()));
     }
   }
 
@@ -238,14 +238,14 @@ unordered_map<string, int64_t> DiskStore::delete_series(
   return ret;
 }
 
-unordered_map<string, string> DiskStore::rename_series(
+unordered_map<string, Error> DiskStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
 
   for (const auto& rename_it : renames) {
     if (rename_it.first == rename_it.second) {
-      ret.emplace(rename_it.first, "");
+      ret.emplace(rename_it.first, make_success());
       continue;
     }
 
@@ -265,10 +265,10 @@ unordered_map<string, string> DiskStore::rename_series(
       // then delete any empty directories in which the original file resided
       delete_empty_directories_for_file(this->directory, from_filename);
 
-      ret.emplace(rename_it.first, "");
+      ret.emplace(rename_it.first, make_success());
 
     } catch (const exception& e) {
-      ret.emplace(rename_it.first, e.what());
+      ret.emplace(rename_it.first, make_error(e.what()));
     }
   }
   profiler->checkpoint("rename_files");
@@ -319,11 +319,11 @@ unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
           r.end_time = end_time;
           r.step = 0;
         } else {
-          r.error = e.what();
+          r.error = make_error(e.what());
         }
 
       } catch (const exception& e) {
-        r.error = e.what();
+        r.error = make_error(e.what());
       }
     }
   }
@@ -355,18 +355,19 @@ ReadAllResult DiskStore::read_all(const string& key_name, bool local_only,
     // no metadata
 
   } catch (const exception& e) {
-    ret.error = e.what();
+    ret.error = make_error(e.what());
   }
   return ret;
 }
 
-unordered_map<string, string> DiskStore::write(
+unordered_map<string, Error> DiskStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+
+  unordered_map<string, Error> ret;
   for (const auto& it : data) {
     if (!this->key_name_is_valid(it.first)) {
-      ret.emplace(it.first, "key contains invalid characters");
+      ret.emplace(it.first, make_error("key contains invalid characters"));
       continue;
     }
 
@@ -375,13 +376,13 @@ unordered_map<string, string> DiskStore::write(
       try {
         WhisperArchive d(filename);
         d.write(it.second);
-        ret.emplace(it.first, "");
+        ret.emplace(it.first, make_success());
 
       } catch (const cannot_open_file& e) {
         // the file doesn't exist - check if it can be autocreated
         auto m = this->get_autocreate_metadata_for_key(it.first);
         if (m.archive_args.empty()) {
-          ret.emplace(it.first, "series does not exist");
+          ret.emplace(it.first, make_error("series does not exist"));
 
         } else {
           auto update_metadata_ret = this->update_metadata({{it.first, m}},
@@ -389,10 +390,10 @@ unordered_map<string, string> DiskStore::write(
               profiler);
           auto series_ret = update_metadata_ret.at(it.first);
 
-          if (series_ret.empty() || (series_ret == "ignored")) {
+          if (series_ret.description.empty() || series_ret.ignored) {
             WhisperArchive d(filename);
             d.write(it.second);
-            ret.emplace(it.first, "");
+            ret.emplace(it.first, make_success());
             this->stats[0].series_autocreates++;
 
           } else {
@@ -402,7 +403,7 @@ unordered_map<string, string> DiskStore::write(
       }
 
     } catch (const exception& e) {
-      ret.emplace(it.first, e.what());
+      ret.emplace(it.first, make_error(e.what()));
     }
   }
 
@@ -475,7 +476,7 @@ unordered_map<string, FindResult> DiskStore::find(
       this->find_recursive(r.results, this->directory + "/", "", 0,
           pattern_parts, profiler);
     } catch (const exception& e) {
-      r.error = e.what();
+      r.error = make_error(e.what());
     }
   }
 
@@ -610,7 +611,7 @@ void DiskStore::Stats::report_read_request(
   size_t errors = 0;
   for (const auto& it : ret) { // (pattern, key_to_result)
     for (const auto& it2 : it.second) { // (key_name, result)
-      if (!it2.second.error.empty()) {
+      if (!it2.second.error.description.empty()) {
         errors++;
       }
       datapoints += it2.second.data.size();
@@ -624,12 +625,12 @@ void DiskStore::Stats::report_read_request(
 }
 
 void DiskStore::Stats::report_write_request(
-    const unordered_map<string, string>& ret,
+    const unordered_map<string, Error>& ret,
     const unordered_map<string, Series>& data) {
   size_t datapoints = 0;
   size_t errors = 0;
   for (const auto& it : ret) {
-    if (!it.second.empty()) {
+    if (!it.second.description.empty()) {
       errors++;
     } else {
       try {
@@ -649,7 +650,7 @@ void DiskStore::Stats::report_find_request(
   size_t results = 0;
   size_t errors = 0;
   for (const auto& it : ret) {
-    if (!it.second.error.empty()) {
+    if (!it.second.error.description.empty()) {
       errors++;
     }
     results += it.second.results.size();

@@ -31,7 +31,7 @@ void QueryStore::set_autocreate_rules(
   this->store->set_autocreate_rules(autocreate_rules);
 }
 
-unordered_map<string, string> QueryStore::update_metadata(
+unordered_map<string, Error> QueryStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
@@ -45,7 +45,7 @@ unordered_map<string, int64_t> QueryStore::delete_series(
   return this->store->delete_series(patterns, local_only, profiler);
 }
 
-unordered_map<string, string> QueryStore::rename_series(
+unordered_map<string, Error> QueryStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
   return this->store->rename_series(renames, local_only, profiler);
@@ -62,7 +62,7 @@ unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
       auto tokens = tokenize_query(query);
       parsed_queries.emplace(query, parse_query(tokens));
     } catch (const exception& e) {
-      ret[query][query].error = e.what();
+      ret[query][query].error = make_error(e.what());
     }
   }
   profiler->checkpoint("parse_query");
@@ -89,8 +89,12 @@ unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
   // TODO: if a series is only referenced once, we probably can move the data
   // instead of copying
   for (auto& it : parsed_queries) {
-    this->execute_query(it.second, substore_results);
-    ret.emplace(it.first, it.second.series_data);
+    auto error = this->execute_query(it.second, substore_results);
+    if (!error.description.empty()) {
+      ret[it.first][it.first].error = error;
+    } else {
+      ret.emplace(it.first, it.second.series_data);
+    }
   }
   profiler->checkpoint("execute_query");
 
@@ -102,7 +106,7 @@ ReadAllResult QueryStore::read_all(const string& key_name, bool local_only,
   return this->store->read_all(key_name, local_only, profiler);
 }
 
-unordered_map<string, string> QueryStore::write(
+unordered_map<string, Error> QueryStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
   return this->store->write(data, skip_buffering, local_only, profiler);
@@ -143,7 +147,7 @@ void QueryStore::extract_series_references_into(
   }
 }
 
-void QueryStore::execute_query(Query& q,
+Error QueryStore::execute_query(Query& q,
     const unordered_map<string, unordered_map<string, ReadResult>>& substore_results) {
 
   if (q.type == Query::Type::SeriesReference) {
@@ -153,21 +157,23 @@ void QueryStore::execute_query(Query& q,
   } else if (q.type == Query::Type::FunctionCall) {
     auto fn = get_query_function(q.string_data);
     if (!fn) {
-      q.series_data[q.str()].error = "function does not exist: " + q.string_data;
+      q.series_data[q.str()].error = make_error(
+          "function does not exist: " + q.string_data);
     } else {
       for (auto& subq : q.function_call_args) {
-        this->execute_query(subq, substore_results);
+        auto e = this->execute_query(subq, substore_results);
+        if (!e.description.empty()) {
+          return e;
+        }
       }
-      try {
-        q.series_data = fn(q.function_call_args);
-      } catch (const exception& e) {
-        q.series_data[q.str()].error = e.what();
-      }
+      q.series_data = fn(q.function_call_args);
     }
     q.computed = true;
 
   } else {
-    q.series_data[q.str()].error = "incorrect query type: " + q.str();
+    q.series_data[q.str()].error = make_error("incorrect query type: " + q.str());
     q.computed = true;
   }
+
+  return make_success();
 }

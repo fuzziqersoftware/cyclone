@@ -1,5 +1,11 @@
 cpp_include '<unordered_map>'
 
+struct Error {
+  1: string description;
+  2: bool recoverable;
+  3: bool ignored;
+}
+
 struct Datapoint {
   1: i64 timestamp;
   2: double value;
@@ -17,7 +23,7 @@ struct SeriesMetadata {
 }
 
 struct ReadResult {
-  1: string error;
+  1: Error error;
   2: Series data;
   4: i64 start_time;
   5: i64 end_time;
@@ -25,13 +31,13 @@ struct ReadResult {
 }
 
 struct ReadAllResult {
-  1: string error;
+  1: Error error;
   2: SeriesMetadata metadata;
   3: Series data;
 }
 
 struct FindResult {
-  1: string error;
+  1: Error error;
   2: list<string> results;
 }
 
@@ -47,8 +53,8 @@ typedef map cpp_type 'std::unordered_map<std::string, std::string>'
 typedef map cpp_type 'std::unordered_map<std::string, std::unordered_map<std::string, class ReadResult>>'
     <string, map cpp_type 'std::unordered_map<std::string, class ReadResult>' <string, ReadResult>> ReadResultMap;
 
-typedef map cpp_type 'std::unordered_map<std::string, std::string>'
-    <string, string> WriteResultMap;
+typedef map cpp_type 'std::unordered_map<std::string, class Error>'
+    <string, Error> WriteResultMap;
 
 typedef map cpp_type 'std::unordered_map<std::string, int64_t>'
     <string, i64> DeleteResultMap;

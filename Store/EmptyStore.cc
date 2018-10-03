@@ -15,14 +15,14 @@
 using namespace std;
 
 
-unordered_map<string, string> EmptyStore::update_metadata(
+unordered_map<string, Error> EmptyStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : metadata) {
-    ret.emplace(it.first, "");
+    ret.emplace(it.first, make_success());
   }
   return ret;
 }
@@ -37,12 +37,12 @@ unordered_map<string, int64_t> EmptyStore::delete_series(
   return ret;
 }
 
-unordered_map<string, string> EmptyStore::rename_series(
+unordered_map<string, Error> EmptyStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : renames) {
-    ret.emplace(it.first, "series does not exist");
+    ret.emplace(it.first, make_error("series does not exist"));
   }
   return ret;
 }
@@ -63,13 +63,13 @@ ReadAllResult EmptyStore::read_all(const string& key_name, bool local_only,
   return ReadAllResult();
 }
 
-unordered_map<string, string> EmptyStore::write(
+unordered_map<string, Error> EmptyStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : data) {
-    ret.emplace(it.first, "");
+    ret.emplace(it.first, make_success());
   }
   return ret;
 }

@@ -25,8 +25,8 @@ void GraphiteRenderer::render_find_results(
 
   const FindResult& result = results.begin()->second;
 
-  if (!result.error.empty()) {
-    throw runtime_error("find failed: " + result.error);
+  if (!result.error.description.empty()) {
+    throw runtime_error("find failed: " + result.error.description);
   }
 
   evbuffer_add(this->buf, "[", 1);

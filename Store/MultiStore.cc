@@ -32,12 +32,12 @@ void MultiStore::set_autocreate_rules(
   }
 }
 
-unordered_map<string, string> MultiStore::update_metadata(
+unordered_map<string, Error> MultiStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : this->stores) {
     auto results = it.second->update_metadata(metadata, create_new,
         update_behavior, skip_buffering, local_only, profiler);
@@ -60,11 +60,11 @@ unordered_map<string, int64_t> MultiStore::delete_series(
   return ret;
 }
 
-unordered_map<string, string> MultiStore::rename_series(
+unordered_map<string, Error> MultiStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : this->stores) {
     auto results = it.second->rename_series(renames, local_only, profiler);
     this->combine_simple_results(ret, move(results));
@@ -93,7 +93,7 @@ ReadAllResult MultiStore::read_all(const string& key_name, bool local_only,
       continue;
     }
     if (!ret.metadata.archive_args.empty()) {
-      ret.error = "multiple stores returned nonempty results";
+      ret.error = make_error("multiple stores returned nonempty results");
     } else {
       ret = move(result);
     }
@@ -101,10 +101,10 @@ ReadAllResult MultiStore::read_all(const string& key_name, bool local_only,
   return ret;
 }
 
-unordered_map<string, string> MultiStore::write(
+unordered_map<string, Error> MultiStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : this->stores) {
     auto results = it.second->write(data, skip_buffering, local_only, profiler);
     this->combine_simple_results(ret, move(results));
@@ -175,8 +175,8 @@ string MultiStore::str() const {
 
 
 
-void MultiStore::combine_simple_results(unordered_map<string, string>& into,
-    unordered_map<string, string>&& from) {
+void MultiStore::combine_simple_results(unordered_map<string, Error>& into,
+    unordered_map<string, Error>&& from) {
 
   for (auto& from_it : from) {
     const string& from_key = from_it.first;
@@ -187,8 +187,8 @@ void MultiStore::combine_simple_results(unordered_map<string, string>& into,
 
       // errors take precedence over success, which takes precedence over "ignored"
       auto& into_error = emplace_ret.first->second;
-      if ((into_error == "ignored") ||
-          (into_error.empty() && (from_error != "ignored"))) {
+      if ((into_error.ignored) ||
+          (into_error.description.empty() && !from_error.ignored)) {
         into_error = from_error;
       }
     }
@@ -219,7 +219,7 @@ void MultiStore::combine_read_results(
           auto& existing_result = emplace_ret.first->second;
           auto& new_result = from_series_it.second;
 
-          if (!existing_result.error.empty()) {
+          if (!existing_result.error.description.empty()) {
             // the existing result has an error; just leave it there
 
           } else if (existing_result.step == 0) {
@@ -231,7 +231,7 @@ void MultiStore::combine_read_results(
             // both results have data. seriously? dammit
 
             if (new_result.step != existing_result.step) {
-              existing_result.error = "merged results with different schemas";
+              existing_result.error = make_error("merged results with different schemas");
             } else {
               existing_result.data.insert(existing_result.data.end(),
                   new_result.data.begin(), new_result.data.end());
@@ -264,9 +264,9 @@ void MultiStore::combine_find_results(unordered_map<string, FindResult>& into,
 
     } else {
       auto& into_result = into_query_it->second;
-      if (!into_result.error.empty()) {
+      if (!into_result.error.description.empty()) {
         continue;
-      } else if (!from_result.error.empty()) {
+      } else if (!from_result.error.description.empty()) {
         into_result.error = move(from_result.error);
         into_result.results.clear();
         continue;

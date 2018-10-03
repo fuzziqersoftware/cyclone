@@ -102,7 +102,7 @@ void WriteBufferStore::set_autocreate_rules(
   this->store->set_autocreate_rules(autocreate_rules);
 }
 
-unordered_map<string, string> WriteBufferStore::update_metadata(
+unordered_map<string, Error> WriteBufferStore::update_metadata(
       const SeriesMetadataMap& metadata_map, bool create_new,
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
       bool local_only, BaseFunctionProfiler* profiler) {
@@ -115,7 +115,7 @@ unordered_map<string, string> WriteBufferStore::update_metadata(
         update_behavior, skip_buffering, local_only, profiler);
   }
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
 
   for (const auto& it : metadata_map) {
     const auto& key_name = it.first;
@@ -134,7 +134,7 @@ unordered_map<string, string> WriteBufferStore::update_metadata(
 
       } else {
         if (update_behavior == UpdateMetadataBehavior::Ignore) {
-          ret.emplace(key_name, "ignored");
+          ret.emplace(key_name, make_ignored());
           continue;
         }
 
@@ -155,10 +155,10 @@ unordered_map<string, string> WriteBufferStore::update_metadata(
 
         command.metadata = metadata;
       }
-      ret.emplace(key_name, "");
+      ret.emplace(key_name, make_success());
 
     } catch (const exception& e) {
-      ret.emplace(key_name, e.what());
+      ret.emplace(key_name, make_error(e.what()));
     }
   }
 
@@ -203,14 +203,14 @@ unordered_map<string, int64_t> WriteBufferStore::delete_series(
   // pending writes from the queue and deleting the keys in the substore
 }
 
-unordered_map<string, string> WriteBufferStore::rename_series(
+unordered_map<string, Error> WriteBufferStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
   profiler->add_metadata("rename_count",
       string_printf("%zu", renames.size()));
 
   unordered_map<string, string> renames_to_forward = renames;
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
 
   // if there are queue items, temporarily remove them from the queue - this is
   // necessary to make sure they don't get written during the rename
@@ -404,7 +404,7 @@ ReadAllResult WriteBufferStore::read_all(const string& key_name,
   return this->store->read_all(key_name, local_only, profiler);
 }
 
-unordered_map<string, string> WriteBufferStore::write(
+unordered_map<string, Error> WriteBufferStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
   if (skip_buffering) {
@@ -412,9 +412,9 @@ unordered_map<string, string> WriteBufferStore::write(
     return this->store->write(data, skip_buffering, local_only, profiler);
   }
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : data) {
-    ret.emplace(it.first, "");
+    ret.emplace(it.first, make_success());
   }
 
   // construct a copy of data so we don't do this inside the lock context
@@ -455,7 +455,7 @@ unordered_map<string, FindResult> WriteBufferStore::find(
   // merge the find results with the create queue
   for (auto& it : ret) {
     // if there was an error, don't bother merging for this query
-    if (!it.second.error.empty()) {
+    if (!it.second.error.description.empty()) {
       continue;
     }
 
@@ -718,80 +718,29 @@ bool WriteBufferStore::QueueItem::has_data() const {
   return !this->data.empty();
 }
 
-size_t WriteBufferStore::QueueItem::merge_earlier_item(QueueItem&& other) {
-  bool move_data = true;
-  bool move_update_metadata = false;
-  size_t datapoints_ignored = 0;
-
-  if (this->has_update_metadata() && other.has_update_metadata()) {
-    // merging update_metadata is kind of hard to understand. here's a table of
-    // what should happen:
-    //   this      other      result
-    //  Ignore     Ignore     other takes precedence
-    //  Ignore     Update     other takes precedence
-    //  Ignore    Recreate    other takes precedence
-    //  Update     Ignore     this takes precedence
-    //  Update     Update     this takes precedence
-    //  Update    Recreate    this takes precedence, but behavior is Recreate
-    // Recreate    Ignore     this takes precedence, and data from other is ignored
-    // Recreate    Update     this takes precedence, and data from other is ignored
-    // Recreate   Recreate    this takes precedence, and data from other is ignored
-    //
-    // so in summary, we use other's update_metadata command if this'
-    // update_metadata command has behavior Ignore, and otherwise don't use it
-    // at all. but if other's behavior was Recreate, we need to make sure that
-    // that happens, so we add that special case here (#2).
-
-    if (this->update_behavior == UpdateMetadataBehavior::Ignore) {
-      move_update_metadata = true;
-
-    } else if ((this->update_behavior == UpdateMetadataBehavior::Update) &&
-        (other.update_behavior == UpdateMetadataBehavior::Recreate)) {
-      this->update_behavior = UpdateMetadataBehavior::Recreate;
-
-    } else if (this->update_behavior == UpdateMetadataBehavior::Recreate) {
-      move_data = false;
-    }
-
-  } else if (other.has_update_metadata()) {
-    move_update_metadata = true;
-
-  } else if (this->has_update_metadata() &&
-      (this->update_behavior == UpdateMetadataBehavior::Recreate)) {
-    move_data = false;
-  }
-
-  if (move_update_metadata) {
-    this->metadata = move(other.metadata);
-    this->update_behavior = other.update_behavior;
-    this->create_new = other.create_new;
-  }
-
-  if (move_data) {
-    if (this->has_data() && other.has_data()) {
-      // put the other item's data into this item, but don't overwrite any
-      // existing datapoints
-      for (const auto& other_dp_it : other.data) {
-        datapoints_ignored += (!this->data.emplace(other_dp_it.first, other_dp_it.second).second);
-      }
-
-    } else if (other.has_data()) {
-      this->data = move(other.data);
-    }
-  }
-
-  return datapoints_ignored;
-}
-
 
 
 void WriteBufferStore::merge_earlier_queue_items_locked(
     unordered_map<string, QueueItem>&& items) {
-  size_t datapoints_ignored = 0;
+  size_t merged_update_metadatas = 0;
+  size_t merged_writes = 0;
+  size_t merged_datapoints = 0;
+
   for (auto& merge_it : items) {
+    auto& old_item = merge_it.second;
+    size_t datapoint_count = old_item.data.size();
+    bool is_update_metadata = old_item.has_update_metadata();
+
     auto emplace_ret = this->queue.emplace(piecewise_construct,
-        forward_as_tuple(merge_it.first), forward_as_tuple(move(merge_it.second)));
+        forward_as_tuple(merge_it.first), forward_as_tuple(move(old_item)));
     if (emplace_ret.second) {
+      if (datapoint_count) {
+        merged_writes++;
+        merged_datapoints += datapoint_count;
+      }
+      if (is_update_metadata) {
+        merged_update_metadatas++;
+      }
       continue; // there wasn't an existing queue item
     }
 
@@ -799,10 +748,75 @@ void WriteBufferStore::merge_earlier_queue_items_locked(
     // unlike in write(), we merge the data under the existing data (that is,
     // we drop the point to be merged if it would overwrite an existing point)
     // because the merging data was received earlier than the existing data
-    datapoints_ignored += emplace_ret.first->second.merge_earlier_item(move(merge_it.second));
+    auto& new_item = emplace_ret.first->second;
+
+    bool move_data = true;
+    bool move_update_metadata = false;
+
+    if (old_item.has_update_metadata() && new_item.has_update_metadata()) {
+      // merging update_metadata is kind of hard to understand. here's a table of
+      // what should happen:
+      //    new        old      result
+      //  Ignore     Ignore     old takes precedence
+      //  Ignore     Update     old takes precedence
+      //  Ignore    Recreate    old takes precedence
+      //  Update     Ignore     new takes precedence
+      //  Update     Update     new takes precedence
+      //  Update    Recreate    new takes precedence, but behavior is Recreate
+      // Recreate    Ignore     new takes precedence, and data from old is ignored
+      // Recreate    Update     new takes precedence, and data from old is ignored
+      // Recreate   Recreate    new takes precedence, and data from old is ignored
+      //
+      // so in summary, we use other's update_metadata command if this'
+      // update_metadata command has behavior Ignore, and otherwise don't use it
+      // at all. but if other's behavior was Recreate, we need to make sure that
+      // that happens, so we add that special case here (#2).
+
+      if (new_item.update_behavior == UpdateMetadataBehavior::Ignore) {
+        move_update_metadata = true;
+
+      } else if ((new_item.update_behavior == UpdateMetadataBehavior::Update) &&
+          (old_item.update_behavior == UpdateMetadataBehavior::Recreate)) {
+        new_item.update_behavior = UpdateMetadataBehavior::Recreate;
+
+      } else if (new_item.update_behavior == UpdateMetadataBehavior::Recreate) {
+        move_data = false;
+      }
+
+    } else if (old_item.has_update_metadata()) {
+      move_update_metadata = true;
+      merged_update_metadatas++;
+
+    } else if (new_item.has_update_metadata() &&
+        (new_item.update_behavior == UpdateMetadataBehavior::Recreate)) {
+      move_data = false;
+    }
+
+    if (move_update_metadata) {
+      new_item.metadata = move(old_item.metadata);
+      new_item.update_behavior = old_item.update_behavior;
+      new_item.create_new = old_item.create_new;
+    }
+
+    if (move_data) {
+      if (new_item.has_data() && old_item.has_data()) {
+        // put the other item's data into this item, but don't overwrite any
+        // existing datapoints
+        for (const auto& old_dp_it : old_item.data) {
+          merged_datapoints += new_item.data.emplace(old_dp_it.first, old_dp_it.second).second;
+        }
+
+      } else if (old_item.has_data()) {
+        new_item.data = move(old_item.data);
+        merged_datapoints += new_item.data.size();
+        merged_writes++;
+      }
+    }
   }
 
-  this->queued_datapoints -= datapoints_ignored;
+  this->queued_update_metadatas += merged_update_metadatas;
+  this->queued_writes += merged_writes;
+  this->queued_datapoints += merged_datapoints;
 }
 
 
@@ -912,9 +926,15 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
           auto write_errors = this->store->write(write_batch, false, false,
               pg.profiler.get());
           for (const auto& it : write_errors) {
-            if (!it.second.empty()) {
-              log(WARNING, "[WriteBufferStore] write error on key %s: %s",
-                  it.first.c_str(), it.second.c_str());
+            if (!it.second.description.empty()) {
+              log(WARNING, "[WriteBufferStore] write error on key %s: %s (recoverable=%s)",
+                  it.first.c_str(), it.second.description.c_str(),
+                  it.second.recoverable ? "true" : "false");
+              if (!it.second.recoverable || it.second.ignored) {
+                commands.erase(it.first);
+              }
+            } else {
+              commands.erase(it.first);
             }
           }
         } catch (const exception& e) {
@@ -926,7 +946,12 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
         pg.profiler->add_metadata("write_datapoints", to_string(write_batch_datapoints));
       }
 
-      // TODO: if there were failed items, put them back in the queue
+      // return the failed but recoverable items to the queue
+      if (!commands.empty()) {
+        rw_guard g(this->queue_lock, true);
+        this->merge_earlier_queue_items_locked(move(commands));
+        pg.profiler->checkpoint("return_recoverable_failed_items");
+      }
     } // this ends the profiler scope
 
     // if there was nothing to do, wait a second

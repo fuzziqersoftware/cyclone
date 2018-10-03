@@ -249,10 +249,10 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
     ProfilerGuard pg(create_profiler(wt.thread_name, Store::string_for_write(
         data, false, false)));
     for (const auto& it : this->store->write(data, false, false, pg.profiler.get())) {
-      if (it.second.empty()) {
+      if (it.second.description.empty()) {
         continue;
       }
-      log(WARNING, "write failed: %s\n", it.second.c_str());
+      log(WARNING, "write failed: %s\n", it.second.description.c_str());
     }
   }
 }
@@ -492,8 +492,8 @@ void StreamServer::execute_shell_command(const char* line_data,
     if (is_pattern) {
       auto find_result_map = this->store->find({tokens[0]}, false, pg.profiler.get());
       const auto& find_result = find_result_map.at(tokens[0]);
-      if (!find_result.error.empty()) {
-        throw runtime_error("find failed: " + find_result.error);
+      if (!find_result.error.description.empty()) {
+        throw runtime_error("find failed: " + find_result.error.description);
       }
       pg.profiler->checkpoint("store_find");
 
@@ -514,12 +514,12 @@ void StreamServer::execute_shell_command(const char* line_data,
         update_behavior, false, false, pg.profiler.get());
 
     for (const auto& result_it : result) {
-      if (result_it.second.empty()) {
+      if (result_it.second.description.empty()) {
         evbuffer_add_printf(out_buffer, "[%s] success\n",
             result_it.first.c_str());
       } else {
         evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n",
-            result_it.first.c_str(), result_it.second.c_str());
+            result_it.first.c_str(), result_it.second.description.c_str());
       }
     }
 
@@ -551,12 +551,13 @@ void StreamServer::execute_shell_command(const char* line_data,
     auto result = this->store->rename_series(renames, false, pg.profiler.get());
 
     for (const auto& it : result) {
-      if (it.second.empty()) {
+      if (it.second.description.empty()) {
         evbuffer_add_printf(out_buffer, "[%s->%s] success\n",
             it.first.c_str(), renames.at(it.first).c_str());
       } else {
         evbuffer_add_printf(out_buffer, "[%s->%s] FAILED: %s\n",
-            it.first.c_str(), renames.at(it.first).c_str(), it.second.c_str());
+            it.first.c_str(), renames.at(it.first).c_str(),
+            it.second.description.c_str());
       }
     }
 
@@ -569,8 +570,9 @@ void StreamServer::execute_shell_command(const char* line_data,
 
     if (find_result.size() == 1) {
       auto& result = find_result.begin()->second;
-      if (!result.error.empty()) {
-        evbuffer_add_printf(out_buffer, "FAILED: %s\n", result.error.c_str());
+      if (!result.error.description.empty()) {
+        evbuffer_add_printf(out_buffer, "FAILED: %s\n",
+            result.error.description.c_str());
       } else {
         sort(result.results.begin(), result.results.end());
         for (const auto& item : result.results) {
@@ -581,8 +583,9 @@ void StreamServer::execute_shell_command(const char* line_data,
 
     } else {
       for (auto& it : find_result) {
-        if (!it.second.error.empty()) {
-          evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n", it.first.c_str(), it.second.error.c_str());
+        if (!it.second.error.description.empty()) {
+          evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n", it.first.c_str(),
+              it.second.error.description.c_str());
           continue;
         }
         sort(it.second.results.begin(), it.second.results.end());
@@ -619,12 +622,14 @@ void StreamServer::execute_shell_command(const char* line_data,
     auto result = this->store->write(write_map, false, false, pg.profiler.get());
 
     for (const auto& result_it : result) {
-      if (result_it.second.empty()) {
-        evbuffer_add_printf(out_buffer, "[%s] success\n",
-            result_it.first.c_str());
+      const string& series_name = result_it.first;
+      const Error& error = result_it.second;
+
+      if (error.description.empty()) {
+        evbuffer_add_printf(out_buffer, "[%s] success\n", series_name.c_str());
       } else {
         evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n",
-            result_it.first.c_str(), result_it.second.c_str());
+            series_name.c_str(), error.description.c_str());
       }
     }
 
@@ -665,8 +670,9 @@ void StreamServer::execute_shell_command(const char* line_data,
         const string& series_name = series_it.first;
         const auto& result = series_it.second;
 
-        if (!result.error.empty()) {
-          evbuffer_add_printf(out_buffer, "FAILED: %s (%s)\n", series_name.c_str(), result.error.c_str());
+        if (!result.error.description.empty()) {
+          evbuffer_add_printf(out_buffer, "FAILED: %s (%s)\n",
+              series_name.c_str(), result.error.description.c_str());
           continue;
         }
         if (result.step == 0) {

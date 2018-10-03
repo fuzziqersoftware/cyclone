@@ -281,18 +281,18 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
   }
 }
 
-unordered_map<string, string> CachedDiskStore::update_metadata(
+unordered_map<string, Error> CachedDiskStore::update_metadata(
     const SeriesMetadataMap& metadata_map, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (auto& it : metadata_map) {
     const auto& key_name = it.first;
     const auto& metadata = it.second;
 
     if (!this->key_name_is_valid(key_name)) {
-      ret.emplace(key_name, "key contains invalid characters");
+      ret.emplace(key_name, make_error("key contains invalid characters"));
       continue;
     }
 
@@ -342,20 +342,20 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
 
           if (update_behavior == UpdateMetadataBehavior::Recreate) {
             d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method, true);
-            ret.emplace(key_name, "");
+            ret.emplace(key_name, make_success());
             this->stats[0].series_truncates++;
 
           } else if (update_behavior == UpdateMetadataBehavior::Update) {
             d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method);
-            ret.emplace(key_name, "");
+            ret.emplace(key_name, make_success());
             this->stats[0].series_update_metadatas++;
 
           } else if (update_behavior == UpdateMetadataBehavior::Ignore) {
-            ret.emplace(key_name, "ignored");
+            ret.emplace(key_name, make_ignored());
           }
 
         } catch (const out_of_range& e) {
-          ret.emplace(key_name, e.what());
+          ret.emplace(key_name, make_error(e.what()));
           continue; // data race - the cache entry was deleted. just skip it
         }
 
@@ -371,22 +371,22 @@ unordered_map<string, string> CachedDiskStore::update_metadata(
               forward_as_tuple(move(t.filesystem_path), metadata.archive_args,
                   metadata.x_files_factor, metadata.agg_method));
           t.level->files_lru.insert(p.basename, 0);
-          ret.emplace(key_name, "");
+          ret.emplace(key_name, make_success());
 
           auto& s = this->stats[0];
           s.series_creates++;
           s.file_creates++;
 
         } else {
-          ret.emplace(key_name, "ignored");
+          ret.emplace(key_name, make_ignored());
         }
       }
 
     } catch (const out_of_range& e) {
-      ret.emplace(key_name, "ignored");
+      ret.emplace(key_name, make_ignored());
 
     } catch (const exception& e) {
-      ret.emplace(key_name, e.what());
+      ret.emplace(key_name, make_error(e.what()));
     }
   }
 
@@ -541,16 +541,16 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
   return ret;
 }
 
-unordered_map<string, string> CachedDiskStore::rename_series(
+unordered_map<string, Error> CachedDiskStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (auto rename_it : renames) {
     const string& from_key_name = rename_it.first;
     const string& to_key_name = rename_it.second;
     if (from_key_name == to_key_name) {
-      ret.emplace(from_key_name, "");
+      ret.emplace(from_key_name, make_success());
       continue;
     }
 
@@ -578,10 +578,10 @@ unordered_map<string, string> CachedDiskStore::rename_series(
       // indirectly called in check_and_delete_cache_path
       this->check_and_delete_cache_path(from_path);
 
-      ret.emplace(from_key_name, "");
+      ret.emplace(from_key_name, make_success());
 
     } catch (const exception& e) {
-      ret.emplace(from_key_name, e.what());
+      ret.emplace(from_key_name, make_error(e.what()));
     }
   }
   profiler->checkpoint("rename_files");
@@ -641,11 +641,11 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
           r.end_time = end_time;
           r.step = 0;
         } else {
-          r.error = e.what();
+          r.error = make_error(e.what());
         }
 
       } catch (const exception& e) {
-        r.error = e.what();
+        r.error = make_error(e.what());
       }
     }
   }
@@ -682,60 +682,63 @@ ReadAllResult CachedDiskStore::read_all(const string& key_name,
       // apparently the file was deleted; remove it from the cache
       this->check_and_delete_cache_path(p);
     } else {
-      ret.error = e.what();
+      ret.error = make_error(e.what());
     }
 
   } catch (const exception& e) {
-    ret.error = e.what();
+    ret.error = make_error(e.what());
   }
 
   return ret;
 }
 
-unordered_map<string, string> CachedDiskStore::write(
+unordered_map<string, Error> CachedDiskStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (auto& it : data) {
     if (!this->key_name_is_valid(it.first)) {
-      ret.emplace(it.first, "key contains invalid characters");
+      ret.emplace(it.first, make_error("key contains invalid characters"));
       continue;
     }
 
     KeyPath p(it.first);
     try {
-      try {
-        CacheTraversal t = this->traverse_cache_tree(p);
-        t.archive->write(it.second);
-        ret.emplace(it.first, "");
+      CacheTraversal t = this->traverse_cache_tree(p);
+      t.archive->write(it.second);
+      ret.emplace(it.first, make_success());
+      continue;
+
+    } catch (const out_of_range& e) {
+      // a directory doesn't exist; we'll create it below if needed
+
+    } catch (const cannot_open_file& e) {
+      if (e.error == ENOENT) {
+        // apparently the file was deleted; remove it from the cache
+        this->check_and_delete_cache_path(p);
+      } else {
+        ret.emplace(it.first, make_error(string_printf(
+            "cannot read from disk (error %d)", e.error)));
         continue;
-
-      } catch (const out_of_range& e) {
-        // a directory doesn't exist; we'll create it below if needed
-
-      } catch (const cannot_open_file& e) {
-        if (e.error == ENOENT) {
-          // apparently the file was deleted; remove it from the cache
-          this->check_and_delete_cache_path(p);
-        } else {
-          throw;
-        }
       }
+    }
 
-      // if we get here, then we should autocreate the cache path if applicable
+    // if we get here, then the key doesn't exist and we should autocreate the
+    // cache path if applicable
+    try {
       auto m = this->get_autocreate_metadata_for_key(it.first);
       if (m.archive_args.empty()) {
         log(INFO, "[CachedDiskStore] no autocreate metadata for %s", it.first.c_str());
-        ret.emplace(it.first, "series does not exist");
+        ret.emplace(it.first, make_error("series does not exist"));
 
       } else {
         CacheTraversal t = this->traverse_cache_tree(p, &m);
         t.archive->write(it.second);
-        ret.emplace(it.first, "");
+        ret.emplace(it.first, make_success());
       }
 
     } catch (const exception& e) {
-      ret.emplace(it.first, e.what());
+      ret.emplace(it.first, make_error(e.what()));
     }
   }
 
@@ -970,7 +973,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
       }
 
     } catch (const exception& e) {
-      r.error = e.what();
+      r.error = make_error(e.what());
     }
   }
 

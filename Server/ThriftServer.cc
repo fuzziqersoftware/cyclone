@@ -38,7 +38,7 @@ public:
     return ProfilerGuard(::create_profiler(thread_name, function_name));
   }
 
-  void update_metadata(unordered_map<string, string>& _return,
+  void update_metadata(unordered_map<string, Error>& _return,
       const SeriesMetadataMap& metadata, bool create_new,
       bool skip_existing_series, bool truncate_existing_series,
       bool skip_buffering, bool local_only) {
@@ -70,7 +70,7 @@ public:
     _return = this->store->delete_series(key_names, local_only, pg.profiler.get());
   }
 
-  void rename_series(unordered_map<string, string>& _return,
+  void rename_series(unordered_map<string, Error>& _return,
       const unordered_map<string, string>& renames, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
 
@@ -100,7 +100,7 @@ public:
     _return = this->store->read_all(key_name, local_only, pg.profiler.get());
   }
 
-  void write(unordered_map<string, string>& _return,
+  void write(unordered_map<string, Error>& _return,
       const unordered_map<string, Series>& data, bool skip_buffering,
       bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);

@@ -43,7 +43,7 @@ void PickleRenderer::render_data(
 
       // if there was a read error or the series doesn't exist (step==0), don't
       // render it
-      if (!result.error.empty() || !result.step) {
+      if (!result.error.description.empty() || !result.step) {
         continue;
       }
 

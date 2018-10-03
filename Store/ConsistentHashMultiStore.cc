@@ -45,7 +45,7 @@ void ConsistentHashMultiStore::set_precision(int64_t new_precision) {
   this->create_ring();
 }
 
-unordered_map<string, string> ConsistentHashMultiStore::update_metadata(
+unordered_map<string, Error> ConsistentHashMultiStore::update_metadata(
     const SeriesMetadataMap& metadata, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
@@ -57,7 +57,7 @@ unordered_map<string, string> ConsistentHashMultiStore::update_metadata(
   }
   profiler->checkpoint("partition_series");
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : partitioned_data) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->update_metadata(it.second,
@@ -110,7 +110,7 @@ unordered_map<string, int64_t> ConsistentHashMultiStore::delete_series(
   return ret;
 }
 
-unordered_map<string, string> ConsistentHashMultiStore::rename_series(
+unordered_map<string, Error> ConsistentHashMultiStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
 
@@ -138,7 +138,7 @@ unordered_map<string, string> ConsistentHashMultiStore::rename_series(
   }
   profiler->checkpoint("partition_series");
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : renames_to_forward) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->rename_series(it.second,
@@ -157,12 +157,12 @@ unordered_map<string, string> ConsistentHashMultiStore::rename_series(
 
     auto read_all_result = from_store->read_all(from_key_name, false, profiler);
     profiler->checkpoint("read_all_" + it.first);
-    if (!read_all_result.error.empty()) {
+    if (!read_all_result.error.description.empty()) {
       ret.emplace(from_key_name, move(read_all_result.error));
       continue;
     }
     if (read_all_result.metadata.archive_args.empty()) {
-      ret.emplace(from_key_name, "series does not exist");
+      ret.emplace(from_key_name, make_error("series does not exist"));
       continue;
     }
 
@@ -172,13 +172,13 @@ unordered_map<string, string> ConsistentHashMultiStore::rename_series(
         UpdateMetadataBehavior::Recreate, true, false, profiler);
     profiler->checkpoint("update_metadata_" + to_key_name);
     try {
-      string& error = update_metadata_ret.at(to_key_name);
-      if (!error.empty()) {
+      Error& error = update_metadata_ret.at(to_key_name);
+      if (!error.description.empty()) {
         ret.emplace(from_key_name, move(error));
         continue;
       }
     } catch (const out_of_range&) {
-      ret.emplace(from_key_name, "update_metadata returned no results");
+      ret.emplace(from_key_name, make_error("update_metadata returned no results"));
       continue;
     }
 
@@ -187,13 +187,13 @@ unordered_map<string, string> ConsistentHashMultiStore::rename_series(
     auto write_ret = to_store->write(write_map, true, false, profiler);
     profiler->checkpoint("write_" + to_key_name);
     try {
-      const string& error = write_ret.at(to_key_name);
-      if (!error.empty()) {
+      Error& error = write_ret.at(to_key_name);
+      if (!error.description.empty()) {
         ret.emplace(from_key_name, move(error));
         continue;
       }
     } catch (const out_of_range&) {
-      ret.emplace(from_key_name, "write returned no results");
+      ret.emplace(from_key_name, make_error("write returned no results"));
       continue;
     }
 
@@ -203,9 +203,9 @@ unordered_map<string, string> ConsistentHashMultiStore::rename_series(
     profiler->checkpoint("delete_series_" + from_key_name);
     int64_t num_deleted = delete_ret[from_key_name];
     if (num_deleted == 1) {
-      ret.emplace(from_key_name, "");
+      ret.emplace(from_key_name, make_success());
     } else {
-      ret.emplace(from_key_name, "move successful, but delete failed");
+      ret.emplace(from_key_name, make_error("move successful, but delete failed"));
     }
   }
 
@@ -261,7 +261,7 @@ ReadAllResult ConsistentHashMultiStore::read_all(const string& key_name,
   return this->stores[store_name]->read_all(key_name, local_only, profiler);
 }
 
-unordered_map<string, string> ConsistentHashMultiStore::write(
+unordered_map<string, Error> ConsistentHashMultiStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
 
@@ -272,7 +272,7 @@ unordered_map<string, string> ConsistentHashMultiStore::write(
   }
   profiler->checkpoint("partition_series");
 
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : partitioned_data) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->write(it.second, skip_buffering,
@@ -383,10 +383,10 @@ void ConsistentHashMultiStore::verify_thread_routine() {
       continue;
     }
     auto find_result = find_result_it->second;
-    if (!find_result.error.empty()) {
+    if (!find_result.error.description.empty()) {
       // TODO: should we retry this somehow?
       log(WARNING, "[ConsistentHashMultiStore] find(%s) returned error during verify: %s",
-          pattern.c_str(), find_result.error.c_str());
+          pattern.c_str(), find_result.error.description.c_str());
       continue;
     }
 
@@ -420,9 +420,10 @@ void ConsistentHashMultiStore::verify_thread_routine() {
         auto read_all_result = store_it.second->read_all(key_name, true,
             pg.profiler.get());
         pg.profiler->checkpoint("read_all");
-        if (!read_all_result.error.empty()) {
+        if (!read_all_result.error.description.empty()) {
           log(WARNING, "[ConsistentHashMultiStore] key %s could not be read from %s (error: %s)",
-              key_name.c_str(), store_it.first.c_str(), read_all_result.error.c_str());
+              key_name.c_str(), store_it.first.c_str(),
+              read_all_result.error.description.c_str());
           this->verify_progress.read_all_errors++;
           continue;
         }
@@ -442,10 +443,11 @@ void ConsistentHashMultiStore::verify_thread_routine() {
               pg.profiler.get());
           pg.profiler->checkpoint("update_metadata");
           try {
-            const string& error = update_metadata_ret.at(key_name);
-            if (!error.empty() && (error != "ignored")) {
+            const Error& error = update_metadata_ret.at(key_name);
+            if (!error.description.empty() && !error.ignored) {
               log(WARNING, "[ConsistentHashMultiStore] update_metadata returned error (%s) when moving %s from %s to %s",
-                  error.c_str(), key_name.c_str(), store_it.first.c_str(), responsible_store_name.c_str());
+                  error.description.c_str(), key_name.c_str(),
+                  store_it.first.c_str(), responsible_store_name.c_str());
               this->verify_progress.update_metadata_errors++;
               continue;
             }
@@ -463,10 +465,11 @@ void ConsistentHashMultiStore::verify_thread_routine() {
               pg.profiler.get());
           pg.profiler->checkpoint("write");
           try {
-            const string& error = write_ret.at(key_name);
-            if (!error.empty()) {
+            const Error& error = write_ret.at(key_name);
+            if (!error.description.empty()) {
               log(WARNING, "[ConsistentHashMultiStore] write returned error (%s) when moving %s from %s to %s",
-                  error.c_str(), key_name.c_str(), store_it.first.c_str(), responsible_store_name.c_str());
+                  error.description.c_str(), key_name.c_str(),
+                  store_it.first.c_str(), responsible_store_name.c_str());
               this->verify_progress.write_errors++;
               continue;
             }

@@ -34,13 +34,13 @@ static string function_call_str(const string& name, const vector<Query>& args) {
   return s;
 }
 
-static void check_arg_types(const vector<Query>& args, size_t min_arg_count,
+static Error check_arg_types(const vector<Query>& args, size_t min_arg_count,
     ssize_t max_arg_count, ...) {
   if (args.size() < min_arg_count) {
-    throw runtime_error("not enough arguments to function");
+    return make_error("not enough arguments to function");
   }
   if ((max_arg_count > 0) && (static_cast<ssize_t>(args.size()) > max_arg_count)) {
-    throw runtime_error("too many arguments to function");
+    return make_error("too many arguments to function");
   }
 
   // variadic functions: apply the last type mask to all the excess arguments
@@ -55,34 +55,33 @@ static void check_arg_types(const vector<Query>& args, size_t min_arg_count,
       type_mask = va_arg(va, uint64_t);
     }
     if (!(arg.type & type_mask)) {
-      throw runtime_error("incorrect argument type in function call");
+      return make_error("incorrect argument type in function call");
     }
     if ((arg.type & Query::Type::SeriesOrCall) && !arg.computed) {
       if (!arg.computed) {
-        throw runtime_error("uncomputed function call given as argument");
+        return make_error("uncomputed function call given as argument");
       }
       for (const auto& it : arg.series_data) {
-        if (!it.second.error.empty()) {
-          throw runtime_error(it.second.error);
+        if (!it.second.error.description.empty()) {
+          return it.second.error;
         }
       }
     }
   }
   va_end(va);
-}
 
-
-void forward_errors(const vector<Query>& args) {
   for (const auto& arg : args) {
     if (!arg.computed) {
-      throw runtime_error("argument value is not computed");
+      return make_error("argument value is not computed");
     }
     for (const auto& it : arg.series_data) {
-      if (!it.second.error.empty()) {
-        throw runtime_error(it.second.error);
+      if (!it.second.error.description.empty()) {
+        return it.second.error;
       }
     }
   }
+
+  return make_success();
 }
 
 struct NormalizedSeries {
@@ -145,9 +144,21 @@ NormalizedSeries normalize_series_collections(vector<Query>& args) {
 }
 
 
+static unordered_map<string, ReadResult> make_error_map(const Error& e,
+    const char* function_name, const vector<Query>& args) {
+  unordered_map<string, ReadResult> ret_map;
+  ReadResult& ret = ret_map[function_call_str(function_name, args)];
+  ret.error = e;
+  return ret_map;
+}
+
+
 static unordered_map<string, ReadResult> fn_sum_series(vector<Query>& args) {
-  check_arg_types(args, 0, -1, Query::Type::SeriesOrCall);
-  forward_errors(args);
+  auto error = check_arg_types(args, 0, -1, Query::Type::SeriesOrCall);
+  if (!error.description.empty()) {
+    return make_error_map(error, "sumSeries", args);
+  }
+
   auto normalized = normalize_series_collections(args);
 
   unordered_map<string, ReadResult> ret_map;
@@ -175,8 +186,11 @@ static unordered_map<string, ReadResult> fn_sum_series(vector<Query>& args) {
 }
 
 static unordered_map<string, ReadResult> fn_average_series(vector<Query>& args) {
-  check_arg_types(args, 0, -1, Query::Type::SeriesOrCall);
-  forward_errors(args);
+  auto error = check_arg_types(args, 0, -1, Query::Type::SeriesOrCall);
+  if (!error.description.empty()) {
+    return make_error_map(error, "averageSeries", args);
+  }
+
   auto normalized = normalize_series_collections(args);
 
   unordered_map<string, ReadResult> ret_map;
@@ -215,8 +229,10 @@ static const unordered_map<string, unordered_map<string, ReadResult> (*)(vector<
   {"avg", fn_average_series},
 
   {CYCLONE_FUNCTION(scale) {
-    check_arg_types(args, 2, 2, Query::Type::SeriesOrCall, Query::Type::Numeric);
-    forward_errors(args);
+    auto error = check_arg_types(args, 2, 2, Query::Type::SeriesOrCall, Query::Type::Numeric);
+    if (!error.description.empty()) {
+      return make_error_map(error, "scale", args);
+    }
 
     double scale_value = (args[1].type == Query::Type::Integer) ?
         args[1].int_data : args[1].float_data;

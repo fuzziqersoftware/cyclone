@@ -22,13 +22,13 @@ shared_ptr<Store> ReadOnlyStore::get_substore() const {
   return this->store;
 }
 
-unordered_map<string, string> ReadOnlyStore::update_metadata(
+unordered_map<string, Error> ReadOnlyStore::update_metadata(
       const SeriesMetadataMap& metadata_map, bool create_new,
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
       bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : metadata_map) {
-    ret.emplace(it.first, "writes not allowed");
+    ret.emplace(it.first, make_error("writes not allowed"));
   }
   return ret;
 }
@@ -43,12 +43,12 @@ unordered_map<string, int64_t> ReadOnlyStore::delete_series(
   return ret;
 }
 
-unordered_map<string, string> ReadOnlyStore::rename_series(
+unordered_map<string, Error> ReadOnlyStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : renames) {
-    ret.emplace(it.first, "writes not allowed");
+    ret.emplace(it.first, make_error("writes not allowed"));
   }
   return ret;
 }
@@ -65,12 +65,12 @@ ReadAllResult ReadOnlyStore::read_all(const string& key_name, bool local_only,
   return this->store->read_all(key_name, local_only, profiler);
 }
 
-unordered_map<string, string> ReadOnlyStore::write(
+unordered_map<string, Error> ReadOnlyStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   for (const auto& it : data) {
-    ret.emplace(it.first, "writes not allowed");
+    ret.emplace(it.first, make_error("writes not allowed"));
   }
   return ret;
 }

@@ -141,7 +141,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
-    expect_eq("", ret.at(key_name1).at(key_name1).error);
+    expect_eq("", ret.at(key_name1).at(key_name1).error.description);
     expect(ret.at(key_name1).at(key_name1).data.empty());
     expect_eq(ret.at(key_name1).at(key_name1).start_time, test_now - 10 * 60);
     expect_eq(ret.at(key_name1).at(key_name1).end_time, test_now);
@@ -158,7 +158,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] write to nonexistent series (no autocreate)\n", store_name.c_str());
     auto ret = s->write(write_data, false, false, profiler.get());
     expect_eq(1, ret.size());
-    expect_eq(is_write_buffer, ret.at(key_name1).empty());
+    expect_eq(is_write_buffer, ret.at(key_name1).description.empty());
     s->flush();
     expect(!isfile(key_filename1));
   }
@@ -167,7 +167,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find with no results\n", store_name.c_str());
     auto ret = s->find({pattern1}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern1).error.empty());
+    expect(ret.at(pattern1).error.description.empty());
     expect(ret.at(pattern1).results.empty());
   }
 
@@ -175,7 +175,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find all with no results\n", store_name.c_str());
     auto ret = s->find({pattern5}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern5).error.empty());
+    expect(ret.at(pattern5).error.description.empty());
     expect(ret.at(pattern5).results.empty());
   }
 
@@ -184,7 +184,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
         store_name.c_str());
     auto ret = s->find({pattern6}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern6).error.empty());
+    expect(ret.at(pattern6).error.description.empty());
     expect(ret.at(pattern6).results.empty());
   }
 
@@ -205,21 +205,21 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret1 = s->update_metadata(metadata_map, false,
         Store::UpdateMetadataBehavior::Ignore, false, false, profiler.get());
     expect_eq(1, ret1.size());
-    expect_eq(is_write_buffer, ret1.at(key_name1).empty());
+    expect_eq(is_write_buffer, ret1.at(key_name1).description.empty());
     s->flush();
     expect(!isfile(key_filename1));
 
     auto ret2 = s->update_metadata(metadata_map, false,
         Store::UpdateMetadataBehavior::Update, false, false, profiler.get());
     expect_eq(1, ret2.size());
-    expect_eq(is_write_buffer, ret2.at(key_name1).empty());
+    expect_eq(is_write_buffer, ret2.at(key_name1).description.empty());
     s->flush();
     expect(!isfile(key_filename1));
 
     auto ret3 = s->update_metadata(metadata_map, false,
         Store::UpdateMetadataBehavior::Recreate, false, false, profiler.get());
     expect_eq(1, ret3.size());
-    expect_eq(is_write_buffer, ret3.at(key_name1).empty());
+    expect_eq(is_write_buffer, ret3.at(key_name1).description.empty());
     s->flush();
     expect(!isfile(key_filename1));
   }
@@ -229,7 +229,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->update_metadata(metadata_map, true,
         Store::UpdateMetadataBehavior::Ignore, false, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).empty());
+    expect(ret.at(key_name1).description.empty());
     if (is_write_buffer) {
       expect(!isfile(key_filename1));
       s->flush();
@@ -242,14 +242,14 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret1 = s->update_metadata(metadata_map, true,
         Store::UpdateMetadataBehavior::Ignore, false, false, profiler.get());
     expect_eq(1, ret1.size());
-    expect_eq(is_write_buffer, ret1.at(key_name1).empty());
+    expect_eq(is_write_buffer, ret1.at(key_name1).description.empty());
     s->flush();
     expect(isfile(key_filename1));
 
     auto ret2 = s->update_metadata(metadata_map, false,
         Store::UpdateMetadataBehavior::Ignore, false, false, profiler.get());
     expect_eq(1, ret2.size());
-    expect_eq(is_write_buffer, ret2.at(key_name1).empty());
+    expect_eq(is_write_buffer, ret2.at(key_name1).description.empty());
     s->flush();
     expect(isfile(key_filename1));
   }
@@ -259,7 +259,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->update_metadata(metadata_map, false,
         Store::UpdateMetadataBehavior::Recreate, false, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).empty());
+    expect(ret.at(key_name1).description.empty());
     s->flush();
     expect(isfile(key_filename1));
   }
@@ -269,7 +269,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
-    expect(ret.at(key_name1).at(key_name1).error.empty());
+    expect(ret.at(key_name1).at(key_name1).error.description.empty());
     expect(ret.at(key_name1).at(key_name1).data.empty());
     expect_eq(metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
     expect(isfile(key_filename1));
@@ -279,7 +279,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] write datapoint to existing series\n", store_name.c_str());
     auto ret = s->write(write_data, false, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).empty());
+    expect(ret.at(key_name1).description.empty());
     expect(isfile(key_filename1));
   }
 
@@ -291,7 +291,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
       auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false, profiler.get());
       expect_eq(1, ret.size());
       expect_eq(1, ret.at(key_name1).size());
-      expect(ret.at(key_name1).at(key_name1).error.empty());
+      expect(ret.at(key_name1).at(key_name1).error.description.empty());
       expect_eq(1, ret.at(key_name1).at(key_name1).data.size());
       expect_eq((test_now / 60) * 60, ret.at(key_name1).at(key_name1).data[0].timestamp);
       expect_eq(2.0, ret.at(key_name1).at(key_name1).data[0].value);
@@ -307,7 +307,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->update_metadata(metadata_map, false,
         Store::UpdateMetadataBehavior::Update, false, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).empty());
+    expect(ret.at(key_name1).description.empty());
     expect(isfile(key_filename1));
     s->flush();
   }
@@ -317,7 +317,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
-    expect(ret.at(key_name1).at(key_name1).error.empty());
+    expect(ret.at(key_name1).at(key_name1).error.description.empty());
     expect_eq(1, ret.at(key_name1).at(key_name1).data.size());
     expect_eq((test_now / 60) * 60, ret.at(key_name1).at(key_name1).data[0].timestamp);
     expect_eq(2.0, ret.at(key_name1).at(key_name1).data[0].value);
@@ -331,7 +331,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->update_metadata(metadata_map, false,
         Store::UpdateMetadataBehavior::Recreate, false, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(key_name1).empty());
+    expect(ret.at(key_name1).description.empty());
     expect(isfile(key_filename1));
   }
 
@@ -340,7 +340,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({key_name1}, test_now - 10 * 60, test_now, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
-    expect(ret.at(key_name1).at(key_name1).error.empty());
+    expect(ret.at(key_name1).at(key_name1).error.description.empty());
     expect(ret.at(key_name1).at(key_name1).data.empty());
     expect_eq(metadata.archive_args[0].precision, ret.at(key_name1).at(key_name1).step);
     expect(isfile(key_filename1));
@@ -350,7 +350,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find with directory result\n", store_name.c_str());
     auto ret = s->find({pattern1}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern1).error.empty());
+    expect(ret.at(pattern1).error.description.empty());
     expect_eq(1, ret.at(pattern1).results.size());
     expect_eq("test.DiskStore.*", ret.at(pattern1).results[0]);
   }
@@ -359,7 +359,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find with non-matching directory result\n", store_name.c_str());
     auto ret = s->find({pattern2}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern2).error.empty());
+    expect(ret.at(pattern2).error.description.empty());
     expect(ret.at(pattern2).results.empty());
   }
 
@@ -367,7 +367,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find with file result\n", store_name.c_str());
     auto ret = s->find({pattern4}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern4).error.empty());
+    expect(ret.at(pattern4).error.description.empty());
     expect_eq(1, ret.at(pattern4).results.size());
     expect_eq(key_name1, ret.at(pattern4).results[0]);
   }
@@ -376,7 +376,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find with non-matching file result\n", store_name.c_str());
     auto ret = s->find({pattern3}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern3).error.empty());
+    expect(ret.at(pattern3).error.description.empty());
     expect(ret.at(pattern3).results.empty());
   }
 
@@ -384,7 +384,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find all\n", store_name.c_str());
     auto ret = s->find({pattern5}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern5).error.empty());
+    expect(ret.at(pattern5).error.description.empty());
     expect_eq(1, ret.at(pattern5).results.size());
     expect_eq(key_name1, ret.at(pattern5).results[0]);
   }
@@ -396,8 +396,8 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret1 = s->update_metadata(metadata_map, true,
         Store::UpdateMetadataBehavior::Ignore, false, false, profiler.get());
     expect_eq(2, ret1.size());
-    expect(!ret1.at(key_name1).empty());
-    expect(ret1.at(key_name2).empty());
+    expect(!ret1.at(key_name1).description.empty());
+    expect(ret1.at(key_name2).description.empty());
     expect(isfile(key_filename1));
     expect_eq(is_write_buffer, !isfile(key_filename2));
     s->flush();
@@ -410,14 +410,14 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(2, ret.size());
 
     auto& result1 = ret.at(pattern1);
-    expect(result1.error.empty());
+    expect(result1.error.description.empty());
     expect_eq(2, result1.results.size());
     sort(result1.results.begin(), result1.results.end());
     expect_eq(pattern4, result1.results[0]);
     expect_eq(key_name2, result1.results[1]);
 
     auto& result4 = ret.at(pattern4);
-    expect(result4.error.empty());
+    expect(result4.error.description.empty());
     expect_eq(1, result4.results.size());
     expect_eq(key_name1, result4.results[0]);
   }
@@ -426,7 +426,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find all\n", store_name.c_str());
     auto ret = s->find({pattern5}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern5).error.empty());
+    expect(ret.at(pattern5).error.description.empty());
     auto& results = ret.at(pattern5).results;
     sort(results.begin(), results.end());
     expect_eq(2, results.size());
@@ -439,7 +439,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({autocreate_key_name1}, test_now - 10 * 60, test_now, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(autocreate_key_name1).size());
-    expect_eq("", ret.at(autocreate_key_name1).at(autocreate_key_name1).error);
+    expect_eq("", ret.at(autocreate_key_name1).at(autocreate_key_name1).error.description);
     expect(ret.at(autocreate_key_name1).at(autocreate_key_name1).data.empty());
     expect_eq(ret.at(autocreate_key_name1).at(autocreate_key_name1).start_time, test_now - 10 * 60);
     expect_eq(ret.at(autocreate_key_name1).at(autocreate_key_name1).end_time, test_now);
@@ -454,7 +454,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect(!isfile(autocreate_key_name1));
     auto ret = s->write(this_write_data, false, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(autocreate_key_name1).empty());
+    expect(ret.at(autocreate_key_name1).description.empty());
     expect(isfile(key_filename1));
     expect(isfile(key_filename2));
     expect_eq(is_write_buffer, !isfile(autocreate_key_filename1));
@@ -468,7 +468,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({autocreate_key_name1}, test_now - 10 * 60, test_now, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(autocreate_key_name1).size());
-    expect(ret.at(autocreate_key_name1).at(autocreate_key_name1).error.empty());
+    expect(ret.at(autocreate_key_name1).at(autocreate_key_name1).error.description.empty());
     expect_eq(1, ret.at(autocreate_key_name1).at(autocreate_key_name1).data.size());
     expect_eq((test_now / 60) * 60, ret.at(autocreate_key_name1).at(autocreate_key_name1).data[0].timestamp);
     expect_eq(2.0, ret.at(autocreate_key_name1).at(autocreate_key_name1).data[0].value);
@@ -480,7 +480,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] rename series\n", store_name.c_str());
     auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect_eq("", ret.at(autocreate_key_name1));
+    expect_eq("", ret.at(autocreate_key_name1).description);
   }
 
   {
@@ -488,7 +488,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->read({rename_key_name}, test_now - 10 * 60, test_now, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(rename_key_name).size());
-    expect(ret.at(rename_key_name).at(rename_key_name).error.empty());
+    expect(ret.at(rename_key_name).at(rename_key_name).error.description.empty());
     expect_eq(1, ret.at(rename_key_name).at(rename_key_name).data.size());
     expect_eq((test_now / 60) * 60, ret.at(rename_key_name).at(rename_key_name).data[0].timestamp);
     expect_eq(2.0, ret.at(rename_key_name).at(rename_key_name).data[0].value);
@@ -500,9 +500,9 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find returns renamed series and not original series\n", store_name.c_str());
     auto ret = s->find({pattern5, autocreate_pattern, rename_pattern}, false, profiler.get());
     expect_eq(3, ret.size());
-    expect(ret.at(pattern5).error.empty());
-    expect(ret.at(autocreate_pattern).error.empty());
-    expect(ret.at(rename_pattern).error.empty());
+    expect(ret.at(pattern5).error.description.empty());
+    expect(ret.at(autocreate_pattern).error.description.empty());
+    expect(ret.at(rename_pattern).error.description.empty());
 
     // some other keys should exist here; we only check that the renamed key
     // appears under its new name and not its old name
@@ -527,13 +527,13 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] rename series back\n", store_name.c_str());
     auto ret = s->rename_series({{rename_key_name, autocreate_key_name1}}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect_eq("", ret.at(rename_key_name));
+    expect_eq("", ret.at(rename_key_name).description);
   }
 
   {
     printf("-- [%s:basic_test] read_all from series created by autocreate\n", store_name.c_str());
     auto ret = s->read_all(autocreate_key_name1, false, profiler.get());
-    expect_eq("", ret.error);
+    expect_eq("", ret.error.description);
     expect_eq(0, ret.metadata.x_files_factor);
     expect_eq(1, ret.metadata.agg_method);
     expect_eq(2, ret.metadata.archive_args.size());
@@ -549,7 +549,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find all\n", store_name.c_str());
     auto ret = s->find({pattern5}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern5).error.empty());
+    expect(ret.at(pattern5).error.description.empty());
     auto& results = ret.at(pattern5).results;
     sort(results.begin(), results.end());
     expect_eq(3, results.size());
@@ -581,10 +581,10 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   {
     printf("-- [%s:basic_test] find after deletion\n", store_name.c_str());
     auto ret = s->find({pattern1, pattern4}, false, profiler.get());
-    expect(ret.at(pattern1).error.empty());
+    expect(ret.at(pattern1).error.description.empty());
     expect_eq(key_name2, ret.at(pattern1).results[0]);
     expect_eq(1, ret.at(pattern1).results.size());
-    expect(ret.at(pattern4).error.empty());
+    expect(ret.at(pattern4).error.description.empty());
     expect(ret.at(pattern4).results.empty());
     expect_eq(2, ret.size());
   }
@@ -594,14 +594,15 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     auto ret = s->update_metadata(metadata_map, true,
         Store::UpdateMetadataBehavior::Ignore, false, false, profiler.get());
     expect_eq(2, ret.size());
-    expect(ret.at(key_name1).empty());
+    expect(ret.at(key_name1).description.empty());
     if (is_write_buffer) {
-      expect(ret.at(key_name2).empty());
+      expect(ret.at(key_name2).description.empty());
       expect(!isfile(key_filename1));
       expect(isfile(key_filename2));
       s->flush();
     } else {
-      expect_eq("ignored", ret.at(key_name2));
+      expect_eq("ignored", ret.at(key_name2).description);
+      expect_eq(true, ret.at(key_name2).ignored);
     }
     expect(isfile(key_filename1));
     expect(isfile(key_filename2));
@@ -627,7 +628,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
     auto result = ret.at(key_name1).at(key_name1);
-    expect_eq("", result.error);
+    expect_eq("", result.error.description);
     expect_eq(60, result.step);
     expect_eq(((test_now - 60 * 60 * 24) / 60) * 60, result.start_time);
     expect_eq(((test_now + 60) / 60) * 60, result.end_time);
@@ -664,7 +665,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     expect_eq(1, ret.size());
     expect_eq(1, ret.at(key_name1).size());
     result = ret.at(key_name1).at(key_name1);
-    expect_eq("", result.error);
+    expect_eq("", result.error.description);
     expect_eq(300, result.step);
     expect_eq(((test_now - 60 * 60 * 24) / 300) * 300, result.start_time);
     expect_eq(((test_now + 300) / 300) * 300, result.end_time);
@@ -724,7 +725,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
     printf("-- [%s:basic_test] find all with no results\n", store_name.c_str());
     auto ret = s->find({pattern5}, false, profiler.get());
     expect_eq(1, ret.size());
-    expect(ret.at(pattern5).error.empty());
+    expect(ret.at(pattern5).error.description.empty());
     expect(ret.at(pattern5).results.empty());
   }
 }
@@ -752,14 +753,14 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
       printf("-- [%s:rename_test:%zu] rename nonexistent series\n", store_name.c_str(), x);
       auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
       expect_eq(1, ret.size());
-      expect_ne("", ret.at(autocreate_key_name1));
+      expect_ne("", ret.at(autocreate_key_name1).description);
     }
 
     {
       printf("-- [%s:rename_test:%zu] write to nonexistent series (autocreate)\n", store_name.c_str(), x);
       auto ret = s->write(write_data, false, false, profiler.get());
       expect_eq(1, ret.size());
-      expect(ret.at(autocreate_key_name1).empty());
+      expect(ret.at(autocreate_key_name1).description.empty());
       expect_eq(is_write_buffer, !isfile(autocreate_key_filename1));
       s->flush();
       expect(isfile(autocreate_key_filename1));
@@ -769,7 +770,7 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
       printf("-- [%s:rename_test:%zu] rename series\n", store_name.c_str(), x);
       auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
       expect_eq(1, ret.size());
-      expect_eq("", ret.at(autocreate_key_name1));
+      expect_eq("", ret.at(autocreate_key_name1).description);
     }
 
     {
@@ -777,7 +778,7 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
       auto ret = s->read({rename_key_name}, test_now - 10 * 60, test_now, false, profiler.get());
       expect_eq(1, ret.size());
       expect_eq(1, ret.at(rename_key_name).size());
-      expect(ret.at(rename_key_name).at(rename_key_name).error.empty());
+      expect(ret.at(rename_key_name).at(rename_key_name).error.description.empty());
       expect_eq(1, ret.at(rename_key_name).at(rename_key_name).data.size());
       expect_eq((test_now / 60) * 60, ret.at(rename_key_name).at(rename_key_name).data[0].timestamp);
       expect_eq(2.0, ret.at(rename_key_name).at(rename_key_name).data[0].value);
@@ -787,9 +788,9 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
       printf("-- [%s:rename_test:%zu] find returns renamed series and not original series\n", store_name.c_str(), x);
       auto ret = s->find({pattern5, autocreate_pattern, rename_pattern}, false, profiler.get());
       expect_eq(3, ret.size());
-      expect(ret.at(pattern5).error.empty());
-      expect(ret.at(autocreate_pattern).error.empty());
-      expect(ret.at(rename_pattern).error.empty());
+      expect(ret.at(pattern5).error.description.empty());
+      expect(ret.at(autocreate_pattern).error.description.empty());
+      expect(ret.at(rename_pattern).error.description.empty());
 
       auto& pattern5_results = ret.at(pattern5).results;
       expect_eq(1, pattern5_results.size());

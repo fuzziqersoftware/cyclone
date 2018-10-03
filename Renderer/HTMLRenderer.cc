@@ -36,9 +36,9 @@ void HTMLRenderer::render_find_results(
   evbuffer_add_printf(this->buf, "<style type=\"text/css\">body { background-color: #000000; color: #FFFFFF; } a.query_link { color: #00FF00; } a.series_link { color: #00FFFF }</style>");
 
   for (const auto& query_it : data) {
-    if (!query_it.second.error.empty()) {
+    if (!query_it.second.error.description.empty()) {
       evbuffer_add_printf(this->buf, "Query: %s (failed: %s)<br /><br />",
-          query_it.first.c_str(), query_it.second.error.c_str());
+          query_it.first.c_str(), query_it.second.error.description.c_str());
     } else {
       evbuffer_add_printf(this->buf, "Query: %s (results: %zu)<br /><br />",
           query_it.first.c_str(), query_it.second.results.size());

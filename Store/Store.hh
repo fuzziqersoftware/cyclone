@@ -28,14 +28,14 @@ public:
   virtual void set_autocreate_rules(
       const std::vector<std::pair<std::string, SeriesMetadata>>& autocreate_rules);
 
-  virtual std::unordered_map<std::string, std::string> update_metadata(
+  virtual std::unordered_map<std::string, Error> update_metadata(
       const SeriesMetadataMap& metadata, bool create_new,
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
       bool local_only, BaseFunctionProfiler* profiler) = 0;
   virtual std::unordered_map<std::string, int64_t> delete_series(
       const std::vector<std::string>& patterns, bool local_only,
       BaseFunctionProfiler* profiler) = 0;
-  virtual std::unordered_map<std::string, std::string> rename_series(
+  virtual std::unordered_map<std::string, Error> rename_series(
       const std::unordered_map<std::string, std::string>& renames,
       bool local_only, BaseFunctionProfiler* profiler) = 0;
 
@@ -44,7 +44,7 @@ public:
       int64_t end_time, bool local_only, BaseFunctionProfiler* profiler) = 0;
   virtual ReadAllResult read_all(const std::string& key_name, bool local_only,
       BaseFunctionProfiler* profiler) = 0;
-  virtual std::unordered_map<std::string, std::string> write(
+  virtual std::unordered_map<std::string, Error> write(
       const std::unordered_map<std::string, Series>& data, bool skip_buffering,
       bool local_only, BaseFunctionProfiler* profiler) = 0;
 
@@ -119,3 +119,12 @@ protected:
     std::unordered_map<std::string, int64_t> to_map() const;
   };
 };
+
+
+
+Error make_error(const std::string& description, bool recoverable = false,
+    bool ignored = false);
+Error make_error(const char* description, bool recoverable = false,
+    bool ignored = false);
+Error make_ignored();
+Error make_success();

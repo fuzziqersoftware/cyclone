@@ -54,11 +54,11 @@ void RemoteStore::set_netloc(const std::string& new_hostname, int new_port) {
   this->netloc_token = now();
 }
 
-unordered_map<string, string> RemoteStore::update_metadata(
+unordered_map<string, Error> RemoteStore::update_metadata(
     const SeriesMetadataMap& metadata_map, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   if (local_only) {
     profiler->add_metadata("local_only", "true");
     return ret;
@@ -79,7 +79,7 @@ unordered_map<string, string> RemoteStore::update_metadata(
     profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : metadata_map) {
-      ret.emplace(it.first, e.what());
+      ret.emplace(it.first, make_error(e.what(), true));
     }
   }
   this->stats[0].update_metadata_commands++;
@@ -114,10 +114,10 @@ unordered_map<string, int64_t> RemoteStore::delete_series(
   return ret;
 }
 
-unordered_map<string, string> RemoteStore::rename_series(
+unordered_map<string, Error> RemoteStore::rename_series(
     const unordered_map<string, string>& renames, bool local_only,
     BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   if (local_only) {
     profiler->add_metadata("local_only", "true");
     return ret;
@@ -135,7 +135,7 @@ unordered_map<string, string> RemoteStore::rename_series(
     profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : renames) {
-      ret.emplace(it.first, e.what());
+      ret.emplace(it.first, make_error(e.what(), true));
     }
   }
   this->stats[0].rename_series_commands++;
@@ -166,7 +166,7 @@ unordered_map<string, unordered_map<string, ReadResult>> RemoteStore::read(
     profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : key_names) {
-      ret[it][it].error = e.what();
+      ret[it][it].error = make_error(e.what(), true);
     }
   }
   this->stats[0].read_commands++;
@@ -192,16 +192,16 @@ ReadAllResult RemoteStore::read_all(const string& key_name, bool local_only,
     profiler->checkpoint("remote_call");
     profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
-    ret.error = e.what();
+    ret.error = make_error(e.what(), true);
   }
   this->stats[0].read_all_commands++;
   return ret;
 }
 
-unordered_map<string, string> RemoteStore::write(
+unordered_map<string, Error> RemoteStore::write(
     const unordered_map<string, Series>& data, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, string> ret;
+  unordered_map<string, Error> ret;
   if (data.empty()) {
     return ret;
   }
@@ -222,7 +222,7 @@ unordered_map<string, string> RemoteStore::write(
     profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : data) {
-      ret.emplace(it.first, e.what());
+      ret.emplace(it.first, make_error(e.what(), true));
     }
   }
   this->stats[0].write_commands++;
@@ -250,7 +250,7 @@ unordered_map<string, FindResult> RemoteStore::find(
     profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : patterns) {
-      ret[it].error = e.what();
+      ret[it].error = make_error(e.what(), true);
     }
   }
   this->stats[0].find_commands++;

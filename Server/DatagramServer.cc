@@ -108,10 +108,10 @@ void DatagramServer::on_client_input(WorkerThread* wt, int fd, short events) {
     ProfilerGuard pg(create_profiler(wt->thread_name, Store::string_for_write(
         data, false, false)));
     for (const auto& it : this->store->write(data, false, false, pg.profiler.get())) {
-      if (it.second.empty()) {
+      if (it.second.description.empty()) {
         continue;
       }
-      log(WARNING, "write failed: %s\n", it.second.c_str());
+      log(WARNING, "write failed: %s\n", it.second.description.c_str());
     }
   }
 }
