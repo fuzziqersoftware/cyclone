@@ -354,7 +354,7 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
             ret.emplace(key_name, make_ignored());
           }
 
-        } catch (const out_of_range& e) {
+        } catch (const exception& e) {
           ret.emplace(key_name, make_error(e.what()));
           continue; // data race - the cache entry was deleted. just skip it
         }
