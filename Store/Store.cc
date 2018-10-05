@@ -64,7 +64,7 @@ static string comma_list_limit(const unordered_map<string, V>& m, size_t limit) 
     ret += ", ";
     ret += it->first;
   }
-  if (it != m.end()) {
+  if (count < limit) {
     return ret + string_printf("] + <%zu more items>", limit - count);
   }
   return ret + "]";
@@ -82,7 +82,7 @@ static string comma_list_limit(const vector<string>& m, size_t limit) {
     ret += ", ";
     ret += *it;
   }
-  if (it != m.end()) {
+  if (count < limit) {
     return ret + string_printf("] + <%zu more items>", limit - count);
   }
   return ret + "]";
