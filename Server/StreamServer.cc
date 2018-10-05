@@ -23,7 +23,7 @@
 #include <phosg/Time.hh>
 #include <thread>
 
-#include "../Store/Whisper.hh"
+#include "../Store/Formats/Whisper.hh"
 
 using namespace std;
 

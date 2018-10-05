@@ -3,7 +3,7 @@
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
 
-#include "Whisper.hh"
+#include "Formats/Whisper.hh"
 
 using namespace std;
 
@@ -352,38 +352,4 @@ unordered_map<string, int64_t> Store::Stats::to_map() const {
   ret.emplace("start_time", this->start_time.load());
   ret.emplace("duration", this->duration.load());
   return ret;
-}
-
-
-
-Error make_error(const std::string& description, bool recoverable, bool ignored) {
-  Error e;
-  e.description = description;
-  e.recoverable = recoverable;
-  e.ignored = ignored;
-  return e;
-}
-
-Error make_error(const char* description, bool recoverable, bool ignored) {
-  Error e;
-  e.description = description;
-  e.recoverable = recoverable;
-  e.ignored = ignored;
-  return e;
-}
-
-Error make_ignored() {
-  Error e;
-  e.description = "ignored";
-  e.recoverable = false;
-  e.ignored = true;
-  return e;
-}
-
-Error make_success() {
-  Error e;
-  e.description = "";
-  e.recoverable = false;
-  e.ignored = false;
-  return e;
 }

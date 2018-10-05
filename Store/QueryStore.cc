@@ -13,8 +13,9 @@
 #include <string>
 #include <vector>
 
-#include "QueryFunctions.hh"
-#include "QueryParser.hh"
+#include "Query/Functions.hh"
+#include "Query/Parser.hh"
+#include "Utils/Errors.hh"
 
 using namespace std;
 

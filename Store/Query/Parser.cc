@@ -1,4 +1,4 @@
-#include "QueryParser.hh"
+#include "Parser.hh"
 
 #include <dirent.h>
 #include <errno.h>

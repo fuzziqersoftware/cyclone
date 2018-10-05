@@ -9,7 +9,7 @@
 #include <phosg/Concurrency.hh>
 
 #include "Store.hh"
-#include "RateLimiter.hh"
+#include "Utils/RateLimiter.hh"
 
 
 class WriteBufferStore : public Store {

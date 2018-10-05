@@ -9,7 +9,7 @@
 
 #include "../gen-cpp/Cyclone.h"
 #include "Store.hh"
-#include "FixedAtomicRotator.hh"
+#include "Utils/FixedAtomicRotator.hh"
 
 
 class RemoteStore : public Store {

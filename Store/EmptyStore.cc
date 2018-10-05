@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include "Utils/Errors.hh"
+
 using namespace std;
 
 

@@ -5,7 +5,7 @@
 #include <unordered_set>
 
 #include "Store.hh"
-#include "QueryParser.hh"
+#include "Query/Parser.hh"
 
 
 class QueryStore : public Store {

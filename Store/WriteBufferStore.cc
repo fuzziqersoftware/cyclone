@@ -16,7 +16,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "FunctionProfiler.hh"
+#include "Utils/FunctionProfiler.hh"
+#include "Utils/Errors.hh"
 
 using namespace std;
 

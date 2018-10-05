@@ -1,4 +1,4 @@
-#include "QueryFunctions.hh"
+#include "Functions.hh"
 
 #include <dirent.h>
 #include <errno.h>
@@ -14,7 +14,8 @@
 #include <string>
 #include <vector>
 
-#include "QueryParser.hh"
+#include "Parser.hh"
+#include "../Utils/Errors.hh"
 
 using namespace std;
 

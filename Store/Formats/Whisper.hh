@@ -13,7 +13,7 @@
 #include <phosg/Concurrency.hh>
 #include <phosg/FileCache.hh>
 
-#include "../gen-cpp/Cyclone.h"
+#include "../../gen-cpp/Cyclone.h"
 
 
 enum AggregationMethod {

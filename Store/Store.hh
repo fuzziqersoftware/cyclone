@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "../gen-cpp/Cyclone.h"
-#include "FunctionProfiler.hh"
+#include "Utils/FunctionProfiler.hh"
 
 
 class Store {
@@ -119,12 +119,3 @@ protected:
     std::unordered_map<std::string, int64_t> to_map() const;
   };
 };
-
-
-
-Error make_error(const std::string& description, bool recoverable = false,
-    bool ignored = false);
-Error make_error(const char* description, bool recoverable = false,
-    bool ignored = false);
-Error make_ignored();
-Error make_success();

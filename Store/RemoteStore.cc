@@ -17,6 +17,8 @@
 #include <thrift/transport/TSocket.h>
 #include <vector>
 
+#include "Utils/Errors.hh"
+
 #ifdef _THRIFT_STDCXX_H_
 #define thrift_ptr apache::thrift::stdcxx::shared_ptr
 #else

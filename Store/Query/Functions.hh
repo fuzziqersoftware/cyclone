@@ -4,9 +4,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "../gen-cpp/Cyclone.h"
+#include "../../gen-cpp/Cyclone.h"
 
-#include "QueryParser.hh"
+#include "Parser.hh"
 
 
 typedef std::unordered_map<std::string, ReadResult> (*SeriesFunction)(std::vector<Query>&);

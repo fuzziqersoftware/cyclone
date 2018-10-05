@@ -16,7 +16,7 @@
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
 
-#include "../gen-cpp/Cyclone.h"
+#include "../../gen-cpp/Cyclone.h"
 
 using namespace std;
 

@@ -1,9 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
-#include "Store.hh"
+#include "../../gen-cpp/Cyclone.h"
 
 
 struct QueryToken {

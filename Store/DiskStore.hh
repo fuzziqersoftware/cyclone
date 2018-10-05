@@ -7,9 +7,9 @@
 
 #include <phosg/Concurrency.hh>
 
-#include "FixedAtomicRotator.hh"
+#include "Utils/FixedAtomicRotator.hh"
 #include "Store.hh"
-#include "Whisper.hh"
+#include "Formats/Whisper.hh"
 
 
 class DiskStore : public Store {

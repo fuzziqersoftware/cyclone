@@ -12,8 +12,8 @@
 #include <vector>
 
 #include "DiskStore.hh"
-#include "FixedAtomicRotator.hh"
-#include "Whisper.hh"
+#include "Utils/FixedAtomicRotator.hh"
+#include "Formats/Whisper.hh"
 
 
 class CachedDiskStore : public DiskStore {

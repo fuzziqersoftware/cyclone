@@ -16,7 +16,8 @@
 #include <string>
 #include <vector>
 
-#include "Whisper.hh"
+#include "Formats/Whisper.hh"
+#include "Utils/Errors.hh"
 
 using namespace std;
 
@@ -721,6 +722,10 @@ unordered_map<string, Error> CachedDiskStore::write(
             "cannot read from disk (error %d)", e.error)));
         continue;
       }
+
+    } catch (const exception& e) {
+      ret.emplace(it.first, make_error(e.what()));
+      continue;
     }
 
     // if we get here, then the key doesn't exist and we should autocreate the

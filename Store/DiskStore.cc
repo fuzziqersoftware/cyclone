@@ -16,7 +16,8 @@
 #include <string>
 #include <vector>
 
-#include "Whisper.hh"
+#include "Formats/Whisper.hh"
+#include "Utils/Errors.hh"
 
 using namespace std;
 

@@ -15,7 +15,8 @@
 #include <string>
 #include <vector>
 
-#include "CarbonConsistentHashRing.hh"
+#include "Utils/CarbonConsistentHashRing.hh"
+#include "Utils/Errors.hh"
 
 using namespace std;
 
