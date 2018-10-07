@@ -693,6 +693,10 @@ uint32_t WhisperArchive::get_base_interval_locked(int fd, uint32_t archive_index
     base_interval = bswap32(first_point.time);
     this->base_intervals[archive_index] = base_interval;
   }
+  if (base_interval < 0) {
+    throw runtime_error(string_printf(
+        "base interval for archive %" PRIu32 " is negative", archive_index));
+  }
   return base_interval;
 }
 
