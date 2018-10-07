@@ -98,6 +98,8 @@ private:
 
     bool has_update_metadata() const;
     bool has_data() const;
+
+    void erase_update_metadata();
   };
 
   // TODO: add writes-in-progress so they can be merged with reads too

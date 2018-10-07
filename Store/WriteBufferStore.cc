@@ -719,6 +719,10 @@ bool WriteBufferStore::QueueItem::has_data() const {
   return !this->data.empty();
 }
 
+void WriteBufferStore::QueueItem::erase_update_metadata() {
+  this->metadata.archive_args.clear();
+}
+
 
 
 void WriteBufferStore::merge_earlier_queue_items_locked(
@@ -872,7 +876,7 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
       // execute the creates in order, and batch the writes
       size_t write_batch_datapoints = 0;
       unordered_map<string, Series> write_batch;
-      for (const auto& it : commands) {
+      for (auto& it : commands) {
         const auto& key_name = it.first;
         auto& command = it.second;
 
@@ -887,15 +891,25 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
           }
 
           try {
-            this->store->update_metadata({{key_name, command.metadata}},
-                command.create_new, command.update_behavior, false, false,
-                pg.profiler.get());
-            this->queued_update_metadatas--;
+            auto errors = this->store->update_metadata(
+                {{key_name, command.metadata}}, command.create_new,
+                command.update_behavior, false, false, pg.profiler.get());
+            const auto& error = errors.at(key_name);
+            if (!error.description.empty()) {
+              string error_str = string_for_error(error);
+              log(WARNING, "[WriteBufferStore] update_metadata error on key %s: %s",
+                  it.first.c_str(), error_str.c_str());
+            }
+
           } catch (const exception& e) {
-            log(WARNING, "[WriteBufferStore] update_metadata failed on key=%s (%s)",
+            log(WARNING, "[WriteBufferStore] update_metadata failed on key %s: %s",
                 key_name.c_str(), e.what());
-            continue;
           }
+
+          // erase the update_metadata part of the command in case the write
+          // also fails (and the command is merged back into the queue)
+          command.erase_update_metadata();
+          this->queued_update_metadatas--;
         }
 
         // if data isn't empty, there was a write request
