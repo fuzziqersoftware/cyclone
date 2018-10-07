@@ -7,6 +7,8 @@
 
 #include <phosg/Strings.hh>
 
+#include "../Store/Utils/Errors.hh"
+
 using namespace std;
 
 
@@ -26,7 +28,7 @@ void GraphiteRenderer::render_find_results(
   const FindResult& result = results.begin()->second;
 
   if (!result.error.description.empty()) {
-    throw runtime_error("find failed: " + result.error.description);
+    throw runtime_error("find failed: " + string_for_error(result.error));
   }
 
   evbuffer_add(this->buf, "[", 1);

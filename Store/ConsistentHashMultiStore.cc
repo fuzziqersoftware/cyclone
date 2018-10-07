@@ -386,8 +386,9 @@ void ConsistentHashMultiStore::verify_thread_routine() {
     auto find_result = find_result_it->second;
     if (!find_result.error.description.empty()) {
       // TODO: should we retry this somehow?
+      string error_str = string_for_error(find_result.error);
       log(WARNING, "[ConsistentHashMultiStore] find(%s) returned error during verify: %s",
-          pattern.c_str(), find_result.error.description.c_str());
+          pattern.c_str(), error_str.c_str());
       continue;
     }
 
@@ -422,9 +423,9 @@ void ConsistentHashMultiStore::verify_thread_routine() {
             pg.profiler.get());
         pg.profiler->checkpoint("read_all");
         if (!read_all_result.error.description.empty()) {
+          string error_str = string_for_error(read_all_result.error);
           log(WARNING, "[ConsistentHashMultiStore] key %s could not be read from %s (error: %s)",
-              key_name.c_str(), store_it.first.c_str(),
-              read_all_result.error.description.c_str());
+              key_name.c_str(), store_it.first.c_str(), error_str.c_str());
           this->verify_progress.read_all_errors++;
           continue;
         }
@@ -446,9 +447,10 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           try {
             const Error& error = update_metadata_ret.at(key_name);
             if (!error.description.empty() && !error.ignored) {
+              string error_str = string_for_error(error);
               log(WARNING, "[ConsistentHashMultiStore] update_metadata returned error (%s) when moving %s from %s to %s",
-                  error.description.c_str(), key_name.c_str(),
-                  store_it.first.c_str(), responsible_store_name.c_str());
+                  error_str.c_str(), key_name.c_str(), store_it.first.c_str(),
+                  responsible_store_name.c_str());
               this->verify_progress.update_metadata_errors++;
               continue;
             }
@@ -468,9 +470,10 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           try {
             const Error& error = write_ret.at(key_name);
             if (!error.description.empty()) {
+              string error_str = string_for_error(error);
               log(WARNING, "[ConsistentHashMultiStore] write returned error (%s) when moving %s from %s to %s",
-                  error.description.c_str(), key_name.c_str(),
-                  store_it.first.c_str(), responsible_store_name.c_str());
+                  error_str.c_str(), key_name.c_str(), store_it.first.c_str(),
+                  responsible_store_name.c_str());
               this->verify_progress.write_errors++;
               continue;
             }

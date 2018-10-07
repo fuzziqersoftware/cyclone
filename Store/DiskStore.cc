@@ -96,7 +96,7 @@ unordered_map<string, Error> DiskStore::update_metadata(
     auto& metadata = it.second;
 
     if (!this->key_name_is_valid(it.first)) {
-      ret.emplace(it.first, make_error("key contains invalid characters"));
+      ret.emplace(it.first, make_ignored("key contains invalid characters"));
       continue;
     }
 
@@ -368,7 +368,7 @@ unordered_map<string, Error> DiskStore::write(
   unordered_map<string, Error> ret;
   for (const auto& it : data) {
     if (!this->key_name_is_valid(it.first)) {
-      ret.emplace(it.first, make_error("key contains invalid characters"));
+      ret.emplace(it.first, make_ignored("key contains invalid characters"));
       continue;
     }
 
@@ -631,7 +631,9 @@ void DiskStore::Stats::report_write_request(
   size_t datapoints = 0;
   size_t errors = 0;
   for (const auto& it : ret) {
-    if (!it.second.description.empty()) {
+    if (it.second.ignored) {
+      continue;
+    } else if (!it.second.description.empty()) {
       errors++;
     } else {
       try {

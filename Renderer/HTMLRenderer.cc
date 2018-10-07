@@ -6,6 +6,8 @@
 #include <phosg/Strings.hh>
 #include <unordered_map>
 
+#include "../Store/Utils/Errors.hh"
+
 using namespace std;
 
 
@@ -37,8 +39,9 @@ void HTMLRenderer::render_find_results(
 
   for (const auto& query_it : data) {
     if (!query_it.second.error.description.empty()) {
+      string error_str = string_for_error(query_it.second.error);
       evbuffer_add_printf(this->buf, "Query: %s (failed: %s)<br /><br />",
-          query_it.first.c_str(), query_it.second.error.description.c_str());
+          query_it.first.c_str(), error_str.c_str());
     } else {
       evbuffer_add_printf(this->buf, "Query: %s (results: %zu)<br /><br />",
           query_it.first.c_str(), query_it.second.results.size());

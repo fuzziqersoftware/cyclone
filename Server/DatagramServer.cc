@@ -17,6 +17,8 @@
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
 
+#include "../Store/Utils/Errors.hh"
+
 using namespace std;
 
 
@@ -111,7 +113,8 @@ void DatagramServer::on_client_input(WorkerThread* wt, int fd, short events) {
       if (it.second.description.empty()) {
         continue;
       }
-      log(WARNING, "write failed: %s\n", it.second.description.c_str());
+      string error_str = string_for_error(it.second);
+      log(WARNING, "write failed: %s\n", error_str.c_str());
     }
   }
 }

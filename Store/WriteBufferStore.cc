@@ -928,9 +928,9 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
               pg.profiler.get());
           for (const auto& it : write_errors) {
             if (!it.second.description.empty()) {
-              log(WARNING, "[WriteBufferStore] write error on key %s: %s (recoverable=%s)",
-                  it.first.c_str(), it.second.description.c_str(),
-                  it.second.recoverable ? "true" : "false");
+              string error_str = string_for_error(it.second);
+              log(WARNING, "[WriteBufferStore] write error on key %s: %s",
+                  it.first.c_str(), error_str.c_str());
               if (!it.second.recoverable || it.second.ignored) {
                 commands.erase(it.first);
               }

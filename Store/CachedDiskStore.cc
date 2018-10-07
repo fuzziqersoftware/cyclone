@@ -293,7 +293,7 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
     const auto& metadata = it.second;
 
     if (!this->key_name_is_valid(key_name)) {
-      ret.emplace(key_name, make_error("key contains invalid characters"));
+      ret.emplace(key_name, make_ignored("key contains invalid characters"));
       continue;
     }
 
@@ -699,7 +699,7 @@ unordered_map<string, Error> CachedDiskStore::write(
   unordered_map<string, Error> ret;
   for (auto& it : data) {
     if (!this->key_name_is_valid(it.first)) {
-      ret.emplace(it.first, make_error("key contains invalid characters"));
+      ret.emplace(it.first, make_ignored("key contains invalid characters"));
       continue;
     }
 

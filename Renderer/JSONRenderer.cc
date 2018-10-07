@@ -7,6 +7,8 @@
 
 #include <phosg/Strings.hh>
 
+#include "../Store/Utils/Errors.hh"
+
 using namespace std;
 
 

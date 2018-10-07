@@ -15,6 +15,7 @@
 #include "../Renderer/ImageRenderer.hh"
 #include "../Renderer/JSONRenderer.hh"
 #include "../Renderer/PickleRenderer.hh"
+#include "../Store/Utils/Errors.hh"
 
 using namespace std;
 
@@ -261,8 +262,8 @@ string CycloneHTTPServer::handle_read_all_request(struct Thread& t,
     }
     evbuffer_add(out_buffer, "]", 1);
   } else {
-    evbuffer_add_printf(out_buffer, "\"error: %s\"",
-        result.error.description.c_str());
+    string error_str = string_for_error(result.error);
+    evbuffer_add_printf(out_buffer, "\"error: %s\"", error_str.c_str());
   }
   pg.profiler->checkpoint("render");
 

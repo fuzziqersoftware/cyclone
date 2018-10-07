@@ -24,6 +24,7 @@
 #include <thread>
 
 #include "../Store/Formats/Whisper.hh"
+#include "../Store/Utils/Errors.hh"
 
 using namespace std;
 
@@ -252,7 +253,8 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
       if (it.second.description.empty()) {
         continue;
       }
-      log(WARNING, "write failed: %s\n", it.second.description.c_str());
+      string error_str = string_for_error(it.second);
+      log(WARNING, "write failed: %s\n", error_str.c_str());
     }
   }
 }
@@ -493,7 +495,7 @@ void StreamServer::execute_shell_command(const char* line_data,
       auto find_result_map = this->store->find({tokens[0]}, false, pg.profiler.get());
       const auto& find_result = find_result_map.at(tokens[0]);
       if (!find_result.error.description.empty()) {
-        throw runtime_error("find failed: " + find_result.error.description);
+        throw runtime_error("find failed: " + string_for_error(find_result.error));
       }
       pg.profiler->checkpoint("store_find");
 
@@ -518,8 +520,9 @@ void StreamServer::execute_shell_command(const char* line_data,
         evbuffer_add_printf(out_buffer, "[%s] success\n",
             result_it.first.c_str());
       } else {
+        string error_str = string_for_error(result_it.second);
         evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n",
-            result_it.first.c_str(), result_it.second.description.c_str());
+            result_it.first.c_str(), error_str.c_str());
       }
     }
 
@@ -555,9 +558,9 @@ void StreamServer::execute_shell_command(const char* line_data,
         evbuffer_add_printf(out_buffer, "[%s->%s] success\n",
             it.first.c_str(), renames.at(it.first).c_str());
       } else {
+        string error_str = string_for_error(it.second);
         evbuffer_add_printf(out_buffer, "[%s->%s] FAILED: %s\n",
-            it.first.c_str(), renames.at(it.first).c_str(),
-            it.second.description.c_str());
+            it.first.c_str(), renames.at(it.first).c_str(), error_str.c_str());
       }
     }
 
@@ -571,8 +574,8 @@ void StreamServer::execute_shell_command(const char* line_data,
     if (find_result.size() == 1) {
       auto& result = find_result.begin()->second;
       if (!result.error.description.empty()) {
-        evbuffer_add_printf(out_buffer, "FAILED: %s\n",
-            result.error.description.c_str());
+        string error_str = string_for_error(result.error);
+        evbuffer_add_printf(out_buffer, "FAILED: %s\n", error_str.c_str());
       } else {
         sort(result.results.begin(), result.results.end());
         for (const auto& item : result.results) {
@@ -584,8 +587,9 @@ void StreamServer::execute_shell_command(const char* line_data,
     } else {
       for (auto& it : find_result) {
         if (!it.second.error.description.empty()) {
+          string error_str = string_for_error(it.second.error);
           evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n", it.first.c_str(),
-              it.second.error.description.c_str());
+              error_str.c_str());
           continue;
         }
         sort(it.second.results.begin(), it.second.results.end());
@@ -628,8 +632,9 @@ void StreamServer::execute_shell_command(const char* line_data,
       if (error.description.empty()) {
         evbuffer_add_printf(out_buffer, "[%s] success\n", series_name.c_str());
       } else {
+        string error_str = string_for_error(error);
         evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n",
-            series_name.c_str(), error.description.c_str());
+            series_name.c_str(), error_str.c_str());
       }
     }
 
@@ -671,8 +676,9 @@ void StreamServer::execute_shell_command(const char* line_data,
         const auto& result = series_it.second;
 
         if (!result.error.description.empty()) {
+          string error_str = string_for_error(result.error);
           evbuffer_add_printf(out_buffer, "FAILED: %s (%s)\n",
-              series_name.c_str(), result.error.description.c_str());
+              series_name.c_str(), error_str.c_str());
           continue;
         }
         if (result.step == 0) {
