@@ -42,6 +42,8 @@ Store/StoreTest: Store/StoreTest.o $(STORE_OBJECTS) $(THRIFT_OBJECTS)
 	$(CXX) -std=c++14 -lstdc++ $^ -o $@ $(LDFLAGS)
 
 clean:
-	rm -rf *.dSYM gen-cpp gen-py cyclone_if *.o Store/*.o Store/*Test Renderer/*.o Server/*.o $(EXECUTABLE) Store/whisper_util* Renderer/render_util* gmon.out
+	find . -name \*.o -delete
+	find . -name \*Test -delete
+	rm -rf *.dSYM gen-cpp gen-py cyclone_if $(EXECUTABLE) gmon.out
 
 .PHONY: clean test
