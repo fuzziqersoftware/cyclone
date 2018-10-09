@@ -795,7 +795,11 @@ unordered_map<string, FindResult> CachedDiskStore::find(
       KeyPath p(pattern);
       profiler->checkpoint("start_pattern_" + pattern);
 
-      unordered_map<CachedDirectoryContents*, string> current_levels, next_levels;
+      // note: these need to be maps, not unordered_maps. if we use
+      // unordered_maps, we could get deadlock below when threads try to lock
+      // directories for writes while other threads have them locked for reads
+      // (and wait for one that this thread already has locked for reads)
+      map<CachedDirectoryContents*, string> current_levels, next_levels;
       current_levels.emplace(&this->cache_root, "");
       vector<rw_guard> guards;
 
