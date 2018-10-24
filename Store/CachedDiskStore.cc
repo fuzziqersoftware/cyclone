@@ -572,6 +572,15 @@ unordered_map<string, Error> CachedDiskStore::rename_series(
       {
         CacheTraversal t = this->traverse_cache_tree(to_path.directories, true);
 
+        // if the destination key exists, fail
+        {
+          rw_guard g(t.level->files_lock, false);
+          if (t.level->files.count(to_path.basename)) {
+            ret.emplace(from_key_name, make_ignored());
+            continue;
+          }
+        }
+
         // rename the file on disk
         rename(from_filename, to_filename);
         this->stats[0].series_renames++;

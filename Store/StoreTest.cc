@@ -906,7 +906,7 @@ int main(int argc, char* argv[]) {
   }
 
   if (isdir(data_directory)) {
-    //unlink(data_directory, true);
+    unlink(data_directory, true);
   }
   return retcode;
 }

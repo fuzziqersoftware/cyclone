@@ -281,7 +281,17 @@ unordered_map<string, Error> WriteBufferStore::rename_series(
 
   // issue the rename to the underlying store
   for (const auto& it : this->store->rename_series(renames_to_forward, local_only, profiler)) {
-    ret.emplace(it.first, it.second);
+    if (!it.second.description.empty()) {
+      // un-rename the queue item so that the writes don't get reassigned,
+      // because this rename failed in the substore and reassigning the writes
+      // is definitely not expected behavior from the caller's perspective
+      auto item_it = items_to_merge.find(renames.at(it.first));
+      if (item_it != items_to_merge.end()) {
+        items_to_merge.emplace(it.first, move(item_it->second));
+        items_to_merge.erase(item_it);
+      }
+    }
+    ret.emplace(it.first, move(it.second));
   }
 
   // merge the renamed queue items back in

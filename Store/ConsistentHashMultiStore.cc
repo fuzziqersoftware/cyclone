@@ -168,11 +168,11 @@ unordered_map<string, Error> ConsistentHashMultiStore::rename_series(
     // create the series in the remote store if it doesn't exist already
     SeriesMetadataMap metadata_map({{to_key_name, read_all_result.metadata}});
     auto update_metadata_ret = to_store->update_metadata(metadata_map, true,
-        UpdateMetadataBehavior::Recreate, true, false, profiler);
+        UpdateMetadataBehavior::Ignore, true, false, profiler);
     profiler->checkpoint("update_metadata_" + to_key_name);
     try {
       Error& error = update_metadata_ret.at(to_key_name);
-      if (!error.description.empty()) {
+      if (!error.description.empty() || error.ignored) {
         ret.emplace(from_key_name, move(error));
         continue;
       }

@@ -261,6 +261,12 @@ unordered_map<string, Error> DiskStore::rename_series(
       string from_filename = this->filename_for_key(rename_it.first);
       string to_filename = this->filename_for_key(rename_it.second);
 
+      // if to_filename already exists, fail
+      if (isfile(to_filename)) {
+        ret.emplace(rename_it.first, make_ignored());
+        continue;
+      }
+
       // create directories if we need to
       this->stats[0].directory_creates += makedirs_for_file(to_filename);
 
