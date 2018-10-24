@@ -95,20 +95,20 @@ This command does not return until the rename is committed to disk, even if writ
 This command reads datapoints from one or more series. Patterns may be given for the series names; the read will be performed on all series matching the pattern.
 
 There are currently some unfixed edge cases with write buffering, which are:
-- If there are buffered writes for a series that doesn't exist and a read is performed with a pattern that would match this series, the series is not returned.
-- If there are writes in progress for a series that is returned, the values written by the in-progress writes may or may not be returned.
+- If there are buffered writes for a series that doesn't yet exist on disk and a read is performed with a pattern that would match this series' name, the series is not returned.
+- If there are datapoints waiting in the buffer that are not currently being written, these datapoints will be returned. However, if these datapoints are currently being written, they may or may not be returned.
 
 The second case is expected to be fixed soon.
 
 #### read_all
 
-This command reads all datapoints and metadata from a single series. The series name must be a complete name; it cannot be a pattern.
+This command reads all datapoints and metadata from a single series. The series name must be a complete name; it may not be a pattern.
 
 This command does not respect buffered writes; if there are uncommitted changes to a series, they will not be returned. This command is mainly for internal use during the verification and repair procedure.
 
 #### write
 
-This command writes datapoints to one or more series. Patterns cannot be given for the series names.
+This command writes datapoints to one or more series. Patterns may not be given for the series names.
 
 If the series doesn't exist but its name matches an autocreate rule in the server's configuration, it will be created and the data will be written to the newly-created seties.
 
