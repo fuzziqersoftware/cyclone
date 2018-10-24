@@ -534,8 +534,14 @@ void StreamServer::execute_shell_command(const char* line_data,
     auto result = this->store->delete_series(tokens, false, pg.profiler.get());
 
     for (const auto& it : result) {
-      evbuffer_add_printf(out_buffer, "[%s] %" PRId64 " series deleted\n",
-          it.first.c_str(), it.second);
+      if (it.second.error.description.empty()) {
+        evbuffer_add_printf(out_buffer, "[%s] %" PRId64 " series deleted from disk, %" PRId64 " series deleted from buffer\n",
+            it.first.c_str(), it.second.disk_series_deleted, it.second.buffer_series_deleted);
+      } else {
+        evbuffer_add_printf(out_buffer, "[%s] FAILED: %s (%" PRId64 " series deleted from disk, %" PRId64 " series deleted from buffer)\n",
+            it.first.c_str(), it.second.error.description.c_str(),
+            it.second.disk_series_deleted, it.second.buffer_series_deleted);
+      }
     }
 
   } else if (command_name == "rename") {

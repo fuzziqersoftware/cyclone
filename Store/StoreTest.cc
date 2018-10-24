@@ -561,8 +561,10 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   {
     printf("-- [%s:basic_test] delete series\n", store_name.c_str());
     auto ret = s->delete_series({pattern4, autocreate_key_name1}, false, profiler.get());
-    expect_eq(1, ret.at(pattern4));
-    expect_eq(1, ret.at(autocreate_key_name1));
+    expect_eq(1, ret.at(pattern4).disk_series_deleted);
+    expect_eq(1, ret.at(autocreate_key_name1).disk_series_deleted);
+    expect(ret.at(pattern4).error.description.empty());
+    expect(ret.at(autocreate_key_name1).error.description.empty());
     expect_eq(2, ret.size());
     expect(!isfile(key_filename1));
     expect(isfile(key_filename2));
@@ -686,7 +688,8 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   {
     printf("-- [%s:basic_test] delete file with wildcard\n", store_name.c_str());
     auto ret = s->delete_series({pattern1}, false, profiler.get());
-    expect_eq(1, ret.at(pattern1));
+    expect_eq(1, ret.at(pattern1).disk_series_deleted);
+    expect(ret.at(pattern1).error.description.empty());
     expect_eq(1, ret.size());
     expect(isfile(key_filename1));
     expect(!isfile(key_filename2));
@@ -705,7 +708,9 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
   {
     printf("-- [%s:basic_test] delete directory\n", store_name.c_str());
     auto ret = s->delete_series({pattern5}, false, profiler.get());
-    expect_eq(1, ret.at(pattern5));
+    expect_eq(1, ret.at(pattern5).disk_series_deleted);
+    fprintf(stderr, "%s\n", ret.at(pattern5).error.description.c_str());
+    expect(ret.at(pattern5).error.description.empty());
     expect_eq(1, ret.size());
     expect(!isfile(key_filename1));
     expect(!isfile(key_filename2));
@@ -807,8 +812,9 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
     {
       printf("-- [%s:rename_test:%zu] delete series\n", store_name.c_str(), x);
       auto ret = s->delete_series({rename_key_name}, false, profiler.get());
+      expect_eq(1, ret.at(rename_key_name).disk_series_deleted);
+      expect(ret.at(rename_key_name).error.description.empty());
       expect_eq(1, ret.size());
-      expect_eq(1, ret.at(rename_key_name));
     }
   }
 }

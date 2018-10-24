@@ -4,6 +4,7 @@
 #include <phosg/Time.hh>
 
 #include "Formats/Whisper.hh"
+#include "Utils/Errors.hh"
 
 using namespace std;
 
@@ -352,4 +353,148 @@ unordered_map<string, int64_t> Store::Stats::to_map() const {
   ret.emplace("start_time", this->start_time.load());
   ret.emplace("duration", this->duration.load());
   return ret;
+}
+
+
+
+void Store::combine_simple_results(unordered_map<string, Error>& into,
+    unordered_map<string, Error>&& from) {
+
+  for (auto& from_it : from) {
+    const string& from_key = from_it.first;
+    auto& from_error = from_it.second;
+
+    auto emplace_ret = into.emplace(from_key, from_error);
+    if (!emplace_ret.second) {
+
+      // errors take precedence over success, which takes precedence over "ignored"
+      auto& into_error = emplace_ret.first->second;
+      if ((into_error.ignored) ||
+          (into_error.description.empty() && !from_error.ignored)) {
+        into_error = from_error;
+      }
+    }
+  }
+}
+
+void Store::combine_delete_results(unordered_map<string, DeleteResult>& into,
+    unordered_map<string, DeleteResult>&& from) {
+
+  for (auto& from_it : from) {
+    const string& from_key = from_it.first;
+    auto& from_res = from_it.second;
+
+    auto emplace_ret = into.emplace(from_key, from_res);
+    if (!emplace_ret.second) {
+      auto& into_res = emplace_ret.first->second;
+      into_res.disk_series_deleted += from_res.disk_series_deleted;
+      into_res.buffer_series_deleted += from_res.buffer_series_deleted;
+
+      // errors take precedence over success, which takes precedence over "ignored"
+      if ((into_res.error.ignored) ||
+          (into_res.error.description.empty() && !from_res.error.ignored)) {
+        into_res.error = from_res.error;
+      }
+    }
+  }
+}
+
+void Store::combine_read_results(
+    unordered_map<string, unordered_map<string, ReadResult>>& into,
+    unordered_map<string, unordered_map<string, ReadResult>>&& from) {
+  // the maps are {pattern: {key_name: result}}
+  for (auto& from_query_it : from) { // (pattern, {key_name: result})
+    const string& from_query = from_query_it.first;
+    auto& from_series_map = from_query_it.second;
+
+    auto into_query_it = into.find(from_query);
+    if (into_query_it == into.end()) {
+      into.emplace(from_query, move(from_series_map));
+
+    } else {
+      auto& into_series_map = into_query_it->second;
+      for (auto& from_series_it : from_series_map) { // (key_name, result)
+
+        // attempt to insert the result. if it's already there, then merge the
+        // data manually
+        auto emplace_ret = into_series_map.emplace(from_series_it.first,
+            move(from_series_it.second));
+        if (!emplace_ret.second) {
+          auto& existing_result = emplace_ret.first->second;
+          auto& new_result = from_series_it.second;
+
+          if (!existing_result.error.description.empty()) {
+            // the existing result has an error; just leave it there
+
+          } else if (existing_result.step == 0) {
+            // the existing result is a missing series result. just replace it
+            // entirely with the new result (which might have data)
+            existing_result = move(new_result);
+
+          } else if (new_result.step != 0) {
+            // both results have data. seriously? dammit
+
+            if (new_result.step != existing_result.step) {
+              existing_result.error = make_error("merged results with different schemas");
+            } else {
+              existing_result.data.insert(existing_result.data.end(),
+                  new_result.data.begin(), new_result.data.end());
+              sort(existing_result.data.begin(), existing_result.data.end(),
+                  [](const Datapoint& a, const Datapoint& b) {
+                    return a.timestamp < b.timestamp;
+                  });
+              if (new_result.start_time < existing_result.start_time) {
+                existing_result.start_time = new_result.start_time;
+              }
+              if (new_result.end_time > existing_result.end_time) {
+                existing_result.end_time = new_result.end_time;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void Store::combine_find_results(unordered_map<string, FindResult>& into,
+    unordered_map<string, FindResult>&& from) {
+  for (auto& from_query_it : from) {
+    const string& from_query = from_query_it.first;
+    auto& from_result = from_query_it.second;
+    auto into_query_it = into.find(from_query);
+    if (into_query_it == into.end()) {
+      into.emplace(from_query, move(from_result));
+
+    } else {
+      auto& into_result = into_query_it->second;
+      if (!into_result.error.description.empty()) {
+        continue;
+      } else if (!from_result.error.description.empty()) {
+        into_result.error = move(from_result.error);
+        into_result.results.clear();
+        continue;
+      } else {
+        bool needs_deduplication = !into_result.results.empty();
+        into_result.results.insert(into_result.results.end(),
+            make_move_iterator(from_result.results.begin()),
+            make_move_iterator(from_result.results.end()));
+
+        if (needs_deduplication) {
+          auto& r = into_result.results;
+          sort(r.begin(), r.end());
+          size_t write_offset = 0;
+          for (size_t read_offset = 0; read_offset < r.size();) {
+            size_t run_start_offset = read_offset;
+            for (read_offset++; (read_offset < r.size()) && (r[read_offset] == r[run_start_offset]); read_offset++);
+            if (write_offset != run_start_offset) {
+              r[write_offset] = r[run_start_offset];
+            }
+            write_offset++;
+          }
+          r.resize(write_offset);
+        }
+      }
+    }
+  }
 }

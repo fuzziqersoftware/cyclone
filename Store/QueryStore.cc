@@ -40,7 +40,7 @@ unordered_map<string, Error> QueryStore::update_metadata(
       skip_buffering, local_only, profiler);
 }
 
-unordered_map<string, int64_t> QueryStore::delete_series(
+unordered_map<string, DeleteResult> QueryStore::delete_series(
     const vector<string>& patterns, bool local_only,
     BaseFunctionProfiler* profiler) {
   return this->store->delete_series(patterns, local_only, profiler);

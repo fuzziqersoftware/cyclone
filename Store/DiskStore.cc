@@ -146,10 +146,18 @@ unordered_map<string, Error> DiskStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, int64_t> DiskStore::delete_series(
+unordered_map<string, DeleteResult> DiskStore::delete_series(
     const vector<string>& patterns, bool local_only,
     BaseFunctionProfiler* profiler) {
-  unordered_map<string, int64_t> ret;
+  unordered_map<string, DeleteResult> ret;
+
+  // create results for all input patterns
+  for (const auto& pattern : patterns) {
+    auto& res = ret[pattern];
+    res.disk_series_deleted = 0;
+    res.buffer_series_deleted = 0;
+    res.error = make_success();
+  }
 
   // if a pattern ends in **, delete the entire tree. ** doesn't work in
   // resolve_patterns and isn't allowed anywhere else in patterns, so
@@ -159,7 +167,8 @@ unordered_map<string, int64_t> DiskStore::delete_series(
     if (ends_with(pattern, ".**")) {
       string directory_pattern = pattern.substr(0, pattern.size() - 3);
       string directory_path = this->filename_for_key(directory_pattern, false);
-      int64_t& deleted_count = ret[pattern];
+
+      DeleteResult& res = ret.at(pattern);
 
       vector<string> paths_to_count;
       paths_to_count.emplace_back(directory_path);
@@ -179,7 +188,7 @@ unordered_map<string, int64_t> DiskStore::delete_series(
           if (isdir(item_path)) {
             paths_to_count.emplace_back(item_path);
           } else {
-            deleted_count += 1;
+            res.disk_series_deleted += 1;
           }
         }
       }
@@ -187,9 +196,8 @@ unordered_map<string, int64_t> DiskStore::delete_series(
       try {
         unlink(directory_path, true);
       } catch (const exception& e) {
-        log(INFO, "[DiskStore] failed to delete directory %s (%s)",
-            directory_path.c_str(), e.what());
-        deleted_count = 0;
+        res.error = make_error(string_printf(
+            "failed to delete directory %s (%s)", directory_path.c_str(), e.what()));
       }
 
     } else {
@@ -223,19 +231,18 @@ unordered_map<string, int64_t> DiskStore::delete_series(
       delete_empty_directories_for_file(this->directory, filename);
 
       for (const auto& pattern : key_it.second) {
-        ret[pattern]++;
+        ret.at(pattern).disk_series_deleted++;
       }
+
     } catch (const exception& e) {
-      log(INFO, "[DiskStore] failed to delete series %s (%s)",
-          key_it.first.c_str(), e.what());
+      for (const auto& pattern : key_it.second) {
+        ret.at(pattern).error = make_error(string_printf(
+            "failed to delete series %s (%s)", key_it.first.c_str(), e.what()));
+      }
     }
   }
   profiler->checkpoint("delete_files");
 
-  // make sure we return zeroes for patterns that didn't match anything
-  for (const auto& pattern : patterns) {
-    ret.emplace(pattern, 0);
-  }
   return ret;
 }
 

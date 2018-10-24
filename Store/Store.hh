@@ -32,7 +32,7 @@ public:
       const SeriesMetadataMap& metadata, bool create_new,
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
       bool local_only, BaseFunctionProfiler* profiler) = 0;
-  virtual std::unordered_map<std::string, int64_t> delete_series(
+  virtual std::unordered_map<std::string, DeleteResult> delete_series(
       const std::vector<std::string>& patterns, bool local_only,
       BaseFunctionProfiler* profiler) = 0;
   virtual std::unordered_map<std::string, Error> rename_series(
@@ -118,4 +118,16 @@ protected:
 
     std::unordered_map<std::string, int64_t> to_map() const;
   };
+
+  void combine_simple_results(
+      std::unordered_map<std::string, Error>& into,
+      std::unordered_map<std::string, Error>&& from);
+  void combine_delete_results(
+      std::unordered_map<std::string, DeleteResult>& into,
+      std::unordered_map<std::string, DeleteResult>&& from);
+  void combine_read_results(
+      std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>>& into,
+      std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>>&& from);
+  void combine_find_results(std::unordered_map<std::string, FindResult>& into,
+      std::unordered_map<std::string, FindResult>&& from);
 };

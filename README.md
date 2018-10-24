@@ -76,6 +76,8 @@ This command deletes one or more series, as well as all buffered writes in memor
 
 Patterns may be given here; all series that match the pattern will be deleted. Entire directory trees can also be deleted by providing a pattern ending in `.**` (this is a special case and does not work in other places or other commands).
 
+If you use patterns in delete commands, Cyclone will have to scan part of the write buffer to execute these commands. If the write buffer is long and you use a wildcard or other pattern token near the root level, this could take a while, and will block other queries.
+
 This command does not return until the changes are committed to disk, even if write buffering is used.
 
 #### rename_series

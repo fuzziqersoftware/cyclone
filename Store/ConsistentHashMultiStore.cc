@@ -70,7 +70,7 @@ unordered_map<string, Error> ConsistentHashMultiStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, int64_t> ConsistentHashMultiStore::delete_series(
+unordered_map<string, DeleteResult> ConsistentHashMultiStore::delete_series(
     const vector<string>& patterns, bool local_only,
     BaseFunctionProfiler* profiler) {
 
@@ -99,14 +99,12 @@ unordered_map<string, int64_t> ConsistentHashMultiStore::delete_series(
   }
   profiler->checkpoint("partition_series");
 
-  unordered_map<string, int64_t> ret;
+  unordered_map<string, DeleteResult> ret;
   for (const auto& it : partitioned_data) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->delete_series(it.second,
         local_only, profiler);
-    for (const auto& result_it : results) {
-      ret[result_it.first] += result_it.second;
-    }
+    this->combine_delete_results(ret, move(results));
   }
   return ret;
 }
@@ -202,8 +200,8 @@ unordered_map<string, Error> ConsistentHashMultiStore::rename_series(
     auto delete_ret = from_store->delete_series({from_key_name}, false,
         profiler);
     profiler->checkpoint("delete_series_" + from_key_name);
-    int64_t num_deleted = delete_ret[from_key_name];
-    if (num_deleted == 1) {
+    auto& res = delete_ret[from_key_name];
+    if (res.disk_series_deleted + res.buffer_series_deleted > 0) {
       ret.emplace(from_key_name, make_success());
     } else {
       ret.emplace(from_key_name, make_error("move successful, but delete failed"));
@@ -493,7 +491,8 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           auto delete_ret = store_it.second->delete_series({key_name}, true,
               pg.profiler.get());
           pg.profiler->checkpoint("delete_series");
-          int64_t num_deleted = delete_ret[key_name];
+          auto& res = delete_ret[key_name];
+          int64_t num_deleted = res.disk_series_deleted + res.buffer_series_deleted;
           if (num_deleted == 1) {
             log(INFO, "[ConsistentHashMultiStore] key %s moved from %s to %s",
                 key_name.c_str(), store_it.first.c_str(), responsible_store_name.c_str());

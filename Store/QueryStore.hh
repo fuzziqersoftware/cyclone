@@ -25,7 +25,7 @@ public:
       const SeriesMetadataMap& metadata, bool create_new,
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
       bool local_only, BaseFunctionProfiler* profiler);
-  virtual std::unordered_map<std::string, int64_t> delete_series(
+  virtual std::unordered_map<std::string, DeleteResult> delete_series(
       const std::vector<std::string>& patterns, bool local_only,
       BaseFunctionProfiler* profiler);
   virtual std::unordered_map<std::string, Error> rename_series(

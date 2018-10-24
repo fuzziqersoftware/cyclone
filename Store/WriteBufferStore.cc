@@ -166,29 +166,53 @@ unordered_map<string, Error> WriteBufferStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, int64_t> WriteBufferStore::delete_series(
+unordered_map<string, DeleteResult> WriteBufferStore::delete_series(
     const vector<string>& patterns, bool local_only,
     BaseFunctionProfiler* profiler) {
-  // remove any pending writes/creates
-
   profiler->add_metadata("pattern_count",
       string_printf("%zu", patterns.size()));
 
-  // we move the items out of the map so the destructors will be called
-  // outside of the lock context
-  // TODO: make patterns work here... currently we only match key names
+  // remove any pending writes/creates first
+
+  // we move the items out of the map so the destructors will be called outside
+  // of the lock context
+  unordered_map<string, DeleteResult> ret;
   vector<QueueItem> items_to_delete;
   size_t num_deleted_from_queue = 0;
   {
     rw_guard g(this->queue_lock, true);
     for (const auto& key_name : patterns) {
-      auto it = this->queue.find(key_name);
-      if (it == this->queue.end()) {
-        continue;
+      auto& res = ret[key_name];
+
+      // optimization: the queue is ordered, and usually we don't have a pattern
+      // at the root level, so we only need to scan a portion of the queue for
+      // items to delete. this can be done by finding the first pattern token
+      // and scanning only the range of the queue that matches the string before
+      // that token.
+      size_t pattern_start_offset = key_name.find_first_of("[{*");
+      if (pattern_start_offset != string::npos) {
+        string prefix = key_name.substr(0, pattern_start_offset);
+        auto end_it = this->queue.upper_bound(key_name);
+        for (auto it = this->queue.lower_bound(key_name); it != end_it;) {
+          if (!this->name_matches_pattern(it->first, key_name)) {
+            it++;
+            continue;
+          }
+
+          items_to_delete.emplace_back(move(it->second));
+          it = this->queue.erase(it);
+          res.buffer_series_deleted++;
+        }
+
+      } else {
+        auto it = this->queue.find(key_name);
+        if (it == this->queue.end()) {
+          continue;
+        }
+        items_to_delete.emplace_back(move(it->second));
+        this->queue.erase(it);
+        res.buffer_series_deleted++;
       }
-      items_to_delete.emplace_back(move(it->second));
-      this->queue.erase(it);
-      num_deleted_from_queue++;
     }
   }
 
@@ -197,7 +221,28 @@ unordered_map<string, int64_t> WriteBufferStore::delete_series(
   profiler->checkpoint("write_buffer_delete");
 
   // issue the delete to the underlying store
-  return this->store->delete_series(patterns, local_only, profiler);
+  auto store_ret = this->store->delete_series(patterns, local_only, profiler);
+  this->combine_delete_results(ret, move(store_ret));
+
+  // count the items that are about to be deleted
+  size_t num_update_metadatas_deleted = 0;
+  size_t num_writes_deleted = 0;
+  size_t num_datapoints_deleted = 0;
+  for (const auto& it : items_to_delete) {
+    if (it.has_update_metadata()) {
+      num_update_metadatas_deleted++;
+    }
+    size_t num_datapoints = it.data.size();
+    num_datapoints_deleted += num_datapoints;
+    if (num_datapoints) {
+      num_writes_deleted++;
+    }
+  }
+  this->queued_update_metadatas -= num_update_metadatas_deleted;
+  this->queued_writes -= num_writes_deleted;
+  this->queued_datapoints -= num_datapoints_deleted;
+
+  return ret;
 
   // items_to_delete are deleted here. importantly, this is after we call
   // delete_series on the substore to minimize the time between removing the

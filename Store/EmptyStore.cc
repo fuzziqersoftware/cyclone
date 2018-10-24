@@ -29,12 +29,15 @@ unordered_map<string, Error> EmptyStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, int64_t> EmptyStore::delete_series(
+unordered_map<string, DeleteResult> EmptyStore::delete_series(
     const vector<string>& patterns, bool local_only,
     BaseFunctionProfiler* profiler) {
-  unordered_map<string, int64_t> ret;
+  unordered_map<string, DeleteResult> ret;
   for (const auto& pattern : patterns) {
-    ret.emplace(pattern, 0);
+    auto& res = ret[pattern];
+    res.disk_series_deleted = 0;
+    res.buffer_series_deleted = 0;
+    res.error = make_success();
   }
   return ret;
 }

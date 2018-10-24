@@ -88,10 +88,10 @@ unordered_map<string, Error> RemoteStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, int64_t> RemoteStore::delete_series(
+unordered_map<string, DeleteResult> RemoteStore::delete_series(
     const vector<string>& patterns, bool local_only,
     BaseFunctionProfiler* profiler) {
-  unordered_map<string, int64_t> ret;
+  unordered_map<string, DeleteResult> ret;
   if (local_only) {
     profiler->add_metadata("local_only", "true");
     return ret;
@@ -109,7 +109,10 @@ unordered_map<string, int64_t> RemoteStore::delete_series(
     profiler->add_metadata("remote_error", e.what());
     this->stats[0].server_disconnects++;
     for (const auto& it : patterns) {
-      ret.emplace(it, 0);
+      auto& res = ret[it];
+      res.disk_series_deleted = 0;
+      res.buffer_series_deleted = 0;
+      res.error = make_error(e.what());
     }
   }
   this->stats[0].delete_series_commands++;

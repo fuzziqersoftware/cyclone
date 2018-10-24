@@ -41,6 +41,12 @@ struct FindResult {
   2: list<string> results;
 }
 
+struct DeleteResult {
+  1: Error error;
+  2: i64 disk_series_deleted;
+  3: i64 buffer_series_deleted;
+}
+
 typedef list<Datapoint> Series;
 typedef map cpp_type 'std::unordered_map<std::string, Series>'
     <string, Series> SeriesMap;
@@ -56,8 +62,8 @@ typedef map cpp_type 'std::unordered_map<std::string, std::unordered_map<std::st
 typedef map cpp_type 'std::unordered_map<std::string, class Error>'
     <string, Error> WriteResultMap;
 
-typedef map cpp_type 'std::unordered_map<std::string, int64_t>'
-    <string, i64> DeleteResultMap;
+typedef map cpp_type 'std::unordered_map<std::string, class DeleteResult>'
+    <string, DeleteResult> DeleteResultMap;
 
 typedef map cpp_type 'std::unordered_map<std::string, class FindResult>'
     <string, FindResult> FindResultMap;

@@ -61,7 +61,7 @@ public:
         update_behavior, skip_buffering, local_only, pg.profiler.get());
   }
 
-  void delete_series(unordered_map<string, int64_t>& _return,
+  void delete_series(unordered_map<string, DeleteResult>& _return,
       const vector<string>& key_names, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
 

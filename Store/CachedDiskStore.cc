@@ -394,10 +394,18 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
   return ret;
 }
 
-unordered_map<string, int64_t> CachedDiskStore::delete_series(
+unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
     const vector<string>& patterns, bool local_only,
     BaseFunctionProfiler* profiler) {
-  unordered_map<string, int64_t> ret;
+  unordered_map<string, DeleteResult> ret;
+
+  // create results for all input patterns
+  for (const auto& pattern : patterns) {
+    auto& res = ret[pattern];
+    res.disk_series_deleted = 0;
+    res.buffer_series_deleted = 0;
+    res.error = make_success();
+  }
 
   // if a pattern ends in **, delete the entire subtree. ** doesn't work in
   // resolve_patterns and isn't allowed anywhere else in patterns, so
@@ -489,10 +497,10 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
             }
           }
         }
-        ret.emplace(pattern, files_deleted);
+        ret.at(pattern).disk_series_deleted = files_deleted;
 
       } catch (const exception& e) {
-        ret.emplace(pattern, 0);
+        ret.at(pattern).error = make_error(e.what());
       }
     }
 
@@ -526,19 +534,18 @@ unordered_map<string, int64_t> CachedDiskStore::delete_series(
       this->check_and_delete_cache_path(p);
 
       for (const string& pattern : key_it.second) {
-        ret[pattern]++;
+        ret.at(pattern).disk_series_deleted++;
       }
 
     } catch (const exception& e) {
-      log(INFO, "[CachedDiskStore] failed to delete series %s (%s)",
-          key_it.first.c_str(), e.what());
+      for (const string& pattern : key_it.second) {
+        ret.at(pattern).error = make_error(string_printf(
+            "failed to delete series %s (%s)", key_it.first.c_str(), e.what()));
+      }
     }
   }
   profiler->checkpoint("delete_files");
 
-  for (const string& pattern : determinate_patterns) {
-    ret.emplace(pattern, 0);
-  }
   return ret;
 }
 
@@ -588,7 +595,7 @@ unordered_map<string, Error> CachedDiskStore::rename_series(
   profiler->checkpoint("rename_files");
 
   return ret;
-  }
+}
 
 unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
     const vector<string>& key_names, int64_t start_time, int64_t end_time,
