@@ -241,6 +241,7 @@ unordered_map<string, DeleteResult> WriteBufferStore::delete_series(
   this->queued_update_metadatas -= num_update_metadatas_deleted;
   this->queued_writes -= num_writes_deleted;
   this->queued_datapoints -= num_datapoints_deleted;
+  profiler->checkpoint("write_buffer_merge");
 
   return ret;
 
