@@ -69,7 +69,7 @@ protected:
     std::vector<std::string> directories;
     std::string basename;
 
-    KeyPath(const std::string& key_name);
+    KeyPath(const std::string& key_name, bool is_file = true);
     std::string str() const;
   };
 
@@ -124,7 +124,9 @@ protected:
       const std::string& filesystem_path);
 
   void find_all_recursive(FindResult& r, CachedDirectoryContents* level,
-      const std::string& level_path, BaseFunctionProfiler* profiler);
+      const std::string& level_path,
+      std::vector<KeyPath>& paths_to_check_and_delete,
+      BaseFunctionProfiler* profiler);
 
   // object representing a path down the cache tree
   struct CacheTraversal {

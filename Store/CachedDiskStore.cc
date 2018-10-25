@@ -22,13 +22,15 @@
 using namespace std;
 
 
-CachedDiskStore::KeyPath::KeyPath(const string& key_name) :
+CachedDiskStore::KeyPath::KeyPath(const string& key_name, bool is_file) :
     directories(split(key_name, '.')) {
   if (this->directories.empty()) {
     throw invalid_argument("empty key name");
   }
-  this->basename = move(directories.back());
-  this->directories.pop_back();
+  if (is_file) {
+    this->basename = move(directories.back());
+    this->directories.pop_back();
+  }
 }
 
 string CachedDiskStore::KeyPath::str() const {
@@ -773,14 +775,23 @@ static string path_join(const string& a, const string& b) {
 
 void CachedDiskStore::find_all_recursive(FindResult& r,
     CachedDirectoryContents* level, const string& level_path,
+    vector<KeyPath>& paths_to_check_and_delete,
     BaseFunctionProfiler* profiler) {
-  this->populate_cache_level(level, this->filename_for_key(level_path, false));
+  try {
+    this->populate_cache_level(level, this->filename_for_key(level_path, false));
+  } catch (const cannot_open_file& e) {
+    if (e.error == ENOENT) {
+      paths_to_check_and_delete.emplace_back(level_path, false);
+      return;
+    }
+    throw;
+  }
 
   {
     rw_guard g(level->subdirectories_lock, false);
     for (const auto& it : level->subdirectories) {
       this->find_all_recursive(r, it.second.get(),
-          path_join(level_path, it.first), profiler);
+          path_join(level_path, it.first), paths_to_check_and_delete, profiler);
     }
   }
   profiler->checkpoint("find_all_recursive_iterate_subdirs_" + level_path);
@@ -798,6 +809,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
     const vector<string>& patterns, bool local_only,
     BaseFunctionProfiler* profiler) {
 
+  vector<KeyPath> paths_to_check_and_delete;
   unordered_map<string, FindResult> ret;
   for (const auto& pattern : patterns) {
     auto emplace_ret = ret.emplace(piecewise_construct,
@@ -830,8 +842,18 @@ unordered_map<string, FindResult> CachedDiskStore::find(
 
           // if the current token is a pattern, we'll have to scan the current level
           if (this->token_is_pattern(item)) {
-            // make sure the current level is complete
-            this->populate_cache_level(level, this->filename_for_key(current_level_path, false));
+
+            // populate the current level. if was deleted on disk, delete it
+            // from the cache as well
+            try {
+              this->populate_cache_level(level, this->filename_for_key(current_level_path, false));
+            } catch (const cannot_open_file& e) {
+              if (e.error == ENOENT) {
+                paths_to_check_and_delete.emplace_back(current_level_path, false);
+                continue;
+              }
+              throw;
+            }
             profiler->checkpoint("populate_" + current_level_path);
 
             // scan through its directories for the ones we want
@@ -918,11 +940,20 @@ unordered_map<string, FindResult> CachedDiskStore::find(
         const string& level_path = it.second;
 
         if (this->token_is_pattern(p.basename)) {
-          this->populate_cache_level(level, this->filename_for_key(level_path, false));
+          try {
+            this->populate_cache_level(level, this->filename_for_key(level_path, false));
+          } catch (const cannot_open_file& e) {
+            if (e.error == ENOENT) {
+              paths_to_check_and_delete.emplace_back(level_path, false);
+              continue;
+            }
+            throw;
+          }
           profiler->checkpoint("populate_" + level_path);
 
           if (basename_is_find_all) {
-            this->find_all_recursive(r, level, level_path, profiler);
+            this->find_all_recursive(r, level, level_path,
+                paths_to_check_and_delete, profiler);
             profiler->checkpoint("find_all_recursive");
 
           } else {
@@ -1003,6 +1034,17 @@ unordered_map<string, FindResult> CachedDiskStore::find(
   }
 
   this->stats[0].report_find_request(ret);
+
+  // if this find query touched directories that no longer exist on disk, update
+  // the cache appropriately. note that we can't do this in the loop above
+  // because we're holding read locks on the relevant parent directories and I'm
+  // too lazy to change the working data structure to be able to release those
+  // locks inline and update the cache there. so, we do it at the end
+  for (const KeyPath& p : paths_to_check_and_delete) {
+    this->check_and_delete_cache_path(p);
+  }
+  profiler->checkpoint("check_and_delete_missing_cache_paths");
+
   return ret;
 }
 
@@ -1135,6 +1177,9 @@ void CachedDiskStore::populate_cache_level(CachedDirectoryContents* level,
   rw_guard files_g(level->files_lock, true);
 
   // add missing subdirectories and files
+  // note that list_directory can throw cannot_open_file if the directory
+  // doesn't exist; in this case the caller should delete the level that we're
+  // attempting to populate
   auto filesystem_items = list_directory(filesystem_path);
   for (const auto& item : filesystem_items) {
     string item_filesystem_path = filesystem_path + "/" + item;
