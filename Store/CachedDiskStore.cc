@@ -488,8 +488,11 @@ unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
                 rmdir(item.c_str());
                 items_to_delete.pop_back();
               } else {
+                // watch out: item is a reference to an entry in items_to_delete, so we
+                // can't use that reference if we modify the vector
+                size_t current_item = items_to_delete.size() - 1;
                 for (const auto& dir_item : dir_items) {
-                  items_to_delete.emplace_back(item + "/" + dir_item);
+                  items_to_delete.emplace_back(items_to_delete[current_item] + "/" + dir_item);
                 }
               }
             } else {
