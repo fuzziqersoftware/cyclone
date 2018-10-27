@@ -133,9 +133,9 @@ static rw_lock profiler_slots_lock;
 
 void set_profiler_threshold(bool internal, int64_t threshold_usecs) {
   if (internal) {
-    default_threshold_usecs = threshold_usecs;
-  } else {
     default_internal_threshold_usecs = threshold_usecs;
+  } else {
+    default_threshold_usecs = threshold_usecs;
   }
 }
 
