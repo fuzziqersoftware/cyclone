@@ -19,11 +19,13 @@
 class CachedDiskStore : public DiskStore {
 public:
   CachedDiskStore() = delete;
+  CachedDiskStore(const std::string& root_directory, size_t directory_limit,
+      size_t file_limit);
   CachedDiskStore(const CachedDiskStore& rhs) = delete;
-  explicit CachedDiskStore(const std::string& root_directory,
-      size_t directory_limit, size_t file_limit);
-  virtual ~CachedDiskStore();
+  CachedDiskStore(CachedDiskStore&& rhs) = delete;
   const CachedDiskStore& operator=(const CachedDiskStore& rhs) = delete;
+  const CachedDiskStore& operator=(CachedDiskStore&& rhs) = delete;
+  virtual ~CachedDiskStore();
 
   size_t get_directory_limit() const;
   size_t get_file_limit() const;
@@ -90,24 +92,38 @@ protected:
   // isn't vulnerable to deadlocks since we follow a strict ordering when taking
   // locks.
   struct CachedDirectoryContents {
-    std::atomic<bool> list_complete;
+    CachedDirectoryContents* parent_level;
 
+    std::atomic<bool> list_complete;
     std::unordered_map<std::string, std::unique_ptr<CachedDirectoryContents>> subdirectories;
     std::unordered_map<std::string, WhisperArchive> files;
     mutable rw_lock subdirectories_lock;
     mutable rw_lock files_lock;
-    LRUSet<std::string> subdirectories_lru;
-    mutable std::mutex subdirectories_lru_lock;
+
+    // note that there isn't an lru for subdirectories. this is because we track
+    // subdirectory oldness a different way: each directory keeps track of its
+    // version, which atomically increases every time it's touched, and the
+    // MINIMUM version of any directory within its subtree. when a subdirectory
+    // is touched, we propagate the minimum change up the tree until 
     LRUSet<std::string> files_lru;
     mutable std::mutex files_lru_lock;
 
-    CachedDirectoryContents();
+    std::atomic<uint64_t> version;
+    std::atomic<uint64_t> min_subtree_version;
+
+    CachedDirectoryContents() = delete;
+    explicit CachedDirectoryContents(CachedDirectoryContents* parent_level);
     CachedDirectoryContents(const CachedDirectoryContents& other) = delete;
     CachedDirectoryContents(CachedDirectoryContents&& other) = default;
     CachedDirectoryContents& operator=(const CachedDirectoryContents& other) = delete;
+    CachedDirectoryContents& operator=(CachedDirectoryContents&& other) = delete;
 
-    void touch_subdirectory(const std::string& item);
-    void touch_file(const std::string& item);
+    void swap_locked(CachedDirectoryContents& other);
+
+    static uint64_t next_version();
+    void touch_subdirectory_locked(const std::string& item,
+        CachedDirectoryContents* child_level);
+    void recompute_versions_locked();
 
     std::pair<size_t, size_t> get_counts() const;
 
