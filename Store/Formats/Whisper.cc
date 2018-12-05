@@ -479,6 +479,11 @@ void WhisperArchive::write(const Series& data) {
 }
 
 void WhisperArchive::write_sorted_locked(const Series& sorted_data, int64_t t) {
+  // write_archive_locked assumes there's at least one datapoint
+  if (sorted_data.empty()) {
+    return;
+  }
+
   uint32_t archive_index = 0;
   uint32_t next_commit_point = 0;
 
