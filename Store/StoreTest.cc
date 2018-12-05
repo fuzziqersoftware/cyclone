@@ -478,7 +478,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] rename series\n", store_name.c_str());
-    auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
+    auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq("", ret.at(autocreate_key_name1).description);
   }
@@ -525,7 +525,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] rename series back\n", store_name.c_str());
-    auto ret = s->rename_series({{rename_key_name, autocreate_key_name1}}, false, profiler.get());
+    auto ret = s->rename_series({{rename_key_name, autocreate_key_name1}}, false, false, profiler.get());
     expect_eq(1, ret.size());
     expect_eq("", ret.at(rename_key_name).description);
   }
@@ -741,22 +741,38 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
   auto profiler = create_profiler("StoreTest", "run_rename_test", 1000000000);
 
   for (size_t x = 0; x < 100; x++) {
-    string autocreate_key_name1 = string_printf("test.autocreate.dir1.dir2.dir3.key%zu", x);
+    string autocreate_key_name1 = string_printf("test.autocreate.dir1.dir2.dir3.key%zu-1", x);
+    string autocreate_key_name2 = string_printf("test.autocreate.dir1.dir2.dir3.key%zu-2", x);
     string rename_key_name = string_printf("test.rename.key%zu", x);
-    string autocreate_key_filename1 = string_printf("%s/test/autocreate/dir1/dir2/dir3/key%zu.wsp", data_directory.c_str(), x);
+    string autocreate_key_filename1 = string_printf("%s/test/autocreate/dir1/dir2/dir3/key%zu-1.wsp", data_directory.c_str(), x);
+    string autocreate_key_filename2 = string_printf("%s/test/autocreate/dir1/dir2/dir3/key%zu-2.wsp", data_directory.c_str(), x);
     string rename_key_filename = string_printf("/test/rename/key%zu.wsp", data_directory.c_str(), x);
     string pattern5 = "test.**";
     string autocreate_pattern = "test.autocreate.dir1.dir2.dir3.*";
     string rename_pattern = "test.rename.*";
 
     unordered_map<string, Series> write_data;
-    write_data[autocreate_key_name1].emplace_back();
-    write_data[autocreate_key_name1].back().timestamp = test_now;
-    write_data[autocreate_key_name1].back().value = 2.0;
+    {
+      auto& data1 = write_data[autocreate_key_name1];
+      data1.emplace_back();
+      data1.back().timestamp = test_now;
+      data1.back().value = 2.0;
+      data1.emplace_back();
+      data1.back().timestamp = test_now - 60;
+      data1.back().value = 3.0;
+
+      auto& data2 = write_data[autocreate_key_name2];
+      data2.emplace_back();
+      data2.back().timestamp = test_now - 60;
+      data2.back().value = 1.0;
+      data2.emplace_back();
+      data2.back().timestamp = test_now - 120;
+      data2.back().value = 0.0;
+    }
 
     {
       printf("-- [%s:rename_test:%zu] rename nonexistent series\n", store_name.c_str(), x);
-      auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
+      auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, false, profiler.get());
       expect_eq(1, ret.size());
       expect_ne("", ret.at(autocreate_key_name1).description);
     }
@@ -764,16 +780,18 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
     {
       printf("-- [%s:rename_test:%zu] write to nonexistent series (autocreate)\n", store_name.c_str(), x);
       auto ret = s->write(write_data, false, false, profiler.get());
-      expect_eq(1, ret.size());
+      expect_eq(2, ret.size());
       expect(ret.at(autocreate_key_name1).description.empty());
+      expect(ret.at(autocreate_key_name2).description.empty());
       expect_eq(is_write_buffer, !isfile(autocreate_key_filename1));
+      expect_eq(is_write_buffer, !isfile(autocreate_key_filename2));
       s->flush();
       expect(isfile(autocreate_key_filename1));
     }
 
     {
       printf("-- [%s:rename_test:%zu] rename series\n", store_name.c_str(), x);
-      auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, profiler.get());
+      auto ret = s->rename_series({{autocreate_key_name1, rename_key_name}}, false, false, profiler.get());
       expect_eq(1, ret.size());
       expect_eq("", ret.at(autocreate_key_name1).description);
     }
@@ -784,9 +802,11 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
       expect_eq(1, ret.size());
       expect_eq(1, ret.at(rename_key_name).size());
       expect(ret.at(rename_key_name).at(rename_key_name).error.description.empty());
-      expect_eq(1, ret.at(rename_key_name).at(rename_key_name).data.size());
-      expect_eq((test_now / 60) * 60, ret.at(rename_key_name).at(rename_key_name).data[0].timestamp);
-      expect_eq(2.0, ret.at(rename_key_name).at(rename_key_name).data[0].value);
+      expect_eq(2, ret.at(rename_key_name).at(rename_key_name).data.size());
+      expect_eq((test_now / 60) * 60 - 60, ret.at(rename_key_name).at(rename_key_name).data[0].timestamp);
+      expect_eq(3.0, ret.at(rename_key_name).at(rename_key_name).data[0].value);
+      expect_eq((test_now / 60) * 60, ret.at(rename_key_name).at(rename_key_name).data[1].timestamp);
+      expect_eq(2.0, ret.at(rename_key_name).at(rename_key_name).data[1].value);
     }
 
     {
@@ -798,11 +818,14 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
       expect(ret.at(rename_pattern).error.description.empty());
 
       auto& pattern5_results = ret.at(pattern5).results;
-      expect_eq(1, pattern5_results.size());
-      expect_eq(rename_key_name, pattern5_results[0]);
+      expect_eq(2, pattern5_results.size());
+      sort(pattern5_results.begin(), pattern5_results.end());
+      expect_eq(autocreate_key_name2, pattern5_results[0]);
+      expect_eq(rename_key_name, pattern5_results[1]);
 
       auto& autocreate_pattern_results = ret.at(autocreate_pattern).results;
-      expect_eq(0, autocreate_pattern_results.size());
+      expect_eq(1, autocreate_pattern_results.size());
+      expect_eq(autocreate_key_name2, autocreate_pattern_results[0]);
 
       auto& rename_pattern_results = ret.at(rename_pattern).results;
       expect_eq(1, rename_pattern_results.size());
@@ -810,10 +833,55 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
     }
 
     {
+      printf("-- [%s:rename_test:%zu] rename series (ignored)\n", store_name.c_str(), x);
+      auto ret = s->rename_series({{rename_key_name, autocreate_key_name2}}, false, false, profiler.get());
+      expect_eq(1, ret.size());
+      expect(ret.at(rename_key_name).ignored);
+    }
+
+    {
+      printf("-- [%s:rename_test:%zu] read from non-renamed series\n", store_name.c_str(), x);
+      auto ret = s->read({rename_key_name}, test_now - 10 * 60, test_now, false, profiler.get());
+      expect_eq(1, ret.size());
+      expect_eq(1, ret.at(rename_key_name).size());
+      expect(ret.at(rename_key_name).at(rename_key_name).error.description.empty());
+      expect_eq(2, ret.at(rename_key_name).at(rename_key_name).data.size());
+      expect_eq((test_now / 60) * 60 - 60, ret.at(rename_key_name).at(rename_key_name).data[0].timestamp);
+      expect_eq(3.0, ret.at(rename_key_name).at(rename_key_name).data[0].value);
+      expect_eq((test_now / 60) * 60, ret.at(rename_key_name).at(rename_key_name).data[1].timestamp);
+      expect_eq(2.0, ret.at(rename_key_name).at(rename_key_name).data[1].value);
+    }
+
+    {
+      printf("-- [%s:rename_test:%zu] rename series (merge)\n", store_name.c_str(), x);
+      auto ret = s->rename_series({{rename_key_name, autocreate_key_name2}}, true, false, profiler.get());
+      expect_eq(1, ret.size());
+      fprintf(stderr, ">>> %s\n", ret.at(rename_key_name).description.c_str());
+      expect(ret.at(rename_key_name).description.empty());
+      expect(!ret.at(rename_key_name).ignored);
+    }
+
+    {
+      printf("-- [%s:rename_test:%zu] read from merged series\n", store_name.c_str(), x);
+      auto ret = s->read({autocreate_key_name2}, test_now - 10 * 60, test_now, false, profiler.get());
+      expect_eq(1, ret.size());
+      expect_eq(1, ret.at(autocreate_key_name2).size());
+      auto& result = ret.at(autocreate_key_name2).at(autocreate_key_name2);
+      expect(result.error.description.empty());
+      expect_eq(3, result.data.size());
+      expect_eq((test_now / 60) * 60 - 120, result.data[0].timestamp);
+      expect_eq(0.0, result.data[0].value);
+      expect_eq((test_now / 60) * 60 - 60, result.data[1].timestamp);
+      expect_eq(3.0, result.data[1].value);
+      expect_eq((test_now / 60) * 60, result.data[2].timestamp);
+      expect_eq(2.0, result.data[2].value);
+    }
+
+    {
       printf("-- [%s:rename_test:%zu] delete series\n", store_name.c_str(), x);
-      auto ret = s->delete_series({rename_key_name}, false, profiler.get());
-      expect_eq(1, ret.at(rename_key_name).disk_series_deleted);
-      expect(ret.at(rename_key_name).error.description.empty());
+      auto ret = s->delete_series({autocreate_key_name2}, false, profiler.get());
+      expect_eq(1, ret.at(autocreate_key_name2).disk_series_deleted);
+      expect(ret.at(autocreate_key_name2).error.description.empty());
       expect_eq(1, ret.size());
     }
   }

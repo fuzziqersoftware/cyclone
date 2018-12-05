@@ -22,6 +22,7 @@
 using namespace std;
 
 
+
 static bool atomic_increase_to(atomic<uint64_t>& target, uint64_t new_value) {
   uint64_t current_value;
   do {
@@ -354,8 +355,8 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
     const SeriesMetadataMap& metadata_map, bool create_new,
     UpdateMetadataBehavior update_behavior, bool skip_buffering,
     bool local_only, BaseFunctionProfiler* profiler) {
-
   unordered_map<string, Error> ret;
+
   for (auto& it : metadata_map) {
     const auto& key_name = it.first;
     const auto& metadata = it.second;
@@ -621,10 +622,19 @@ unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
 }
 
 unordered_map<string, Error> CachedDiskStore::rename_series(
-    const unordered_map<string, string>& renames, bool local_only,
+    const unordered_map<string, string>& renames, bool merge, bool local_only,
     BaseFunctionProfiler* profiler) {
-
   unordered_map<string, Error> ret;
+
+  // if merging, be lazy and do the read+create+write procedure instead
+  if (merge) {
+    for (const auto& it : renames) {
+      ret.emplace(it.first, this->emulate_rename_series(this, it.first, this,
+          it.second, merge, profiler));
+    }
+    return ret;
+  }
+
   for (auto rename_it : renames) {
     const string& from_key_name = rename_it.first;
     const string& to_key_name = rename_it.second;

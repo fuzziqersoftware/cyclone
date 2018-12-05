@@ -47,9 +47,9 @@ unordered_map<string, DeleteResult> QueryStore::delete_series(
 }
 
 unordered_map<string, Error> QueryStore::rename_series(
-    const unordered_map<string, string>& renames, bool local_only,
+    const unordered_map<string, string>& renames, bool merge, bool local_only,
     BaseFunctionProfiler* profiler) {
-  return this->store->rename_series(renames, local_only, profiler);
+  return this->store->rename_series(renames, merge, local_only, profiler);
 }
 
 unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(

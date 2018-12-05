@@ -251,7 +251,7 @@ unordered_map<string, DeleteResult> WriteBufferStore::delete_series(
 }
 
 unordered_map<string, Error> WriteBufferStore::rename_series(
-    const unordered_map<string, string>& renames, bool local_only,
+    const unordered_map<string, string>& renames, bool merge, bool local_only,
     BaseFunctionProfiler* profiler) {
   profiler->add_metadata("rename_count",
       string_printf("%zu", renames.size()));
@@ -281,7 +281,8 @@ unordered_map<string, Error> WriteBufferStore::rename_series(
   profiler->checkpoint("write_buffer_remove");
 
   // issue the rename to the underlying store
-  for (const auto& it : this->store->rename_series(renames_to_forward, local_only, profiler)) {
+  for (const auto& it : this->store->rename_series(renames_to_forward, merge,
+      local_only, profiler)) {
     if (!it.second.description.empty()) {
       // un-rename the queue item so that the writes don't get reassigned,
       // because this rename failed in the substore and reassigning the writes

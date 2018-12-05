@@ -247,9 +247,18 @@ unordered_map<string, DeleteResult> DiskStore::delete_series(
 }
 
 unordered_map<string, Error> DiskStore::rename_series(
-    const unordered_map<string, string>& renames, bool local_only,
+    const unordered_map<string, string>& renames, bool merge, bool local_only,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
+
+  // if merging, be lazy and do the read+create+write procedure instead
+  if (merge) {
+    for (const auto& it : renames) {
+      ret.emplace(it.first, this->emulate_rename_series(this, it.first, this,
+          it.second, merge, profiler));
+    }
+    return ret;
+  }
 
   for (const auto& rename_it : renames) {
     if (rename_it.first == rename_it.second) {

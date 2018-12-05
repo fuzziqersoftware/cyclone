@@ -37,7 +37,7 @@ public:
       BaseFunctionProfiler* profiler) = 0;
   virtual std::unordered_map<std::string, Error> rename_series(
       const std::unordered_map<std::string, std::string>& renames,
-      bool local_only, BaseFunctionProfiler* profiler) = 0;
+      bool merge, bool local_only, BaseFunctionProfiler* profiler) = 0;
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
       const std::vector<std::string>& key_names, int64_t start_time,
@@ -70,7 +70,7 @@ public:
       const std::vector<std::string>& patterns, bool local_only);
   static std::string string_for_rename_series(
       const std::unordered_map<std::string, std::string>& renames,
-      bool local_only);
+      bool merge, bool local_only);
   static std::string string_for_read(const std::vector<std::string>& key_names,
       int64_t start_time, int64_t end_time, bool local_only);
   static std::string string_for_read_all(const std::string& key_name,
@@ -107,6 +107,11 @@ protected:
 
   std::unordered_map<std::string, std::vector<std::string>> resolve_patterns(
       const std::vector<std::string>& key_names, bool local_only,
+      BaseFunctionProfiler* profiler);
+
+  static Error emulate_rename_series(Store* from_store,
+      const std::string& from_key_name, Store* to_store,
+      const std::string& to_key_name, bool merge,
       BaseFunctionProfiler* profiler);
 
   struct Stats {

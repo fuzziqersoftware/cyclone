@@ -84,11 +84,11 @@ This command does not return until the changes are committed to disk, even if wr
 
 This command renames one or more series. Patterns may be not given here.
 
-If the destination series already exists on disk, no operation is performed. If the source series does not exist on disk, the operation will fail with the error "series does not exist", even if it's present in the write buffer and not created on disk yet.
+If the source series does not exist on disk, the operation will fail with the error "series does not exist", even if it's present in the write buffer and not created on disk yet. If the destination series already exists on disk, no operation is performed unless merging is requested; if the destination series exists and merging is requested, the source series data is written to the destination series and the source series is deleted.
 
 Any buffered writes or update_metadata actions for the renamed series will be reassigned to the new series name if this command succeeds. They will not be flushed immediately.
 
-This command does not return until the rename is committed to disk, even if write buffering is used.
+This command may return before changes are committed to disk. The exact circumstances in which this happens are too complex to explain here.
 
 #### read
 

@@ -90,7 +90,7 @@ service Cyclone {
 
   // renames series. returns an error string for each series.
   WriteResultMap rename_series(1: RenameSeriesMap renames,
-      2: bool local_only = false);
+      3: bool merge, 2: bool local_only = false);
 
   // writes or deletes datapoints in a series. to delete datapoints, pass NaN as
   // the value. returns an error string for each series.

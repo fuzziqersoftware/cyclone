@@ -43,7 +43,7 @@ unordered_map<string, DeleteResult> EmptyStore::delete_series(
 }
 
 unordered_map<string, Error> EmptyStore::rename_series(
-    const unordered_map<string, string>& renames, bool local_only,
+    const unordered_map<string, string>& renames, bool merge, bool local_only,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
   for (const auto& it : renames) {

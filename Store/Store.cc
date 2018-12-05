@@ -107,10 +107,10 @@ string Store::string_for_delete_series(const vector<string>& patterns,
 }
 
 string Store::string_for_rename_series(
-    const unordered_map<string, string>& renames, bool local_only) {
+    const unordered_map<string, string>& renames, bool merge, bool local_only) {
   string series_list = comma_list_limit(renames, 10);
-  return string_printf("rename_series(%s, local_only=%s)", series_list.c_str(),
-      string_for_bool(local_only));
+  return string_printf("rename_series(%s, merge=%s, local_only=%s)",
+      series_list.c_str(), string_for_bool(merge), string_for_bool(local_only));
 }
 
 string Store::string_for_read(const vector<string>& key_names,
@@ -339,6 +339,62 @@ unordered_map<string, vector<string>> Store::resolve_patterns(
 
   return key_to_patterns;
 }
+
+Error Store::emulate_rename_series(Store* from_store,
+    const string& from_key_name, Store* to_store, const string& to_key_name,
+    bool merge, BaseFunctionProfiler* profiler) {
+
+  auto read_all_result = from_store->read_all(from_key_name, false, profiler);
+  profiler->checkpoint("read_all_" + from_key_name);
+  if (!read_all_result.error.description.empty()) {
+    return read_all_result.error;
+  }
+  if (read_all_result.metadata.archive_args.empty()) {
+    return make_error("series does not exist");
+  }
+
+  // create the series in the remote store if it doesn't exist already. if merge
+  // is true, then proceed even if the series exists; if merge is false, fail if
+  // the series exists.
+  SeriesMetadataMap metadata_map({{to_key_name, read_all_result.metadata}});
+  auto update_metadata_ret = to_store->update_metadata(metadata_map, true,
+      UpdateMetadataBehavior::Ignore, true, false, profiler);
+  profiler->checkpoint("update_metadata_" + to_key_name);
+  try {
+    Error& error = update_metadata_ret.at(to_key_name);
+    if (!error.description.empty() && (!error.ignored || !merge)) {
+      return error;
+    }
+  } catch (const out_of_range&) {
+    return make_error("update_metadata returned no results");
+  }
+
+  // write all the data from the from series into the to series
+  SeriesMap write_map({{to_key_name, move(read_all_result.data)}});
+  auto write_ret = to_store->write(write_map, true, false, profiler);
+  profiler->checkpoint("write_" + to_key_name);
+  try {
+    Error& error = write_ret.at(to_key_name);
+    if (!error.description.empty()) {
+      return error;
+    }
+  } catch (const out_of_range&) {
+    return make_error("write returned no results");
+  }
+
+  // delete the original series
+  auto delete_ret = from_store->delete_series({from_key_name}, false,
+      profiler);
+  profiler->checkpoint("delete_series_" + from_key_name);
+  auto& res = delete_ret[from_key_name];
+  if (res.disk_series_deleted + res.buffer_series_deleted <= 0) {
+    return make_error("move successful, but delete failed");
+  }
+
+  return make_success();
+}
+
+
 
 Store::Stats::Stats() : start_time(now()), duration(0) { }
 

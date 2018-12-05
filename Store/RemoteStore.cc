@@ -120,7 +120,7 @@ unordered_map<string, DeleteResult> RemoteStore::delete_series(
 }
 
 unordered_map<string, Error> RemoteStore::rename_series(
-    const unordered_map<string, string>& renames, bool local_only,
+    const unordered_map<string, string>& renames, bool merge, bool local_only,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
   if (local_only) {
@@ -131,7 +131,7 @@ unordered_map<string, Error> RemoteStore::rename_series(
   try {
     auto c = this->get_client();
     profiler->checkpoint("get_client");
-    c->client->rename_series(ret, renames, true);
+    c->client->rename_series(ret, renames, merge, true);
     profiler->checkpoint("remote_call");
     this->return_client(move(c));
 

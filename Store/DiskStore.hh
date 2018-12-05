@@ -32,7 +32,7 @@ public:
       const std::vector<std::string>& patterns, bool local_only,
       BaseFunctionProfiler* profiler);
   virtual std::unordered_map<std::string, Error> rename_series(
-      const std::unordered_map<std::string, std::string>& renames,
+      const std::unordered_map<std::string, std::string>& renames, bool merge,
       bool local_only, BaseFunctionProfiler* profiler);
 
   virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(

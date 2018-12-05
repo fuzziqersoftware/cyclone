@@ -110,7 +110,7 @@ unordered_map<string, DeleteResult> ConsistentHashMultiStore::delete_series(
 }
 
 unordered_map<string, Error> ConsistentHashMultiStore::rename_series(
-    const unordered_map<string, string>& renames, bool local_only,
+    const unordered_map<string, string>& renames, bool merge, bool local_only,
     BaseFunctionProfiler* profiler) {
 
   // if a verify+repair is in progress or read_from_all is on, then renames
@@ -141,7 +141,7 @@ unordered_map<string, Error> ConsistentHashMultiStore::rename_series(
   for (const auto& it : renames_to_forward) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->rename_series(it.second,
-        local_only, profiler);
+        merge, local_only, profiler);
     this->combine_simple_results(ret, move(results));
     profiler->checkpoint(string_printf("forward_renames_store_%hhu", it.first));
   }
@@ -154,58 +154,9 @@ unordered_map<string, Error> ConsistentHashMultiStore::rename_series(
     auto& from_store = this->stores[this->ring->host_for_id(from_store_id).name];
     auto& to_store = this->stores[this->ring->host_for_id(to_store_id).name];
 
-    auto read_all_result = from_store->read_all(from_key_name, false, profiler);
-    profiler->checkpoint("read_all_" + it.first);
-    if (!read_all_result.error.description.empty()) {
-      ret.emplace(from_key_name, move(read_all_result.error));
-      continue;
-    }
-    if (read_all_result.metadata.archive_args.empty()) {
-      ret.emplace(from_key_name, make_error("series does not exist"));
-      continue;
-    }
-
-    // create the series in the remote store if it doesn't exist already
-    SeriesMetadataMap metadata_map({{to_key_name, read_all_result.metadata}});
-    auto update_metadata_ret = to_store->update_metadata(metadata_map, true,
-        UpdateMetadataBehavior::Ignore, true, false, profiler);
-    profiler->checkpoint("update_metadata_" + to_key_name);
-    try {
-      Error& error = update_metadata_ret.at(to_key_name);
-      if (!error.description.empty() || error.ignored) {
-        ret.emplace(from_key_name, move(error));
-        continue;
-      }
-    } catch (const out_of_range&) {
-      ret.emplace(from_key_name, make_error("update_metadata returned no results"));
-      continue;
-    }
-
-    // write all the data from the from series into the to series
-    SeriesMap write_map({{to_key_name, move(read_all_result.data)}});
-    auto write_ret = to_store->write(write_map, true, false, profiler);
-    profiler->checkpoint("write_" + to_key_name);
-    try {
-      Error& error = write_ret.at(to_key_name);
-      if (!error.description.empty()) {
-        ret.emplace(from_key_name, move(error));
-        continue;
-      }
-    } catch (const out_of_range&) {
-      ret.emplace(from_key_name, make_error("write returned no results"));
-      continue;
-    }
-
-    // delete the original series
-    auto delete_ret = from_store->delete_series({from_key_name}, false,
-        profiler);
-    profiler->checkpoint("delete_series_" + from_key_name);
-    auto& res = delete_ret[from_key_name];
-    if (res.disk_series_deleted + res.buffer_series_deleted > 0) {
-      ret.emplace(from_key_name, make_success());
-    } else {
-      ret.emplace(from_key_name, make_error("move successful, but delete failed"));
-    }
+    ret.emplace(from_key_name, this->emulate_rename_series(
+        from_store.get(), from_key_name, to_store.get(), to_key_name, merge,
+        profiler));
   }
 
   return ret;

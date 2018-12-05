@@ -316,9 +316,13 @@ Commands:\n\
     Delete entire series. All series matching any of the given patterns will be\n\
     deleted.\n\
 \n\
-  rename <series> <series> [<series> <series> ...]\n\
+  rename [+merge] <series> <series> [<series> <series> ...]\n\
     Rename one or more series. Note that renames are not atomic; concurrent\n\
     reads may see incomplete views of the series if write buffering is used.\n\
+    If +merge is given and the destination series exists, the data from the\n\
+    source series will be written to the destination series. The destination\n\
+    series' schema will not be changed. If +merge is not given and the\n\
+    destination series exists, no operation is performed.\n\
 \n\
   create <series> <archives> <x-files-factor> <agg-method> [+skip-existing]\n\
       [+truncate]\n\
@@ -545,19 +549,25 @@ void StreamServer::execute_shell_command(const char* line_data,
     }
 
   } else if (command_name == "rename") {
-    if (tokens.empty()) {
-      throw runtime_error("no series given");
+    bool merge = !tokens.empty() && (tokens[0] == "+merge");
+    if (merge) {
+      tokens.erase(tokens.begin());
     }
 
+    if (tokens.empty()) {
+      throw runtime_error("no series names given");
+    }
     if (tokens.size() & 1) {
       throw runtime_error("an even number of series names must be given");
     }
+
     unordered_map<string, string> renames;
     for (size_t x = 0; x < tokens.size(); x += 2) {
       renames.emplace(tokens[x], tokens[x + 1]);
     }
 
-    auto result = this->store->rename_series(renames, false, pg.profiler.get());
+    auto result = this->store->rename_series(renames, merge, false,
+        pg.profiler.get());
 
     for (const auto& it : result) {
       if (it.second.description.empty()) {

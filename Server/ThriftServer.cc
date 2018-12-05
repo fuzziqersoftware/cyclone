@@ -71,12 +71,12 @@ public:
   }
 
   void rename_series(unordered_map<string, Error>& _return,
-      const unordered_map<string, string>& renames, bool local_only) {
+      const unordered_map<string, string>& renames, bool merge, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
 
     auto pg = this->create_profiler(Store::string_for_rename_series(renames,
-        local_only));
-    _return = this->store->rename_series(renames, local_only, pg.profiler.get());
+        merge, local_only));
+    _return = this->store->rename_series(renames, merge, local_only, pg.profiler.get());
   }
 
   void read(
