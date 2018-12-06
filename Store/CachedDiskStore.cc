@@ -512,11 +512,10 @@ unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
             throw out_of_range("cannot delete root recursively");
           }
 
-          // unlock levels[-2]. note that levels[-1] is already not locked
-          t.guards.pop_back();
-
-          // re-lock levels[-2] for writing
+          // unlock levels[-2] and re-lock it for writing. note that levels[-1]
+          // is already not locked
           auto parent_level = t.levels[t.levels.size() - 2];
+          t.guards.pop_back();
           t.guards.emplace_back(parent_level->subdirectories_lock, true);
 
           // while holding the write lock, pull the directory out of the parent
@@ -869,32 +868,53 @@ void CachedDiskStore::find_all_recursive(FindResult& r,
     CachedDirectoryContents* level, const string& level_path,
     vector<KeyPath>& paths_to_check_and_delete,
     BaseFunctionProfiler* profiler) {
-  try {
-    this->populate_cache_level(level, this->filename_for_key(level_path, false));
-  } catch (const cannot_open_file& e) {
-    if (e.error == ENOENT) {
-      paths_to_check_and_delete.emplace_back(level_path, false);
-      return;
+  // note: we have to lock the level for writing when populating it, but then we
+  // have to unlock it to lock again for reading below. between these two locks,
+  // the level may become incomplete (e.g. in case of eviction) so we have to
+  // check again after getting the read locks. to keep the code simple, we'll
+  // just repopulate it if it's incomplete at any point.
+
+  bool directories_listed = false;
+  bool files_listed = false;
+  size_t try_count = 0;
+  for (try_count = 0; (try_count < 5) && (!directories_listed || !files_listed); try_count++) {
+    try {
+      this->populate_cache_level(level, this->filename_for_key(level_path, false));
+    } catch (const cannot_open_file& e) {
+      if (e.error == ENOENT) {
+        paths_to_check_and_delete.emplace_back(level_path, false);
+        return;
+      }
+      throw;
     }
-    throw;
+
+    if (!directories_listed) {
+      rw_guard g(level->subdirectories_lock, false);
+      if (level->list_complete) {
+        for (const auto& it : level->subdirectories) {
+          this->find_all_recursive(r, it.second.get(),
+              path_join(level_path, it.first), paths_to_check_and_delete, profiler);
+        }
+        directories_listed = true;
+        profiler->checkpoint("find_all_recursive_iterate_subdirs_" + level_path);
+      }
+    }
+
+    if (!files_listed) {
+      rw_guard g(level->files_lock, false);
+      if (level->list_complete) {
+        for (const auto& it : level->files) {
+          r.results.emplace_back(path_join(level_path, it.first));
+        }
+        files_listed = true;
+        profiler->checkpoint("find_all_recursive_iterate_files_" + level_path);
+      }
+    }
   }
 
-  {
-    rw_guard g(level->subdirectories_lock, false);
-    for (const auto& it : level->subdirectories) {
-      this->find_all_recursive(r, it.second.get(),
-          path_join(level_path, it.first), paths_to_check_and_delete, profiler);
-    }
+  if (!directories_listed || !files_listed) {
+    throw runtime_error("excessive lock contention while populating directory");
   }
-  profiler->checkpoint("find_all_recursive_iterate_subdirs_" + level_path);
-
-  {
-    rw_guard g(level->files_lock, false);
-    for (const auto& it : level->files) {
-      r.results.emplace_back(path_join(level_path, it.first));
-    }
-  }
-  profiler->checkpoint("find_all_recursive_iterate_files_" + level_path);
 }
 
 unordered_map<string, FindResult> CachedDiskStore::find(
