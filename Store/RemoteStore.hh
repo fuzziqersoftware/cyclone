@@ -53,7 +53,6 @@ public:
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
 
-  virtual int64_t delete_from_cache(const std::string& path, bool local_only);
   virtual int64_t delete_pending_writes(const std::string& pattern, bool local_only);
 
   virtual std::string str() const;
@@ -88,7 +87,6 @@ private:
     std::atomic<size_t> find_commands;
     std::atomic<size_t> restore_series_commands;
     std::atomic<size_t> serialize_series_commands;
-    std::atomic<size_t> delete_from_cache_commands;
     std::atomic<size_t> delete_pending_writes_commands;
 
     Stats();

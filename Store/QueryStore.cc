@@ -123,10 +123,6 @@ unordered_map<string, int64_t> QueryStore::get_stats(bool rotate) {
   return this->store->get_stats();
 }
 
-int64_t QueryStore::delete_from_cache(const std::string& path, bool local_only) {
-  return this->store->delete_from_cache(path, local_only);
-}
-
 int64_t QueryStore::delete_pending_writes(const std::string& pattern, bool local_only) {
   return this->store->delete_pending_writes(pattern, local_only);
 }

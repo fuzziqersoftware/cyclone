@@ -25,10 +25,6 @@ unordered_map<string, int64_t> Store::get_stats(bool rotate) {
   return unordered_map<string, int64_t>();
 }
 
-int64_t Store::delete_from_cache(const std::string& paths, bool local_only) {
-  return 0;
-}
-
 int64_t Store::delete_pending_writes(const std::string& paths, bool local_only) {
   return 0;
 }

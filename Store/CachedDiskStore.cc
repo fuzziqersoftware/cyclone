@@ -215,8 +215,24 @@ void CachedDiskStore::set_file_limit(size_t new_value) {
 }
 
 void CachedDiskStore::set_directory(const string& new_value) {
-  DiskStore::set_directory(new_value);
-  this->delete_from_cache("", true);
+  // delete the entire cache, and change the root directory while holding the
+  // write lock so other threads don't see inconsistency
+  CachedDirectoryContents old_root(NULL);
+  {
+    rw_guard subdirectories_g(this->cache_root.subdirectories_lock, true);
+    rw_guard files_g(this->cache_root.files_lock, true);
+    this->cache_root.subdirectories.swap(old_root.subdirectories);
+    this->cache_root.files.swap(old_root.files);
+    this->cache_root.files_lru.swap(old_root.files_lru);
+    this->cache_root.list_complete = false;
+    this->cache_root.version = this->cache_root.next_version();
+    this->cache_root.min_subtree_version = this->cache_root.version.load();
+
+    this->directory_count = 0;
+    this->file_count = 0;
+
+    DiskStore::set_directory(new_value);
+  }
 }
 
 bool CachedDiskStore::create_cache_directory_locked(CachedDirectoryContents* level,
@@ -648,6 +664,9 @@ unordered_map<string, Error> CachedDiskStore::rename_series(
   for (auto rename_it : renames) {
     const string& from_key_name = rename_it.first;
     const string& to_key_name = rename_it.second;
+
+    // TODO: we should return some error if the series doesn't exist. but really
+    // you just shouldn't try to rename a series to itself
     if (from_key_name == to_key_name) {
       ret.emplace(from_key_name, make_success());
       continue;
@@ -1174,102 +1193,6 @@ unordered_map<string, int64_t> CachedDiskStore::get_stats(bool rotate) {
   ret.emplace("cache_file_limit", this->file_limit.load());
   ret.emplace("open_file_cache_size", WhisperArchive::get_files_lru_size());
   return ret;
-}
-
-int64_t CachedDiskStore::delete_from_cache(const string& path, bool local_only) {
-  // if the path is empty, delete the ENTIRE cache
-  if (path.empty() || (path == "**")) {
-
-    CachedDirectoryContents old_root(NULL);
-    {
-      rw_guard subdirectories_g(this->cache_root.subdirectories_lock, true);
-      rw_guard files_g(this->cache_root.files_lock, true);
-      this->cache_root.subdirectories.swap(old_root.subdirectories);
-      this->cache_root.files.swap(old_root.files);
-      this->cache_root.files_lru.swap(old_root.files_lru);
-      this->cache_root.list_complete = false;
-      this->cache_root.version = this->cache_root.next_version();
-      this->cache_root.min_subtree_version = this->cache_root.version.load();
-
-      this->directory_count = 0;
-      this->file_count = 0;
-    }
-
-    auto counts = old_root.get_counts();
-    return counts.first + counts.second;
-  }
-
-  // path isn't empty - we're deleting only part of the cache
-  KeyPath p(path);
-  vector<rw_guard> guards;
-  CachedDirectoryContents* level = &this->cache_root;
-
-  // move to the directory containing the key we want to delete
-  for (const auto& item : p.directories) {
-    try {
-      rw_guard g(level->subdirectories_lock, false);
-      level = level->subdirectories.at(item).get();
-      guards.emplace_back(move(g));
-    } catch (const out_of_range& e) {
-      return 0; // path already doesn't exist in the cache
-    }
-  }
-
-  // now, the basename can be a subdirectory or a file, or even both
-  int64_t items_deleted = 0;
-
-  // check if a subdirectory exists with the given name and delete it if so
-  bool exists;
-  {
-    rw_guard g(level->subdirectories_lock, false);
-    exists = level->subdirectories.count(p.basename);
-  }
-  if (exists) {
-    CachedDirectoryContents* new_level = new CachedDirectoryContents(level);
-    unique_ptr<CachedDirectoryContents> old_level(new_level);
-    {
-      rw_guard g(level->subdirectories_lock, true);
-      auto it = level->subdirectories.find(p.basename);
-      if (it != level->subdirectories.end()) {
-        // we don't need to lock it->second because we already hold a write lock
-        // for its parent directory - no other thread can access it right now
-        it->second.swap(old_level);
-
-        level->subdirectories.erase(it);
-        level->list_complete = false;
-      }
-    }
-
-    // if a cache directory was moved out, track the counts and update versions
-    if (old_level.get() != new_level) {
-      auto counts = old_level->get_counts();
-      this->directory_count -= counts.first;
-      this->file_count -= counts.second;
-      items_deleted += (counts.first + counts.second);
-
-      rw_guard g(level->subdirectories_lock, false);
-      level->recompute_versions_locked();
-    }
-  }
-
-  // check if a file exists with the given name and delete it if so
-  {
-    rw_guard g(level->files_lock, false);
-    exists = level->files.count(p.basename);
-  }
-  if (exists) {
-    // not worth swapping the WhisperArchive out; just delete it inline
-    rw_guard g(level->files_lock, true);
-    bool deleted = level->files.erase(p.basename);
-    if (deleted) {
-      level->files_lru.erase(p.basename);
-      level->list_complete = false;
-      this->file_count--;
-      items_deleted++;
-    }
-  }
-
-  return items_deleted;
 }
 
 string CachedDiskStore::str() const {

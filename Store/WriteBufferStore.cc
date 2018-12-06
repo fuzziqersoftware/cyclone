@@ -694,11 +694,6 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
   return ret;
 }
 
-int64_t WriteBufferStore::delete_from_cache(const string& path,
-    bool local_only) {
-  return this->store->delete_from_cache(path, local_only);
-}
-
 int64_t WriteBufferStore::delete_pending_writes(const string& pattern,
     bool local_only) {
 

@@ -124,11 +124,6 @@ public:
     _return = gather_stats(this->store, *this->all_servers);
   }
 
-  int64_t delete_from_cache(const std::string& path, bool local_only) {
-    BusyThreadGuard g(this->idle_thread_count);
-    return this->store->delete_from_cache(path, local_only);
-  }
-
   int64_t delete_pending_writes(const std::string& pattern, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
     return this->store->delete_pending_writes(pattern, local_only);

@@ -856,7 +856,6 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
       printf("-- [%s:rename_test:%zu] rename series (merge)\n", store_name.c_str(), x);
       auto ret = s->rename_series({{rename_key_name, autocreate_key_name2}}, true, false, profiler.get());
       expect_eq(1, ret.size());
-      fprintf(stderr, ">>> %s\n", ret.at(rename_key_name).description.c_str());
       expect(ret.at(rename_key_name).description.empty());
       expect(!ret.at(rename_key_name).ignored);
     }

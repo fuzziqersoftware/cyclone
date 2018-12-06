@@ -285,24 +285,6 @@ unordered_map<string, int64_t> RemoteStore::get_stats(bool rotate) {
   return ret;
 }
 
-int64_t RemoteStore::delete_from_cache(const std::string& path, bool local_only) {
-  if (local_only) {
-    return 0;
-  }
-
-  int64_t ret;
-  try {
-    auto c = this->get_client();
-    ret = c->client->delete_from_cache(path, true);
-    this->return_client(move(c));
-  } catch (const exception& e) {
-    this->stats[0].server_disconnects++;
-    ret = 0;
-  }
-  this->stats[0].delete_from_cache_commands++;
-  return ret;
-}
-
 int64_t RemoteStore::delete_pending_writes(const std::string& pattern, bool local_only) {
   if (local_only) {
     return 0;
@@ -392,7 +374,6 @@ RemoteStore::Stats::Stats() : Store::Stats::Stats(),
     find_commands(0),
     restore_series_commands(0),
     serialize_series_commands(0),
-    delete_from_cache_commands(0),
     delete_pending_writes_commands(0) { }
 
 
@@ -411,7 +392,6 @@ RemoteStore::Stats& RemoteStore::Stats::operator=(const Stats& other) {
   this->find_commands = other.find_commands.load();
   this->restore_series_commands = other.restore_series_commands.load();
   this->serialize_series_commands = other.serialize_series_commands.load();
-  this->delete_from_cache_commands = other.delete_from_cache_commands.load();
   this->delete_pending_writes_commands = other.delete_pending_writes_commands.load();
   return *this;
 }
@@ -430,7 +410,6 @@ unordered_map<string, int64_t> RemoteStore::Stats::to_map() const {
   ret.emplace("remote_find_commands", this->find_commands.load());
   ret.emplace("remote_restore_series_commands", this->restore_series_commands.load());
   ret.emplace("remote_serialize_series_commands", this->serialize_series_commands.load());
-  ret.emplace("remote_delete_from_cache_commands", this->delete_from_cache_commands.load());
   ret.emplace("remote_delete_pending_writes_commands", this->delete_pending_writes_commands.load());
   return ret;
 }

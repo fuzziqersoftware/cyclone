@@ -137,10 +137,6 @@ service Cyclone {
 
   // debugging / internal commands
 
-  // if the server has a cache store, deletes the given path from the cache. if
-  // the path is blank or "*", deletes everything in the cache.
-  i64 delete_from_cache(1: string path, 2: bool local_only = false);
-
   // if the server has a write buffer store, deletes everything matching the
   // given pattern from the write buffer. if the pattern is blank, deletes
   // everything in the write buffer.

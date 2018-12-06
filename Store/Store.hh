@@ -57,7 +57,6 @@ public:
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
 
-  virtual int64_t delete_from_cache(const std::string& paths, bool local_only);
   virtual int64_t delete_pending_writes(const std::string& paths, bool local_only);
 
 
