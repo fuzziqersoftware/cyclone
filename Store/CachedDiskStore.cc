@@ -401,55 +401,57 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
       // now the file exists or is missing from both the cache and filesystem.
       // if it exists, we'll apply the update behavior; if it doesn't, then
       // we'll create it if requested.
-      if (file_exists) {
-        rw_guard g(t.level->files_lock, false);
-        try {
-          WhisperArchive& d = t.level->files.at(p.basename);
-          {
-            lock_guard<mutex> g2(t.level->files_lru_lock);
-            t.level->files_lru.touch(p.basename);
-          }
-
-          if (update_behavior == UpdateMetadataBehavior::Recreate) {
-            d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method, true);
-            ret.emplace(key_name, make_success());
-            this->stats[0].series_truncates++;
-
-          } else if (update_behavior == UpdateMetadataBehavior::Update) {
-            d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method);
-            ret.emplace(key_name, make_success());
-            this->stats[0].series_update_metadatas++;
-
-          } else if (update_behavior == UpdateMetadataBehavior::Ignore) {
-            ret.emplace(key_name, make_ignored());
-          }
-
-        } catch (const exception& e) {
-          ret.emplace(key_name, make_error(e.what()));
-          continue; // data race - the cache entry was deleted. just skip it
-        }
-
-      } else {
-        if (create_new) {
-          // note: we don't take the LRU lock because we're already holding the
-          // write lock for the files map - nobody else can touch the files LRU
-          // anyway
-          rw_guard g(t.level->files_lock, true);
-          t.level->files.erase(p.basename);
-          t.level->files.emplace(piecewise_construct,
-              forward_as_tuple(p.basename),
-              forward_as_tuple(move(t.filesystem_path), metadata.archive_args,
-                  metadata.x_files_factor, metadata.agg_method));
+      if (!file_exists && create_new) {
+        rw_guard g(t.level->files_lock, true);
+        auto emplace_ret = t.level->files.emplace(piecewise_construct,
+            forward_as_tuple(p.basename),
+            forward_as_tuple(move(t.filesystem_path), metadata.archive_args,
+                metadata.x_files_factor, metadata.agg_method));
+        if (emplace_ret.second) {
+          // note: we don't need the lru lock here because we're holding the
+          // files lock for writing
           t.level->files_lru.insert(p.basename, 0);
-          ret.emplace(key_name, make_success());
 
+          this->file_count++;
           auto& s = this->stats[0];
           s.series_creates++;
           s.file_creates++;
 
-        } else {
+          ret.emplace(key_name, make_success());
+          continue;
+        }
+
+        // if it wasn't created in the cache, then a data race occurred;
+        // another thread created this key before now but after we checked the
+        // filesystem above. we'll execute the update_metadata as if it
+        // existed before this call
+      }
+
+      rw_guard g(t.level->files_lock, false);
+      try {
+        WhisperArchive& d = t.level->files.at(p.basename);
+        {
+          lock_guard<mutex> g2(t.level->files_lru_lock);
+          t.level->files_lru.touch(p.basename);
+        }
+
+        if (update_behavior == UpdateMetadataBehavior::Recreate) {
+          d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method, true);
+          ret.emplace(key_name, make_success());
+          this->stats[0].series_truncates++;
+
+        } else if (update_behavior == UpdateMetadataBehavior::Update) {
+          d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method);
+          ret.emplace(key_name, make_success());
+          this->stats[0].series_update_metadatas++;
+
+        } else if (update_behavior == UpdateMetadataBehavior::Ignore) {
           ret.emplace(key_name, make_ignored());
         }
+
+      } catch (const exception& e) {
+        ret.emplace(key_name, make_error(e.what()));
+        continue; // data race - the cache entry was deleted. just skip it
       }
 
     } catch (const out_of_range& e) {
