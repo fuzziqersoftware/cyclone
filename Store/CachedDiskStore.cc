@@ -667,7 +667,9 @@ unordered_map<string, Error> CachedDiskStore::rename_series(
         // if the destination key exists, fail
         {
           rw_guard g(t.level->files_lock, false);
-          if (t.level->files.count(to_path.basename)) {
+          // we only need to check the filesystem if list_complete is false
+          if (t.level->files.count(to_path.basename) ||
+              (!t.level->list_complete && isfile(to_filename))) {
             ret.emplace(from_key_name, make_ignored());
             continue;
           }
