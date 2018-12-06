@@ -113,7 +113,7 @@ void CachedDiskStore::CachedDirectoryContents::recompute_versions_locked() {
   // because this directory is read-locked, all the parents must be read-locked
   // as well, so we don't need to use any guards here
   for (CachedDirectoryContents* level = this; level != NULL; level = level->parent_level) {
-    uint64_t new_subtree_version = this->version;
+    uint64_t new_subtree_version = level->version;
 
     // if this directory doesn't have subdirectories, then its min subtree
     // version is the same as its own version. if it does, then its min subtree
@@ -127,7 +127,7 @@ void CachedDiskStore::CachedDirectoryContents::recompute_versions_locked() {
     // since the root's LRU would be extremely hot. this linear-time
     // implementation has the advantage of being correect and not using any
     // write locks at all.
-    for (const auto& it : this->subdirectories) {
+    for (const auto& it : level->subdirectories) {
       if (it.second->min_subtree_version < new_subtree_version) {
         new_subtree_version = it.second->min_subtree_version;
       }
@@ -135,7 +135,7 @@ void CachedDiskStore::CachedDirectoryContents::recompute_versions_locked() {
 
     // if the existing subtree version was already the value we calculated, then
     // we don't need to continue - nothing will change in the parent directory
-    uint64_t old_subtree_version = this->min_subtree_version.exchange(new_subtree_version);
+    uint64_t old_subtree_version = level->min_subtree_version.exchange(new_subtree_version);
     if (new_subtree_version == old_subtree_version) {
       return;
     }
@@ -1520,7 +1520,7 @@ bool CachedDiskStore::evict_items() {
 
     // see comment in recompute_versions_locked about this being (in)efficient
     auto min_version_it = level->subdirectories.begin();
-    for (auto it = level->subdirectories.begin(); it != level->subdirectories.end(); it++) {
+    for (auto it = min_version_it; it != level->subdirectories.end(); it++) {
       if (it->second->min_subtree_version < min_version_it->second->min_subtree_version) {
         min_version_it = it;
       }
