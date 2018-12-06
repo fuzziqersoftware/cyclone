@@ -327,6 +327,7 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
         if ((dir_it != parent_level->subdirectories.end()) && !isdir(filename)) {
           deleted_level = move(dir_it->second);
           parent_level->subdirectories.erase(dir_it);
+          deleted_level->parent_level = NULL;
         }
       }
 
@@ -523,6 +524,7 @@ unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
           if (it != parent_level->subdirectories.end()) {
             deleted_level = move(it->second);
             parent_level->subdirectories.erase(it);
+            deleted_level->parent_level = NULL;
           }
 
           // also rename the directory to something unique, so we can recursively
@@ -911,6 +913,8 @@ unordered_map<string, FindResult> CachedDiskStore::find(
       KeyPath p(pattern);
       profiler->checkpoint("start_pattern_" + pattern);
 
+      unordered_set<CachedDirectoryContents*> previous_levels;
+
       // note: these need to be maps, not unordered_maps. if we use
       // unordered_maps, we could get deadlock below when threads try to lock
       // directories for writes while other threads have them locked for reads
@@ -961,6 +965,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
             // subtree
             if (keep_lock) {
               guards.emplace_back(move(g));
+              previous_levels.emplace(level);
             }
             profiler->checkpoint("resolve_token_" + item);
 
@@ -973,6 +978,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
 
               level->touch_subdirectory_locked(item, next_level);
               guards.emplace_back(move(g));
+              previous_levels.emplace(level);
 
               string next_level_path = path_join(current_level_path, item);
               next_levels.emplace(next_level, next_level_path);
@@ -995,8 +1001,10 @@ unordered_map<string, FindResult> CachedDiskStore::find(
                 // and this line - if so, just pretend it doesn't exist (since it
                 // was deleted anyway)
                 try {
-                  guards.emplace_back(level->subdirectories_lock, false);
+                  rw_guard g(level->subdirectories_lock, false);
                   next_levels.emplace(level->subdirectories.at(item).get(), new_level_path);
+                  guards.emplace_back(move(g));
+                  previous_levels.emplace(level);
                 } catch (const out_of_range& e) { }
                 profiler->checkpoint("resolve_token_miss_from_disk_" + item);
               } else {
@@ -1607,6 +1615,7 @@ bool CachedDiskStore::evict_items() {
         if (dir_it != level->subdirectories.end()) {
           deleted_level = move(dir_it->second);
           level->subdirectories.erase(dir_it);
+          deleted_level->parent_level = NULL;
           level->list_complete = false;
         }
       }
