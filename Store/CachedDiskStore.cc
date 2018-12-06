@@ -161,26 +161,26 @@ pair<size_t, size_t> CachedDiskStore::CachedDirectoryContents::get_counts() cons
 
 string CachedDiskStore::CachedDirectoryContents::str() const {
   // returns something like "[dir1=[...], dir2=[...], file3, file4]"
+
+  // note: we could separate these locks, but we keep them together so we'll get
+  // a consistent snapshot of the directory state
+  rw_guard g1(this->subdirectories_lock, false);
+  rw_guard g2(this->files_lock, false);
+
   string ret = "[";
-  {
-    rw_guard g(this->subdirectories_lock, false);
-    for (const auto& it : this->subdirectories) {
-      if (ret.size() > 1) {
-        ret += ", ";
-      }
-      ret += it.first;
-      ret += '=';
-      ret += it.second->str();
+  for (const auto& it : this->subdirectories) {
+    if (ret.size() > 1) {
+      ret += ", ";
     }
+    ret += it.first;
+    ret += '=';
+    ret += it.second->str();
   }
-  {
-    rw_guard g(this->files_lock, false);
-    for (const auto& it : this->files) {
-      if (ret.size() > 1) {
-        ret += ", ";
-      }
-      ret += it.first;
+  for (const auto& it : this->files) {
+    if (ret.size() > 1) {
+      ret += ", ";
     }
+    ret += it.first;
   }
   ret += ']';
   return ret;
@@ -275,6 +275,7 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
       if (!isfile(filename)) {
         if (levels.back()->files.erase(p.basename)) {
           this->stats[0].file_deletes++;
+          this->file_count--;
         }
         levels.back()->files_lru.erase(p.basename);
       }
@@ -534,6 +535,12 @@ unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
           // the locks are all released here. we can now delete the cache
           // directory and directory on disk at our leisure
         }
+
+        // track the cache deletion, then do the actual disk deletes
+        auto deleted_counts = deleted_level->get_counts();
+        this->stats[0].report_directory_delete(deleted_counts.first, deleted_counts.second);
+        this->directory_count -= deleted_counts.first;
+        this->file_count -= deleted_counts.second;
 
         size_t files_deleted = 0;
         if (!path_to_delete.empty()) {
@@ -1555,11 +1562,13 @@ bool CachedDiskStore::evict_items() {
       if (target_size <= 0) {
         level->files.swap(deleted_files);
         level->files_lru.swap(deleted_files_lru);
+        this->file_count -= deleted_files.size();
         delete_current_directory = true;
       } else {
         while (level->files.size() > static_cast<size_t>(target_size)) {
           string filename = level->files_lru.evict_object().first;
           level->files.erase(filename);
+          this->file_count--;
         }
       }
       level->list_complete = false;
