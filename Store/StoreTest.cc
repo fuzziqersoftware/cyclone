@@ -951,13 +951,13 @@ int main(int argc, char* argv[]) {
     }
 
     {
-      shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 100, 100));
+      shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 1, 1));
       cached_disk_store->set_autocreate_rules(autocreate_rules);
       reset_and_run_all_tests(cached_disk_store, "CachedDiskStore", data_directory);
     }
 
     {
-      shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 100, 100));
+      shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 1, 1));
       shared_ptr<Store> buffer_on_cached_disk_store(new WriteBufferStore(cached_disk_store, 0, 0, 0, 0, 0, false));
       buffer_on_cached_disk_store->set_autocreate_rules(autocreate_rules);
       reset_and_run_all_tests(buffer_on_cached_disk_store, "WriteBufferStore(CachedDiskStore)", data_directory, true);
