@@ -49,12 +49,13 @@ unordered_map<string, Error> MultiStore::update_metadata(
 }
 
 unordered_map<string, DeleteResult> MultiStore::delete_series(
-    const vector<string>& patterns, bool local_only,
+    const vector<string>& patterns, bool deferred, bool local_only,
     BaseFunctionProfiler* profiler) {
 
   unordered_map<string, DeleteResult> ret;
   for (const auto& it : this->stores) {
-    auto results = it.second->delete_series(patterns, local_only, profiler);
+    auto results = it.second->delete_series(patterns, deferred, local_only,
+        profiler);
     this->combine_delete_results(ret, move(results));
   }
   return ret;

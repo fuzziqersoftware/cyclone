@@ -202,6 +202,14 @@
   // series that don't exist but will be autocreated won't be visible until the
   // write actually occurs. This can be useful if writes are heavily
   // rate-limited since the write queue could be long, which makes merging slow.
+  // If enable_deferred_deletes is false, deferred deletes will pass through the
+  // write buffer as if they were non-deferred (that is, the call will not
+  // return until the call to the substore returns). This is generally useful
+  // when a write buffer store wraps a remote store, so the client can know that
+  // the delete was successfully enqueued on all nodes. If
+  // enable_deferred_deletes is disabled while the server is running and there
+  // are pending deferred deletes, the pending deletes will still be executed,
+  // but new delete requests will not be enqueued.
   // {
   //   "store_type": "write_buffer",
   //   "num_write_threads": 4,
@@ -209,7 +217,8 @@
   //   "max_update_metadatas_per_second": 0, // 0 means no rate limit
   //   "max_write_batches_per_second": 0, // 0 means no rate limit
   //   "disable_rate_limit_for_queue_length": 1000000,
-  //   "merge_find_patterns": true,
+  //   "merge_find_patterns": true, // optional; default is true
+  //   "enable_deferred_deletes": true, // optional; default is true
   //   "substore": {...}, // config for the wrapped store
   // }
   //

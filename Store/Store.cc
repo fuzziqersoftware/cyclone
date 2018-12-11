@@ -96,9 +96,10 @@ string Store::string_for_update_metadata(const SeriesMetadataMap& metadata,
 }
 
 string Store::string_for_delete_series(const vector<string>& patterns,
-    bool local_only) {
+    bool deferred, bool local_only) {
   string series_list = comma_list_limit(patterns, 10);
-  return string_printf("delete_series(%s, local_only=%s)", series_list.c_str(),
+  return string_printf("delete_series(%s, deferred=%s, local_only=%s)",
+      series_list.c_str(), string_for_bool(deferred),
       string_for_bool(local_only));
 }
 
@@ -379,7 +380,7 @@ Error Store::emulate_rename_series(Store* from_store,
   }
 
   // delete the original series
-  auto delete_ret = from_store->delete_series({from_key_name}, false,
+  auto delete_ret = from_store->delete_series({from_key_name}, false, false,
       profiler);
   profiler->checkpoint("delete_series_" + from_key_name);
   auto& res = delete_ret[from_key_name];

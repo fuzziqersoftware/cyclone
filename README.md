@@ -78,7 +78,7 @@ Patterns may be given here; all series that match the pattern will be deleted. E
 
 If you use patterns in delete commands, Cyclone will have to scan part of the write buffer to execute these commands. If the write buffer is long and you use a wildcard or other pattern token near the root level, this could take a while, and will block other queries.
 
-This command does not return until the changes are committed to disk, even if write buffering is used.
+If deferred deletion is requested and enabled on the server side, pending writes will be deleted immediately, but the command will then return and the deletions will be committed to disk in the background by a separate thread. If deferred deletion is not requested, this command does not return until the changes are committed to disk, even if write buffering is used.
 
 #### rename_series
 

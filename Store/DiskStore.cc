@@ -147,7 +147,7 @@ unordered_map<string, Error> DiskStore::update_metadata(
 }
 
 unordered_map<string, DeleteResult> DiskStore::delete_series(
-    const vector<string>& patterns, bool local_only,
+    const vector<string>& patterns, bool deferred, bool local_only,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, DeleteResult> ret;
 

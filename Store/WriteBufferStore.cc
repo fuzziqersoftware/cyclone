@@ -25,16 +25,18 @@ using namespace std;
 WriteBufferStore::WriteBufferStore(shared_ptr<Store> store,
     size_t num_write_threads, size_t batch_size,
     size_t max_update_metadatas_per_second, size_t max_write_batches_per_second,
-    ssize_t disable_rate_limit_for_queue_length, bool merge_find_patterns) :
-    Store(), store(store),
+    ssize_t disable_rate_limit_for_queue_length, bool merge_find_patterns,
+    bool enable_deferred_deletes) : Store(), store(store),
     max_update_metadatas_per_second(max_update_metadatas_per_second),
     max_write_batches_per_second(max_write_batches_per_second),
     disable_rate_limit_for_queue_length(disable_rate_limit_for_queue_length),
-    merge_find_patterns(merge_find_patterns), queued_update_metadatas(0),
-    queued_writes(0), queued_datapoints(0),
+    merge_find_patterns(merge_find_patterns),
+    enable_deferred_deletes(enable_deferred_deletes), should_exit(false),
+    queued_update_metadatas(0), queued_writes(0), queued_datapoints(0),
     update_metadata_rate_limiter(this->max_update_metadatas_per_second),
     write_batch_rate_limiter(this->max_write_batches_per_second),
-    batch_size(batch_size), should_exit(false) {
+    batch_size(batch_size),
+    delete_thread(&WriteBufferStore::delete_thread_routine, this) {
   while (this->write_threads.size() < num_write_threads) {
     this->write_threads.emplace_back(new WriteThread());
   }
@@ -49,6 +51,7 @@ WriteBufferStore::~WriteBufferStore() {
   for (auto& wt : this->write_threads) {
     wt->t.join();
   }
+  this->delete_thread.join();
 }
 
 size_t WriteBufferStore::get_batch_size() const {
@@ -89,6 +92,14 @@ bool WriteBufferStore::get_merge_find_patterns() const {
 
 void WriteBufferStore::set_merge_find_patterns(bool new_value) {
   this->merge_find_patterns = new_value;
+}
+
+bool WriteBufferStore::get_enable_deferred_deletes() const {
+  return this->enable_deferred_deletes;
+}
+
+void WriteBufferStore::set_enable_deferred_deletes(bool new_value) {
+  this->enable_deferred_deletes = new_value;
 }
 
 
@@ -167,7 +178,7 @@ unordered_map<string, Error> WriteBufferStore::update_metadata(
 }
 
 unordered_map<string, DeleteResult> WriteBufferStore::delete_series(
-    const vector<string>& patterns, bool local_only,
+    const vector<string>& patterns, bool deferred, bool local_only,
     BaseFunctionProfiler* profiler) {
   profiler->add_metadata("pattern_count",
       string_printf("%zu", patterns.size()));
@@ -220,9 +231,22 @@ unordered_map<string, DeleteResult> WriteBufferStore::delete_series(
       string_printf("%zu", num_deleted_from_queue));
   profiler->checkpoint("write_buffer_delete");
 
-  // issue the delete to the underlying store
-  auto store_ret = this->store->delete_series(patterns, local_only, profiler);
-  this->combine_delete_results(ret, move(store_ret));
+  // if the deletes are deferred, just stick them in the queue and return
+  if (deferred && this->enable_deferred_deletes) {
+    {
+      rw_guard g(this->delete_queue_lock, true);
+      for (const string& pattern : patterns) {
+        this->delete_queue.emplace_back(pattern);
+      }
+    }
+    profiler->checkpoint("enqueue_delete");
+
+  } else {
+    // issue the delete to the underlying store
+    auto store_ret = this->store->delete_series(patterns, deferred, local_only,
+        profiler);
+    this->combine_delete_results(ret, move(store_ret));
+  }
 
   // count the items that are about to be deleted
   size_t num_update_metadatas_deleted = 0;
@@ -691,6 +715,11 @@ unordered_map<string, int64_t> WriteBufferStore::get_stats(bool rotate) {
   ret.emplace("max_write_batches_per_second", this->max_write_batches_per_second);
   ret.emplace("disable_rate_limit_for_queue_length", this->disable_rate_limit_for_queue_length);
   ret.emplace("merge_find_patterns", this->merge_find_patterns);
+  ret.emplace("enable_deferred_deletes", this->enable_deferred_deletes);
+  {
+    rw_guard g(this->delete_queue_lock, false);
+    ret.emplace("delete_queue_length", this->delete_queue.size());
+  }
   return ret;
 }
 
@@ -1025,5 +1054,32 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
     if (!commands_were_fetched) {
       sleep(1);
     }
+  }
+}
+
+void WriteBufferStore::delete_thread_routine() {
+  string thread_name = string_printf("WriteBufferStore::delete_thread_routine (thread_id=%zu)",
+      this_thread::get_id());
+
+  while (!this->should_exit) {
+    string query;
+    {
+      rw_guard g(this->delete_queue_lock, true);
+      if (!this->delete_queue.empty()) {
+        query = move(this->delete_queue.front());
+        this->delete_queue.pop_front();
+      }
+    }
+
+    if (query.empty()) {
+      usleep(1000000);
+      continue;
+    }
+
+    vector<string> series({query});
+
+    ProfilerGuard pg(create_internal_profiler(thread_name,
+        string_for_delete_series(series, false, false)));
+    this->delete_series(series, false, false, pg.profiler.get());
   }
 }

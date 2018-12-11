@@ -41,9 +41,9 @@ unordered_map<string, Error> QueryStore::update_metadata(
 }
 
 unordered_map<string, DeleteResult> QueryStore::delete_series(
-    const vector<string>& patterns, bool local_only,
+    const vector<string>& patterns, bool deferred, bool local_only,
     BaseFunctionProfiler* profiler) {
-  return this->store->delete_series(patterns, local_only, profiler);
+  return this->store->delete_series(patterns, deferred, local_only, profiler);
 }
 
 unordered_map<string, Error> QueryStore::rename_series(

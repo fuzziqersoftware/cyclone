@@ -201,13 +201,20 @@ struct Options {
       size_t max_update_metadatas_per_second = (*store_config)["max_update_metadatas_per_second"]->as_int();
       size_t max_write_batches_per_second = (*store_config)["max_write_batches_per_second"]->as_int();
       size_t disable_rate_limit_for_queue_length = (*store_config)["disable_rate_limit_for_queue_length"]->as_int();
-      bool merge_find_patterns = (*store_config)["merge_find_patterns"]->as_bool();
+      bool merge_find_patterns = true;
+      try {
+        merge_find_patterns = (*store_config)["merge_find_patterns"]->as_bool();
+      } catch (const JSONObject::key_error&) { }
+      bool enable_deferred_deletes = true;
+      try {
+        enable_deferred_deletes = (*store_config)["enable_deferred_deletes"]->as_bool();
+      } catch (const JSONObject::key_error&) { }
       auto parse_ret = this->parse_store_config((*store_config)["substore"]);
       return make_pair(
           shared_ptr<Store>(new WriteBufferStore(parse_ret.first,
             num_write_threads, batch_size, max_update_metadatas_per_second,
             max_write_batches_per_second, disable_rate_limit_for_queue_length,
-            merge_find_patterns)),
+            merge_find_patterns, enable_deferred_deletes)),
           parse_ret.second);
     }
 
@@ -351,6 +358,16 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
               prefix.c_str(), wb->get_merge_find_patterns() ? "true" : "false",
               new_value ? "true" : "false");
           wb->set_merge_find_patterns(new_value);
+        }
+      }
+
+      {
+        bool new_value = (*new_store_config)["enable_deferred_deletes"]->as_bool();
+        if (new_value != wb->get_enable_deferred_deletes()) {
+          log(INFO, "%s.write_buffer.enable_deferred_deletes changed from %s to %s",
+              prefix.c_str(), wb->get_enable_deferred_deletes() ? "true" : "false",
+              new_value ? "true" : "false");
+          wb->set_enable_deferred_deletes(new_value);
         }
       }
 

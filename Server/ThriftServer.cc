@@ -62,12 +62,13 @@ public:
   }
 
   void delete_series(unordered_map<string, DeleteResult>& _return,
-      const vector<string>& key_names, bool local_only) {
+      const vector<string>& key_names, bool deferred, bool local_only) {
     BusyThreadGuard g(this->idle_thread_count);
 
     auto pg = this->create_profiler(Store::string_for_delete_series(
-        key_names, local_only));
-    _return = this->store->delete_series(key_names, local_only, pg.profiler.get());
+        key_names, deferred, local_only));
+    _return = this->store->delete_series(key_names, deferred, local_only,
+        pg.profiler.get());
   }
 
   void rename_series(unordered_map<string, Error>& _return,

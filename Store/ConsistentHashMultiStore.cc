@@ -71,7 +71,7 @@ unordered_map<string, Error> ConsistentHashMultiStore::update_metadata(
 }
 
 unordered_map<string, DeleteResult> ConsistentHashMultiStore::delete_series(
-    const vector<string>& patterns, bool local_only,
+    const vector<string>& patterns, bool deferred, bool local_only,
     BaseFunctionProfiler* profiler) {
 
   // if a verify is in progress, we need to forward all deletes everywhere
@@ -79,7 +79,8 @@ unordered_map<string, DeleteResult> ConsistentHashMultiStore::delete_series(
   // class' method to do this
   if (this->read_from_all || (this->verify_progress.in_progress() && this->verify_progress.repair)) {
     profiler->add_metadata("read_from_all", "true");
-    return this->MultiStore::delete_series(patterns, local_only, profiler);
+    return this->MultiStore::delete_series(patterns, deferred, local_only,
+        profiler);
   }
 
   size_t host_count = this->ring->all_hosts().size();
@@ -103,7 +104,7 @@ unordered_map<string, DeleteResult> ConsistentHashMultiStore::delete_series(
   for (const auto& it : partitioned_data) {
     const string& store_name = this->ring->host_for_id(it.first).name;
     auto results = this->stores[store_name]->delete_series(it.second,
-        local_only, profiler);
+        deferred, local_only, profiler);
     this->combine_delete_results(ret, move(results));
   }
   return ret;
@@ -439,8 +440,8 @@ void ConsistentHashMultiStore::verify_thread_routine() {
           // move step 3: delete the original series. note that we use
           // local_only = true here because we also did so when read_all'ing
           // this series' data
-          auto delete_ret = store_it.second->delete_series({key_name}, true,
-              pg.profiler.get());
+          auto delete_ret = store_it.second->delete_series({key_name}, false,
+              true, pg.profiler.get());
           pg.profiler->checkpoint("delete_series");
           auto& res = delete_ret[key_name];
           int64_t num_deleted = res.disk_series_deleted + res.buffer_series_deleted;

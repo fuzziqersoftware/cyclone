@@ -560,7 +560,8 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] delete series\n", store_name.c_str());
-    auto ret = s->delete_series({pattern4, autocreate_key_name1}, false, profiler.get());
+    auto ret = s->delete_series({pattern4, autocreate_key_name1}, false, false,
+        profiler.get());
     expect_eq(1, ret.at(pattern4).disk_series_deleted);
     expect_eq(1, ret.at(autocreate_key_name1).disk_series_deleted);
     expect(ret.at(pattern4).error.description.empty());
@@ -687,7 +688,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] delete file with wildcard\n", store_name.c_str());
-    auto ret = s->delete_series({pattern1}, false, profiler.get());
+    auto ret = s->delete_series({pattern1}, false, false, profiler.get());
     expect_eq(1, ret.at(pattern1).disk_series_deleted);
     expect(ret.at(pattern1).error.description.empty());
     expect_eq(1, ret.size());
@@ -707,7 +708,7 @@ void run_basic_test(shared_ptr<Store> s, const string& store_name,
 
   {
     printf("-- [%s:basic_test] delete directory\n", store_name.c_str());
-    auto ret = s->delete_series({pattern5}, false, profiler.get());
+    auto ret = s->delete_series({pattern5}, false, false, profiler.get());
     expect_eq(1, ret.at(pattern5).disk_series_deleted);
     fprintf(stderr, "%s\n", ret.at(pattern5).error.description.c_str());
     expect(ret.at(pattern5).error.description.empty());
@@ -876,12 +877,29 @@ void run_rename_test(shared_ptr<Store> s, const string& store_name,
       expect_eq(2.0, result.data[2].value);
     }
 
-    {
-      printf("-- [%s:rename_test:%zu] delete series\n", store_name.c_str(), x);
-      auto ret = s->delete_series({autocreate_key_name2}, false, profiler.get());
-      expect_eq(1, ret.at(autocreate_key_name2).disk_series_deleted);
-      expect(ret.at(autocreate_key_name2).error.description.empty());
+    // deferred delete series is slow, so we only test it the first few times
+    if ((x < 5) && is_write_buffer) {
+      printf("-- [%s:rename_test:%zu] deferred delete series\n", store_name.c_str(), x);
+      auto ret = s->delete_series({autocreate_key_name2}, true, false,
+          profiler.get());
       expect_eq(1, ret.size());
+      expect(ret.at(autocreate_key_name2).error.description.empty());
+      if (is_write_buffer) {
+        expect_eq(0, ret.at(autocreate_key_name2).disk_series_deleted);
+        usleep(1100000);
+      } else {
+        expect_eq(1, ret.at(autocreate_key_name2).disk_series_deleted);
+      }
+      expect(!isfile(autocreate_key_filename2));
+
+    } else {
+      printf("-- [%s:rename_test:%zu] delete series\n", store_name.c_str(), x);
+      auto ret = s->delete_series({autocreate_key_name2}, false, false,
+          profiler.get());
+      expect_eq(1, ret.size());
+      expect(ret.at(autocreate_key_name2).error.description.empty());
+      expect_eq(1, ret.at(autocreate_key_name2).disk_series_deleted);
+      expect(!isfile(autocreate_key_filename2));
     }
   }
 }
@@ -945,7 +963,7 @@ int main(int argc, char* argv[]) {
 
     {
       shared_ptr<Store> disk_store(new DiskStore(data_directory));
-      shared_ptr<Store> buffer_on_disk_store(new WriteBufferStore(disk_store, 0, 0, 0, 0, 0, false));
+      shared_ptr<Store> buffer_on_disk_store(new WriteBufferStore(disk_store, 0, 0, 0, 0, 0, false, true));
       buffer_on_disk_store->set_autocreate_rules(autocreate_rules);
       reset_and_run_all_tests(buffer_on_disk_store, "WriteBufferStore(DiskStore)", data_directory, true);
     }
@@ -958,7 +976,7 @@ int main(int argc, char* argv[]) {
 
     {
       shared_ptr<Store> cached_disk_store(new CachedDiskStore(data_directory, 1, 1));
-      shared_ptr<Store> buffer_on_cached_disk_store(new WriteBufferStore(cached_disk_store, 0, 0, 0, 0, 0, false));
+      shared_ptr<Store> buffer_on_cached_disk_store(new WriteBufferStore(cached_disk_store, 0, 0, 0, 0, 0, false, true));
       buffer_on_cached_disk_store->set_autocreate_rules(autocreate_rules);
       reset_and_run_all_tests(buffer_on_cached_disk_store, "WriteBufferStore(CachedDiskStore)", data_directory, true);
     }

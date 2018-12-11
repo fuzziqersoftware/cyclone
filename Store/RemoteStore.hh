@@ -31,7 +31,7 @@ public:
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
       bool local_only, BaseFunctionProfiler* profiler);
   virtual std::unordered_map<std::string, DeleteResult> delete_series(
-      const std::vector<std::string>& patterns, bool local_only,
+      const std::vector<std::string>& patterns, bool deferred, bool local_only,
       BaseFunctionProfiler* profiler);
   virtual std::unordered_map<std::string, Error> rename_series(
       const std::unordered_map<std::string, std::string>& renames,

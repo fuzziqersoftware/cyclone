@@ -312,9 +312,10 @@ Commands:\n\
     zero, the server\'s current time is used. Timestamps may also be relative,\n\
     like -5m or -12h.\n\
 \n\
-  delete <pattern> [<pattern> ...]\n\
+  delete [+defer] <pattern> [<pattern> ...]\n\
     Delete entire series. All series matching any of the given patterns will be\n\
-    deleted.\n\
+    deleted. If +defer is given, the deletes are executed in the background and\n\
+    the command returns immediately.\n\
 \n\
   rename [+merge] <series> <series> [<series> <series> ...]\n\
     Rename one or more series. Note that renames are not atomic; concurrent\n\
@@ -535,7 +536,17 @@ void StreamServer::execute_shell_command(const char* line_data,
       throw runtime_error("no series given");
     }
 
-    auto result = this->store->delete_series(tokens, false, pg.profiler.get());
+    bool deferred = false;
+    for (auto it = tokens.begin(); it != tokens.end();) {
+      if (*it == "+defer") {
+        it = tokens.erase(it);
+      } else {
+        it++;
+      }
+    }
+
+    auto result = this->store->delete_series(tokens, deferred, false,
+        pg.profiler.get());
 
     for (const auto& it : result) {
       if (it.second.error.description.empty()) {

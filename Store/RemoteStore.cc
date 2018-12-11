@@ -89,7 +89,7 @@ unordered_map<string, Error> RemoteStore::update_metadata(
 }
 
 unordered_map<string, DeleteResult> RemoteStore::delete_series(
-    const vector<string>& patterns, bool local_only,
+    const vector<string>& patterns, bool deferred, bool local_only,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, DeleteResult> ret;
   if (local_only) {
@@ -100,7 +100,7 @@ unordered_map<string, DeleteResult> RemoteStore::delete_series(
   try {
     auto c = this->get_client();
     profiler->checkpoint("get_client");
-    c->client->delete_series(ret, patterns, true);
+    c->client->delete_series(ret, patterns, deferred, true);
     profiler->checkpoint("remote_call");
     this->return_client(move(c));
 

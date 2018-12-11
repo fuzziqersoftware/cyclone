@@ -484,7 +484,7 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
 }
 
 unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
-    const vector<string>& patterns, bool local_only,
+    const vector<string>& patterns, bool deferred, bool local_only,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, DeleteResult> ret;
 

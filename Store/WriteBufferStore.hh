@@ -5,6 +5,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <deque>
 
 #include <phosg/Concurrency.hh>
 
@@ -19,7 +20,8 @@ public:
   WriteBufferStore(std::shared_ptr<Store> store, size_t num_write_threads,
       size_t batch_size, size_t max_update_metadatas_per_second,
       size_t max_write_batches_per_second,
-      ssize_t disable_rate_limit_for_queue_length, bool merge_find_patterns);
+      ssize_t disable_rate_limit_for_queue_length, bool merge_find_patterns,
+      bool enable_deferred_deletes);
   virtual ~WriteBufferStore();
   const WriteBufferStore& operator=(const WriteBufferStore& rhs) = delete;
 
@@ -34,6 +36,8 @@ public:
   void set_disable_rate_limit_for_queue_length(ssize_t new_value);
   bool get_merge_find_patterns() const;
   void set_merge_find_patterns(bool new_value);
+  bool get_enable_deferred_deletes() const;
+  void set_enable_deferred_deletes(bool new_value);
 
   std::shared_ptr<Store> get_substore() const;
 
@@ -45,7 +49,7 @@ public:
       UpdateMetadataBehavior update_behavior, bool skip_buffering,
       bool local_only, BaseFunctionProfiler* profiler);
   virtual std::unordered_map<std::string, DeleteResult> delete_series(
-      const std::vector<std::string>& patterns, bool local_only,
+      const std::vector<std::string>& patterns, bool deferred, bool local_only,
       BaseFunctionProfiler* profiler);
   virtual std::unordered_map<std::string, Error> rename_series(
       const std::unordered_map<std::string, std::string>& renames,
@@ -79,6 +83,9 @@ private:
   std::atomic<size_t> max_write_batches_per_second;
   std::atomic<ssize_t> disable_rate_limit_for_queue_length;
   std::atomic<bool> merge_find_patterns;
+  std::atomic<bool> enable_deferred_deletes;
+
+  std::atomic<bool> should_exit;
 
   struct QueueItem {
     SeriesMetadata metadata;
@@ -115,7 +122,6 @@ private:
   RateLimiter write_batch_rate_limiter;
 
   size_t batch_size;
-  std::atomic<bool> should_exit;
   struct WriteThread {
     std::thread t;
     std::atomic<int64_t> last_queue_restart;
@@ -129,5 +135,11 @@ private:
   };
   std::vector<std::unique_ptr<WriteThread>> write_threads;
 
+  std::deque<std::string> delete_queue;
+  mutable rw_lock delete_queue_lock;
+
+  std::thread delete_thread;
+
   void write_thread_routine(size_t thread_index);
+  void delete_thread_routine();
 };

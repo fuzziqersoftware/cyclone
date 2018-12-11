@@ -86,7 +86,7 @@ service Cyclone {
 
   // deletes series. returns the number of series deleted. for each pattern.
   DeleteResultMap delete_series(1: list<string> patterns,
-      2: bool local_only = false);
+      3: bool deferred = false, 2: bool local_only = false);
 
   // renames series. returns an error string for each series.
   WriteResultMap rename_series(1: RenameSeriesMap renames,
