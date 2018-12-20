@@ -125,11 +125,6 @@ public:
     _return = gather_stats(this->store, *this->all_servers);
   }
 
-  int64_t delete_pending_writes(const std::string& pattern, bool local_only) {
-    BusyThreadGuard g(this->idle_thread_count);
-    return this->store->delete_pending_writes(pattern, local_only);
-  }
-
   void get_verify_status(unordered_map<string, int64_t>& _return) {
     BusyThreadGuard g(this->idle_thread_count);
 

@@ -144,14 +144,6 @@ unordered_map<string, int64_t> MultiStore::get_stats(bool rotate) {
   return ret;
 }
 
-int64_t MultiStore::delete_pending_writes(const std::string& pattern, bool local_only) {
-  int64_t ret = 0;
-  for (const auto& it : this->stores) {
-    ret += it.second->delete_pending_writes(pattern, local_only);
-  }
-  return ret;
-}
-
 string MultiStore::str() const {
   string ret = "MultiStore(";
   for (const auto& it : this->stores) {

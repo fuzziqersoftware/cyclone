@@ -25,10 +25,6 @@ unordered_map<string, int64_t> Store::get_stats(bool rotate) {
   return unordered_map<string, int64_t>();
 }
 
-int64_t Store::delete_pending_writes(const std::string& paths, bool local_only) {
-  return 0;
-}
-
 
 
 static const char* string_for_update_metadata_behavior(

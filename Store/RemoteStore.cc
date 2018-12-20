@@ -285,24 +285,6 @@ unordered_map<string, int64_t> RemoteStore::get_stats(bool rotate) {
   return ret;
 }
 
-int64_t RemoteStore::delete_pending_writes(const std::string& pattern, bool local_only) {
-  if (local_only) {
-    return 0;
-  }
-
-  int64_t ret;
-  try {
-    auto c = this->get_client();
-    ret = c->client->delete_pending_writes(pattern, true);
-    this->return_client(move(c));
-  } catch (const exception& e) {
-    this->stats[0].server_disconnects++;
-    ret = 0;
-  }
-  this->stats[0].delete_pending_writes_commands++;
-  return ret;
-}
-
 string RemoteStore::str() const {
   return string_printf("RemoteStore(hostname=%s, port=%d, connection_limit=%zu)",
       this->hostname.c_str(), this->port, this->connection_limit.load());

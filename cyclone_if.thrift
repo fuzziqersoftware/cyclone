@@ -132,13 +132,4 @@ service Cyclone {
   // ends.
   bool get_read_from_all();
   bool set_read_from_all(1: bool read_from_all);
-
-
-
-  // debugging / internal commands
-
-  // if the server has a write buffer store, deletes everything matching the
-  // given pattern from the write buffer. if the pattern is blank, deletes
-  // everything in the write buffer.
-  i64 delete_pending_writes(1: string pattern, 2: bool local_only = false);
 }
