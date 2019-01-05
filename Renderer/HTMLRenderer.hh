@@ -4,7 +4,6 @@
 
 #include <unordered_map>
 #include <vector>
-#include <phosg/Image.hh>
 
 #include "../gen-cpp/Cyclone.h"
 #include "Renderer.hh"

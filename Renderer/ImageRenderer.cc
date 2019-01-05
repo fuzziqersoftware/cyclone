@@ -73,10 +73,10 @@ void ImageRenderer::render_data(
   Image img(width, height);
   img.clear(background_color[0], background_color[1], background_color[2]);
 
-  int top_axis_label_width, bottom_axis_label_width;
-  img.draw_text(10, 7, &top_axis_label_width, NULL, foreground_color[0], foreground_color[1], foreground_color[2], 0, 0, 0, 0, "%g", y_max);
-  img.draw_text(10, height - 13, &bottom_axis_label_width, NULL, foreground_color[0], foreground_color[1], foreground_color[2], 0, 0, 0, 0, "%g", y_min);
-  int axis_label_width = max(top_axis_label_width, bottom_axis_label_width);
+  ssize_t top_axis_label_width, bottom_axis_label_width;
+  img.draw_text(10, 7, &top_axis_label_width, NULL, foreground_color[0], foreground_color[1], foreground_color[2], 0xFF, 0, 0, 0, 0, "%g", y_max);
+  img.draw_text(10, height - 13, &bottom_axis_label_width, NULL, foreground_color[0], foreground_color[1], foreground_color[2], 0xFF, 0, 0, 0, 0, "%g", y_min);
+  ssize_t axis_label_width = max(top_axis_label_width, bottom_axis_label_width);
 
   // check that the image size is reasonable
   uint64_t graph_left_edge = axis_label_width + 20;
