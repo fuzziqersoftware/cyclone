@@ -236,6 +236,9 @@ vector<ArchiveArg> WhisperArchive::parse_archive_args(const string& s) {
 
     ArchiveArg a;
     a.precision = parse_time_length(params[0]);
+    if (a.precision == 0) {
+      throw invalid_argument("precision is unparseable or zero");
+    }
     a.points = parse_time_length(params[1], a.precision) / a.precision;
     ret.push_back(a);
   }
