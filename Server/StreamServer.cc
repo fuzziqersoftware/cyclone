@@ -297,9 +297,10 @@ Commands:\n\
     enabled, performance debugging information is printed after the result of\n\
     each query run from the current shell connection.\n\
 \n\
-  find [<pattern> ...]\n\
+  find [+count] [<pattern> ...]\n\
     Search for metrics matching the given pattern(s). If no patterns are given,\n\
-    return the contents of the root directory.\n\
+    return the contents of the root directory. If +count is given, return only\n\
+    the number of metrics that would be returned, not the metric names.\n\
 \n\
   read <pattern> [+start=<time>] [+end=<time>]\n\
     Read data from all series that match the given pattern.\n\
@@ -361,7 +362,7 @@ Commands:\n\
     to the correct store and combined with any existing data in that store.\n\
 \n\
   verify cancel\n\
-    Cancel the running verify procedure.\n\
+    Cancel the currently-running verify procedure.\n\
 \n\
   verify status\n\
     Show the progress of the running verify procedure.\n\
@@ -592,6 +593,16 @@ void StreamServer::execute_shell_command(const char* line_data,
     }
 
   } else if (command_name == "find") {
+    bool count_only = false;
+    for (auto it = tokens.begin(); it != tokens.end();) {
+      if (*it == "+count") {
+        count_only = true;
+        it = tokens.erase(it);
+      } else {
+        it++;
+      }
+    }
+
     if (tokens.empty()) {
       tokens.emplace_back("*");
     }
@@ -603,6 +614,8 @@ void StreamServer::execute_shell_command(const char* line_data,
       if (!result.error.description.empty()) {
         string error_str = string_for_error(result.error);
         evbuffer_add_printf(out_buffer, "FAILED: %s\n", error_str.c_str());
+      } else if (count_only) {
+        evbuffer_add_printf(out_buffer, "%zu series\n", result.results.size());
       } else {
         sort(result.results.begin(), result.results.end());
         for (const auto& item : result.results) {
@@ -617,11 +630,14 @@ void StreamServer::execute_shell_command(const char* line_data,
           string error_str = string_for_error(it.second.error);
           evbuffer_add_printf(out_buffer, "[%s] FAILED: %s\n", it.first.c_str(),
               error_str.c_str());
-          continue;
-        }
-        sort(it.second.results.begin(), it.second.results.end());
-        for (const auto& item : it.second.results) {
-          evbuffer_add_printf(out_buffer, "[%s] %s\n", it.first.c_str(), item.c_str());
+        } else if (count_only) {
+          evbuffer_add_printf(out_buffer, "[%s] %zu series\n", it.first.c_str(),
+              it.second.results.size());
+        } else {
+          sort(it.second.results.begin(), it.second.results.end());
+          for (const auto& item : it.second.results) {
+            evbuffer_add_printf(out_buffer, "[%s] %s\n", it.first.c_str(), item.c_str());
+          }
         }
       }
     }
