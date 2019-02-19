@@ -109,7 +109,8 @@ void DatagramServer::on_client_input(WorkerThread* wt, int fd, short events) {
     // send it to the store
     ProfilerGuard pg(create_profiler(wt->thread_name, Store::string_for_write(
         data, false, false)));
-    for (const auto& it : this->store->write(data, false, false, pg.profiler.get())) {
+    auto task = this->store->write(NULL, data, false, false, pg.profiler.get());
+    for (const auto& it : task->value()) {
       if (it.second.description.empty()) {
         continue;
       }

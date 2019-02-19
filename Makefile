@@ -1,7 +1,7 @@
 STORE_UTILS_OBJECTS=Store/Utils/RateLimiter.o Store/Utils/FunctionProfiler.o Store/Utils/CarbonConsistentHashRing.o Store/Utils/Errors.o
 STORE_QUERY_OBJECTS=Store/Query/Parser.o Store/Query/Functions.o
 STORE_WHISPER_OBJECTS=Store/Formats/Whisper.o
-STORE_OBJECTS=$(STORE_UTILS_OBJECTS) $(STORE_WHISPER_OBJECTS) $(STORE_QUERY_OBJECTS) Store/Store.o Store/QueryStore.o Store/DiskStore.o Store/CachedDiskStore.o Store/WriteBufferStore.o Store/RemoteStore.o Store/MultiStore.o Store/ConsistentHashMultiStore.o Store/EmptyStore.o Store/ReadOnlyStore.o
+STORE_OBJECTS=$(STORE_UTILS_OBJECTS) $(STORE_WHISPER_OBJECTS) $(STORE_QUERY_OBJECTS) Store/StoreTask.o Store/Store.o Store/QueryStore.o Store/DiskStore.o Store/CachedDiskStore.o Store/WriteBufferStore.o Store/RemoteStore.o Store/MultiStore.o Store/ConsistentHashMultiStore.o Store/EmptyStore.o Store/ReadOnlyStore.o
 RENDERER_OBJECTS=Renderer/Renderer.o Renderer/ImageRenderer.o Renderer/JSONRenderer.o Renderer/GraphiteRenderer.o Renderer/PickleRenderer.o Renderer/HTMLRenderer.o
 THRIFT_OBJECTS=gen-cpp/cyclone_if_constants.o gen-cpp/cyclone_if_types.o gen-cpp/Cyclone.o
 SERVER_OBJECTS=Server/Server.o Server/HTTPServer.o Server/CycloneHTTPServer.o Server/ThriftServer.o Server/StreamServer.o Server/DatagramServer.o

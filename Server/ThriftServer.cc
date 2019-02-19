@@ -57,8 +57,10 @@ public:
 
     auto pg = this->create_profiler(Store::string_for_update_metadata(
         metadata, create_new, update_behavior, skip_buffering, local_only));
-    _return = this->store->update_metadata(metadata, create_new,
-        update_behavior, skip_buffering, local_only, pg.profiler.get());
+    auto task = this->store->update_metadata(NULL, metadata,
+        update_behavior, create_new, skip_buffering, local_only,
+        pg.profiler.get());
+    _return = task->value();
   }
 
   void delete_series(unordered_map<string, DeleteResult>& _return,
@@ -67,8 +69,9 @@ public:
 
     auto pg = this->create_profiler(Store::string_for_delete_series(
         key_names, deferred, local_only));
-    _return = this->store->delete_series(key_names, deferred, local_only,
-        pg.profiler.get());
+    auto task = this->store->delete_series(NULL, key_names, deferred,
+        local_only, pg.profiler.get());
+    _return = task->value();
   }
 
   void rename_series(unordered_map<string, Error>& _return,
@@ -77,7 +80,9 @@ public:
 
     auto pg = this->create_profiler(Store::string_for_rename_series(renames,
         merge, local_only));
-    _return = this->store->rename_series(renames, merge, local_only, pg.profiler.get());
+    auto task = this->store->rename_series(NULL, renames, merge, local_only,
+        pg.profiler.get());
+    _return = task->value();
   }
 
   void read(
@@ -88,8 +93,9 @@ public:
 
     auto pg = this->create_profiler(Store::string_for_read(targets,
         start_time, end_time, local_only));
-    _return = this->store->read(targets, start_time, end_time, local_only,
-        pg.profiler.get());
+    auto task = this->store->read(NULL, targets, start_time, end_time,
+        local_only, pg.profiler.get());
+    _return = task->value();
   }
 
   void read_all(ReadAllResult& _return, const string& key_name,
@@ -98,7 +104,9 @@ public:
 
     auto pg = this->create_profiler(Store::string_for_read_all(key_name,
         local_only));
-    _return = this->store->read_all(key_name, local_only, pg.profiler.get());
+    auto task = this->store->read_all(NULL, key_name, local_only,
+        pg.profiler.get());
+    _return = task->value();
   }
 
   void write(unordered_map<string, Error>& _return,
@@ -108,7 +116,9 @@ public:
 
     auto pg = this->create_profiler(Store::string_for_write(data,
         skip_buffering, local_only));
-    _return = this->store->write(data, skip_buffering, local_only, pg.profiler.get());
+    auto task = this->store->write(NULL, data, skip_buffering,
+        local_only, pg.profiler.get());
+    _return = task->value();
   }
 
   void find(unordered_map<string, FindResult>& _return,
@@ -117,7 +127,9 @@ public:
 
     auto pg = this->create_profiler(Store::string_for_find(patterns,
         local_only));
-    _return = this->store->find(patterns, local_only, pg.profiler.get());
+    auto task = this->store->find(NULL, patterns, local_only,
+        pg.profiler.get());
+    _return = task->value();
   }
 
   void stats(unordered_map<string, int64_t>& _return) {

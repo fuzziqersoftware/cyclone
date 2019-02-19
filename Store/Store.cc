@@ -19,10 +19,259 @@ void Store::set_autocreate_rules(
   }
 }
 
-void Store::flush() { }
+void Store::flush(StoreTaskManager* m) { }
 
 unordered_map<string, int64_t> Store::get_stats(bool rotate) {
   return unordered_map<string, int64_t>();
+}
+
+
+
+std::shared_ptr<Store::UpdateMetadataTask> Store::update_metadata(
+    StoreTaskManager* m, const SeriesMetadataMap& metadata,
+    UpdateMetadataBehavior behavior, bool create_new, bool skip_buffering,
+    bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<UpdateMetadataArguments> args(new UpdateMetadataArguments());
+  args->metadata = metadata;
+  args->behavior = behavior;
+  args->create_new = create_new;
+  args->skip_buffering = skip_buffering;
+  args->local_only = local_only;
+  if (m) {
+    return this->update_metadata(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->update_metadata(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::UpdateMetadataTask> Store::update_metadata(
+    StoreTaskManager* m, SeriesMetadataMap&& metadata,
+    UpdateMetadataBehavior behavior, bool create_new, bool skip_buffering,
+    bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<UpdateMetadataArguments> args(new UpdateMetadataArguments());
+  args->metadata = move(metadata);
+  args->behavior = behavior;
+  args->create_new = create_new;
+  args->skip_buffering = skip_buffering;
+  args->local_only = local_only;
+  if (m) {
+    return this->update_metadata(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->update_metadata(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::DeleteSeriesTask> Store::delete_series(
+    StoreTaskManager* m, const std::vector<std::string>& patterns,
+    bool deferred, bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<DeleteSeriesArguments> args(new DeleteSeriesArguments());
+  args->patterns = patterns;
+  args->deferred = deferred;
+  args->local_only = local_only;
+  if (m) {
+    return this->delete_series(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->delete_series(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::DeleteSeriesTask> Store::delete_series(
+    StoreTaskManager* m, std::vector<std::string>&& patterns, bool deferred,
+    bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<DeleteSeriesArguments> args(new DeleteSeriesArguments());
+  args->patterns = move(patterns);
+  args->deferred = deferred;
+  args->local_only = local_only;
+  if (m) {
+    return this->delete_series(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->delete_series(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::RenameSeriesTask> Store::rename_series(
+    StoreTaskManager* m,
+    const std::unordered_map<std::string, std::string>& renames, bool merge,
+    bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<RenameSeriesArguments> args(new RenameSeriesArguments());
+  args->renames = renames;
+  args->merge = merge;
+  args->local_only = local_only;
+  if (m) {
+    return this->rename_series(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->rename_series(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::RenameSeriesTask> Store::rename_series(
+    StoreTaskManager* m,
+    std::unordered_map<std::string, std::string>&& renames, bool merge,
+    bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<RenameSeriesArguments> args(new RenameSeriesArguments());
+  args->renames = move(renames);
+  args->merge = merge;
+  args->local_only = local_only;
+  if (m) {
+    return this->rename_series(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->rename_series(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::ReadTask> Store::read(
+    StoreTaskManager* m, const std::vector<std::string>& key_names,
+    int64_t start_time, int64_t end_time, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  shared_ptr<ReadArguments> args(new ReadArguments());
+  args->key_names = key_names;
+  args->start_time = start_time;
+  args->end_time = end_time;
+  args->local_only = local_only;
+  if (m) {
+    return this->read(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->read(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::ReadTask> Store::read(
+    StoreTaskManager* m, std::vector<std::string>&& key_names,
+    int64_t start_time, int64_t end_time, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  shared_ptr<ReadArguments> args(new ReadArguments());
+  args->key_names = move(key_names);
+  args->start_time = start_time;
+  args->end_time = end_time;
+  args->local_only = local_only;
+  if (m) {
+    return this->read(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->read(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::ReadAllTask> Store::read_all(
+    StoreTaskManager* m, const std::string& key_name, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  shared_ptr<ReadAllArguments> args(new ReadAllArguments());
+  args->key_name = key_name;
+  args->local_only = local_only;
+  if (m) {
+    return this->read_all(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->read_all(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::ReadAllTask> Store::read_all(
+    StoreTaskManager* m, std::string&& key_name, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  shared_ptr<ReadAllArguments> args(new ReadAllArguments());
+  args->key_name = move(key_name);
+  args->local_only = local_only;
+  if (m) {
+    return this->read_all(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->read_all(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::WriteTask> Store::write(
+    StoreTaskManager* m,
+    const std::unordered_map<std::string, Series>& data, bool skip_buffering,
+    bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<WriteArguments> args(new WriteArguments());
+  args->data = data;
+  args->skip_buffering = skip_buffering;
+  args->local_only = local_only;
+  if (m) {
+    return this->write(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->write(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::WriteTask> Store::write(
+    StoreTaskManager* m, std::unordered_map<std::string, Series>&& data,
+    bool skip_buffering, bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<WriteArguments> args(new WriteArguments());
+  args->data = move(data);
+  args->skip_buffering = skip_buffering;
+  args->local_only = local_only;
+  if (m) {
+    return this->write(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->write(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::FindTask> Store::find(
+    StoreTaskManager* m, const std::vector<std::string>& patterns,
+    bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<FindArguments> args(new FindArguments());
+  args->patterns = patterns;
+  args->local_only = local_only;
+  if (m) {
+    return this->find(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->find(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
+}
+
+std::shared_ptr<Store::FindTask> Store::find(
+    StoreTaskManager* m, std::vector<std::string>&& patterns,
+    bool local_only, BaseFunctionProfiler* profiler) {
+  shared_ptr<FindArguments> args(new FindArguments());
+  args->patterns = move(patterns);
+  args->local_only = local_only;
+  if (m) {
+    return this->find(m, args, profiler);
+  } else {
+    StoreTaskManager m;
+    auto task = this->find(&m, args, profiler);
+    m.run(task);
+    return task;
+  }
 }
 
 
@@ -303,88 +552,164 @@ SeriesMetadata Store::get_autocreate_metadata_for_key(const string& key_name) {
   return SeriesMetadata();
 }
 
-unordered_map<string, vector<string>> Store::resolve_patterns(
-    const vector<string>& key_names, bool local_only,
-    BaseFunctionProfiler* profiler) {
+
+
+Store::ResolvePatternsTask::ResolvePatternsTask(
+    StoreTaskManager* m, Store* s, const vector<string>& key_names, bool local_only,
+    BaseFunctionProfiler* profiler) : TypedStoreTask(m) {
 
   // if some of the key names are patterns, execute find queries on them to get
   // the actual key names
-  unordered_map<string, vector<string>> key_to_patterns;
   vector<string> patterns;
   for (const string& key_name : key_names) {
-    if (this->token_is_pattern(key_name)) {
+    if (Store::token_is_pattern(key_name)) {
       patterns.emplace_back(key_name);
     } else {
-      key_to_patterns[key_name].emplace_back(key_name);
+      this->return_value[key_name].emplace_back(key_name);
     }
   }
 
   if (!patterns.empty()) {
-    for (auto it : this->find(patterns, local_only, profiler)) {
-      if (!it.second.error.description.empty()) {
-        continue;
-      }
-      for (auto& k : it.second.results) {
-        key_to_patterns[k].emplace_back(it.first);
-      }
-    }
+    shared_ptr<Store::FindArguments> args(new Store::FindArguments());
+    args->patterns = move(patterns);
+    args->local_only = local_only;
+    this->find_task = s->find(this->manager, args, profiler);
+    this->delegate(this->find_task, bind(&ResolvePatternsTask::on_find_complete, this));
+  } else {
+    this->set_complete();
   }
-
-  return key_to_patterns;
 }
 
-Error Store::emulate_rename_series(Store* from_store,
-    const string& from_key_name, Store* to_store, const string& to_key_name,
-    bool merge, BaseFunctionProfiler* profiler) {
+void Store::ResolvePatternsTask::on_find_complete() {
+  for (auto& it : this->find_task->value()) {
+    if (!it.second.error.description.empty()) {
+      continue;
+    }
+    for (auto& k : it.second.results) {
+      this->return_value[k].emplace_back(it.first);
+    }
+  }
+  this->set_complete();
+}
 
-  auto read_all_result = from_store->read_all(from_key_name, false, profiler);
-  profiler->checkpoint("read_all_" + from_key_name);
+shared_ptr<Store::ResolvePatternsTask> Store::resolve_patterns(StoreTaskManager* m,
+    const std::vector<std::string>& key_names, bool local_only,
+    BaseFunctionProfiler* profiler) {
+  return shared_ptr<ResolvePatternsTask>(new ResolvePatternsTask(m, this,
+      key_names, local_only, profiler));
+}
+
+
+
+Store::EmulateRenameSeriesTask::EmulateRenameSeriesTask(StoreTaskManager* m,
+    Store* from_store, const std::string& from_key_name, Store* to_store,
+    const std::string& to_key_name, bool merge, BaseFunctionProfiler* profiler)
+    : TypedStoreTask(m, profiler), from_store(from_store),
+      from_key_name(from_key_name), to_store(to_store),
+      to_key_name(to_key_name), merge(merge) {
+  shared_ptr<Store::ReadAllArguments> args(new Store::ReadAllArguments());
+  args->key_name = from_key_name;
+  args->local_only = false;
+  this->read_all_task = this->from_store->read_all(this->manager, args, this->profiler);
+  this->delegate(this->read_all_task, bind(&EmulateRenameSeriesTask::on_read_all_complete, this));
+}
+
+void Store::EmulateRenameSeriesTask::on_read_all_complete() {
+  this->profiler->checkpoint("read_all_" + this->from_key_name);
+  auto& read_all_result = this->read_all_task->value();
+
   if (!read_all_result.error.description.empty()) {
-    return read_all_result.error;
+    this->set_value(move(read_all_result.error));
+    return;
   }
   if (read_all_result.metadata.archive_args.empty()) {
-    return make_error("series does not exist");
+    this->set_value(make_error("series does not exist"));
+    return;
   }
 
   // create the series in the remote store if it doesn't exist already. if merge
   // is true, then proceed even if the series exists; if merge is false, fail if
   // the series exists.
-  SeriesMetadataMap metadata_map({{to_key_name, read_all_result.metadata}});
-  auto update_metadata_ret = to_store->update_metadata(metadata_map, true,
-      UpdateMetadataBehavior::Ignore, true, false, profiler);
-  profiler->checkpoint("update_metadata_" + to_key_name);
+  shared_ptr<Store::UpdateMetadataArguments> args(new Store::UpdateMetadataArguments());
+  args->metadata.emplace(this->to_key_name, read_all_result.metadata);
+  args->behavior = Store::UpdateMetadataBehavior::Ignore;
+  args->create_new = true;
+  args->skip_buffering = true;
+  args->local_only = false;
+  this->update_metadata_task = this->to_store->update_metadata(this->manager,
+      args, this->profiler);
+  this->delegate(this->update_metadata_task, bind(
+      &EmulateRenameSeriesTask::on_update_metadata_complete, this));
+}
+
+void Store::EmulateRenameSeriesTask::on_update_metadata_complete() {
+  profiler->checkpoint("update_metadata_" + this->to_key_name);
+  auto& update_metadata_ret = this->update_metadata_task->value();
+
   try {
     Error& error = update_metadata_ret.at(to_key_name);
     if (!error.description.empty() && (!error.ignored || !merge)) {
-      return error;
+      this->set_value(move(error));
+      return;
     }
   } catch (const out_of_range&) {
-    return make_error("update_metadata returned no results");
+    this->set_value(make_error("update_metadata returned no results"));
+    return;
   }
 
   // write all the data from the from series into the to series
-  SeriesMap write_map({{to_key_name, move(read_all_result.data)}});
-  auto write_ret = to_store->write(write_map, true, false, profiler);
-  profiler->checkpoint("write_" + to_key_name);
+  auto& read_all_result = this->read_all_task->value();
+  shared_ptr<Store::WriteArguments> args(new Store::WriteArguments());
+  args->data.emplace(this->to_key_name, move(read_all_result.data));
+  args->skip_buffering = true;
+  args->local_only = false;
+  this->write_task = this->to_store->write(this->manager, args, this->profiler);
+  this->delegate(this->write_task, bind(
+      &EmulateRenameSeriesTask::on_write_complete, this));
+}
+
+void Store::EmulateRenameSeriesTask::on_write_complete() {
+  profiler->checkpoint("write_" + this->to_key_name);
+  auto& write_ret = this->write_task->value();
+
   try {
     Error& error = write_ret.at(to_key_name);
     if (!error.description.empty()) {
-      return error;
+      this->set_value(move(error));
+      return;
     }
   } catch (const out_of_range&) {
-    return make_error("write returned no results");
+    this->set_value(make_error("write returned no results"));
+    return;
   }
 
   // delete the original series
-  auto delete_ret = from_store->delete_series({from_key_name}, false, false,
-      profiler);
-  profiler->checkpoint("delete_series_" + from_key_name);
+  shared_ptr<Store::DeleteSeriesArguments> args(new Store::DeleteSeriesArguments());
+  args->patterns.emplace_back(this->from_key_name);
+  args->deferred = false;
+  args->local_only = false;
+  this->delete_task = this->from_store->delete_series(this->manager, args, profiler);
+  this->delegate(this->delete_task, bind(&EmulateRenameSeriesTask::on_delete_complete, this));
+}
+
+void Store::EmulateRenameSeriesTask::on_delete_complete() {
+  profiler->checkpoint("delete_series_" + this->from_key_name);
+  auto& delete_ret = this->delete_task->value();
+
   auto& res = delete_ret[from_key_name];
   if (res.disk_series_deleted + res.buffer_series_deleted <= 0) {
-    return make_error("move successful, but delete failed");
+    this->set_value(make_error("move successful, but delete failed"));
   }
 
-  return make_success();
+  this->set_value(make_success());
+}
+
+std::shared_ptr<Store::EmulateRenameSeriesTask> Store::emulate_rename_series(
+    StoreTaskManager* m, Store* from_store, const std::string& from_key_name,
+    Store* to_store, const std::string& to_key_name, bool merge,
+    BaseFunctionProfiler* profiler) {
+  return shared_ptr<EmulateRenameSeriesTask>(new EmulateRenameSeriesTask(m,
+      from_store, from_key_name, to_store, to_key_name, merge, profiler));
 }
 
 

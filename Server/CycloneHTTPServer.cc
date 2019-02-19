@@ -182,9 +182,12 @@ string CycloneHTTPServer::handle_graphite_render_request(struct Thread& t,
   ProfilerGuard pg(create_profiler(t.thread_name, Store::string_for_read(targets,
       start_time, end_time, false)));
   auto r = this->create_renderer(format, out_buffer);
-  auto data = this->store->read(targets, start_time, end_time, false, pg.profiler.get());
+
+  auto task = this->store->read(NULL, targets, start_time, end_time,
+      false, pg.profiler.get());
+
   pg.profiler->checkpoint("store_read");
-  r->render_data(data, start_time, end_time);
+  r->render_data(task->value(), start_time, end_time);
   pg.profiler->checkpoint("render");
   return r->content_type();
 }
@@ -212,9 +215,11 @@ string CycloneHTTPServer::handle_graphite_find_request(struct Thread& t,
   ProfilerGuard pg(create_profiler(t.thread_name, Store::string_for_find(
       queries, false)));
   auto r = this->create_renderer(format, out_buffer);
-  auto ret = this->store->find(queries, false, pg.profiler.get());
+
+  auto task = this->store->find(NULL, queries, false, pg.profiler.get());
+
   pg.profiler->checkpoint("store_find");
-  r->render_find_results(ret);
+  r->render_find_results(task->value());
   pg.profiler->checkpoint("render");
   return r->content_type();
 }
@@ -243,9 +248,11 @@ string CycloneHTTPServer::handle_read_all_request(struct Thread& t,
 
   ProfilerGuard pg(create_profiler(t.thread_name, Store::string_for_read_all(
       target, false)));
-  auto result = this->store->read_all(target, false, pg.profiler.get());
+
+  auto task = this->store->read_all(NULL, target, false, pg.profiler.get());
   pg.profiler->checkpoint("store_read_all");
 
+  auto& result = task->value();
   if (result.error.description.empty()) {
     evbuffer_add(out_buffer, "[", 1);
     size_t num_points = 0;

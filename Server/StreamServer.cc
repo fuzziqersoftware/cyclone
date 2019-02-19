@@ -249,7 +249,9 @@ void StreamServer::on_client_input(StreamServer::WorkerThread& wt,
   if (!data.empty()) {
     ProfilerGuard pg(create_profiler(wt.thread_name, Store::string_for_write(
         data, false, false)));
-    for (const auto& it : this->store->write(data, false, false, pg.profiler.get())) {
+
+    auto task = this->store->write(NULL, data, false, false, pg.profiler.get());
+    for (const auto& it : task->value()) {
       if (it.second.description.empty()) {
         continue;
       }
@@ -498,8 +500,8 @@ void StreamServer::execute_shell_command(const char* line_data,
     }
 
     if (is_pattern) {
-      auto find_result_map = this->store->find({tokens[0]}, false, pg.profiler.get());
-      const auto& find_result = find_result_map.at(tokens[0]);
+      auto task = this->store->find(NULL, {tokens[0]}, false, pg.profiler.get());
+      const auto& find_result = task->value().at(tokens[0]);
       if (!find_result.error.description.empty()) {
         throw runtime_error("find failed: " + string_for_error(find_result.error));
       }
@@ -518,10 +520,10 @@ void StreamServer::execute_shell_command(const char* line_data,
       pg.profiler->checkpoint("generate_metadata_map");
     }
 
-    auto result = this->store->update_metadata(metadata_map, create_new,
-        update_behavior, false, false, pg.profiler.get());
+    auto task = this->store->update_metadata(NULL, metadata_map,
+        update_behavior, create_new, false, false, pg.profiler.get());
 
-    for (const auto& result_it : result) {
+    for (const auto& result_it : task->value()) {
       if (result_it.second.description.empty()) {
         evbuffer_add_printf(out_buffer, "[%s] success\n",
             result_it.first.c_str());
@@ -546,10 +548,9 @@ void StreamServer::execute_shell_command(const char* line_data,
       }
     }
 
-    auto result = this->store->delete_series(tokens, deferred, false,
+    auto task = this->store->delete_series(NULL, tokens, deferred, false,
         pg.profiler.get());
-
-    for (const auto& it : result) {
+    for (const auto& it : task->value()) {
       if (it.second.error.description.empty()) {
         evbuffer_add_printf(out_buffer, "[%s] %" PRId64 " series deleted from disk, %" PRId64 " series deleted from buffer\n",
             it.first.c_str(), it.second.disk_series_deleted, it.second.buffer_series_deleted);
@@ -578,10 +579,9 @@ void StreamServer::execute_shell_command(const char* line_data,
       renames.emplace(tokens[x], tokens[x + 1]);
     }
 
-    auto result = this->store->rename_series(renames, merge, false,
+    auto task = this->store->rename_series(NULL, renames, merge, false,
         pg.profiler.get());
-
-    for (const auto& it : result) {
+    for (const auto& it : task->value()) {
       if (it.second.description.empty()) {
         evbuffer_add_printf(out_buffer, "[%s->%s] success\n",
             it.first.c_str(), renames.at(it.first).c_str());
@@ -607,7 +607,8 @@ void StreamServer::execute_shell_command(const char* line_data,
       tokens.emplace_back("*");
     }
 
-    auto find_result = this->store->find(tokens, false, pg.profiler.get());
+    auto task = this->store->find(NULL, tokens, false, pg.profiler.get());
+    auto& find_result = task->value();
 
     if (find_result.size() == 1) {
       auto& result = find_result.begin()->second;
@@ -666,9 +667,8 @@ void StreamServer::execute_shell_command(const char* line_data,
       }
     }
 
-    auto result = this->store->write(write_map, false, false, pg.profiler.get());
-
-    for (const auto& result_it : result) {
+    auto task = this->store->write(NULL, write_map, false, false, pg.profiler.get());
+    for (const auto& result_it : task->value()) {
       const string& series_name = result_it.first;
       const Error& error = result_it.second;
 
@@ -706,10 +706,10 @@ void StreamServer::execute_shell_command(const char* line_data,
       start_time = end_time - (60 * 60);
     }
 
-    auto read_results = this->store->read(patterns, start_time, end_time, false,
+    auto task = this->store->read(NULL, patterns, start_time, end_time, false,
         pg.profiler.get());
 
-    for (const auto& result_it : read_results) {
+    for (const auto& result_it : task->value()) {
       const string& pattern = result_it.first;
       const auto& series_map = result_it.second;
       evbuffer_add_printf(out_buffer, "[%s]\n", pattern.c_str());

@@ -17,77 +17,72 @@
 using namespace std;
 
 
-unordered_map<string, Error> EmptyStore::update_metadata(
-    const SeriesMetadataMap& metadata, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
-
+shared_ptr<Store::UpdateMetadataTask> EmptyStore::update_metadata(
+    StoreTaskManager*, shared_ptr<const UpdateMetadataArguments> args,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
-  for (const auto& it : metadata) {
-    ret.emplace(it.first, make_success());
+  for (const auto& it : args->metadata) {
+    ret.emplace(it.first, make_ignored());
   }
-  return ret;
+  return shared_ptr<UpdateMetadataTask>(new UpdateMetadataTask(move(ret)));
 }
 
-unordered_map<string, DeleteResult> EmptyStore::delete_series(
-    const vector<string>& patterns, bool deferred, bool local_only,
+shared_ptr<Store::DeleteSeriesTask> EmptyStore::delete_series(
+    StoreTaskManager*, shared_ptr<const DeleteSeriesArguments> args,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, DeleteResult> ret;
-  for (const auto& pattern : patterns) {
+  for (const auto& pattern : args->patterns) {
     auto& res = ret[pattern];
     res.disk_series_deleted = 0;
     res.buffer_series_deleted = 0;
     res.error = make_success();
   }
-  return ret;
+  return shared_ptr<DeleteSeriesTask>(new DeleteSeriesTask(move(ret)));
 }
 
-unordered_map<string, Error> EmptyStore::rename_series(
-    const unordered_map<string, string>& renames, bool merge, bool local_only,
+shared_ptr<Store::RenameSeriesTask> EmptyStore::rename_series(
+    StoreTaskManager*, shared_ptr<const RenameSeriesArguments> args,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
-  for (const auto& it : renames) {
+  for (const auto& it : args->renames) {
     ret.emplace(it.first, make_error("series does not exist"));
   }
-  return ret;
+  return shared_ptr<RenameSeriesTask>(new RenameSeriesTask(move(ret)));
 }
 
-unordered_map<string, unordered_map<string, ReadResult>> EmptyStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only, BaseFunctionProfiler* profiler) {
-
+shared_ptr<Store::ReadTask> EmptyStore::read(
+    StoreTaskManager*, shared_ptr<const ReadArguments> args,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, unordered_map<string, ReadResult>> ret;
-  for (const auto& it : key_names) {
+  for (const auto& it : args->key_names) {
     ret.emplace(piecewise_construct, forward_as_tuple(it), forward_as_tuple());
   }
-  return ret;
+  return shared_ptr<ReadTask>(new ReadTask(move(ret)));
 }
 
-ReadAllResult EmptyStore::read_all(const string& key_name, bool local_only,
+shared_ptr<Store::ReadAllTask> EmptyStore::read_all(StoreTaskManager*,
+    shared_ptr<const ReadAllArguments> args, BaseFunctionProfiler* profiler) {
+  return shared_ptr<ReadAllTask>(new ReadAllTask(ReadAllResult()));
+}
+
+shared_ptr<Store::WriteTask> EmptyStore::write(
+    StoreTaskManager*, shared_ptr<const WriteArguments> args,
     BaseFunctionProfiler* profiler) {
-  return ReadAllResult();
-}
-
-unordered_map<string, Error> EmptyStore::write(
-    const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
-
   unordered_map<string, Error> ret;
-  for (const auto& it : data) {
+  for (const auto& it : args->data) {
     ret.emplace(it.first, make_success());
   }
-  return ret;
+  return shared_ptr<WriteTask>(new WriteTask(move(ret)));
 }
 
-unordered_map<string, FindResult> EmptyStore::find(
-    const vector<string>& patterns, bool local_only,
+shared_ptr<Store::FindTask> EmptyStore::find(
+    StoreTaskManager*, shared_ptr<const FindArguments> args,
     BaseFunctionProfiler* profiler) {
-
   unordered_map<string, FindResult> ret;
-  for (const auto& it : patterns) {
+  for (const auto& it : args->patterns) {
     ret.emplace(piecewise_construct, forward_as_tuple(it), forward_as_tuple());
   }
-  return ret;
+  return shared_ptr<FindTask>(new FindTask(move(ret)));
 }
 
 string EmptyStore::str() const {

@@ -44,9 +44,19 @@ struct Options {
   int64_t internal_profiler_threshold_usecs;
   int log_level;
 
-  shared_ptr<JSONObject> store_config;
-  shared_ptr<Store> store;
-  vector<shared_ptr<ConsistentHashMultiStore>> hash_stores;
+  shared_ptr<JSONObject> store_config_json;
+
+  struct StoreConfig {
+    shared_ptr<Store> store;
+    vector<shared_ptr<ConsistentHashMultiStore>> hash_stores;
+    bool requires_network_calls;
+
+    StoreConfig() : requires_network_calls(false) { }
+
+    // convenience constructor for use in parse_store_config
+    StoreConfig(Store* s) : store(s), requires_network_calls(false) { }
+  };
+  StoreConfig store_config;
 
   vector<pair<string, SeriesMetadata>> autocreate_rules;
 
@@ -85,7 +95,7 @@ struct Options {
       this->log_level = WARNING;
     }
     this->autocreate_rules = this->parse_autocreate_rules((*json)["autocreate_rules"]);
-    this->store_config = (*json)["store_config"];
+    this->store_config_json = (*json)["store_config"];
 
     // load immutable configuration
     if (!is_reload) {
@@ -105,10 +115,8 @@ struct Options {
       this->datagram_threads = (*json)["datagram_threads"]->as_int();
       this->thrift_threads = (*json)["thrift_threads"]->as_int();
 
-      auto parse_ret = this->parse_store_config(this->store_config);
-      this->store = parse_ret.first;
-      this->hash_stores = move(parse_ret.second);
-      this->store->set_autocreate_rules(this->autocreate_rules);
+      this->store_config = this->parse_store_config(this->store_config_json);
+      this->store_config.store->set_autocreate_rules(this->autocreate_rules);
     }
   }
 
@@ -133,99 +141,108 @@ struct Options {
     return ret;
   }
 
-  pair<shared_ptr<Store>, vector<shared_ptr<ConsistentHashMultiStore>>> parse_store_config(
-      shared_ptr<JSONObject> store_config) {
-
-    string type = (*store_config)["type"]->as_string();
+  StoreConfig parse_store_config(shared_ptr<JSONObject> store_config_json) {
+    string type = (*store_config_json)["type"]->as_string();
 
     if (!type.compare("query")) {
-      auto parse_ret = this->parse_store_config((*store_config)["substore"]);
-      return make_pair(shared_ptr<Store>(new QueryStore(parse_ret.first)), parse_ret.second);
+      auto ret = this->parse_store_config((*store_config_json)["substore"]);
+      ret.store = shared_ptr<Store>(new QueryStore(ret.store));
+      return ret;
     }
 
     if (!type.compare("hash")) {
-      vector<shared_ptr<ConsistentHashMultiStore>> hash_stores;
-      unordered_map<string, shared_ptr<Store>> stores;
+      unordered_map<string, MultiStore::StoreInfo> substores;
 
-      for (auto& it : (*store_config)["stores"]->as_dict()) {
-        auto parse_ret = this->parse_store_config(it.second);
-        stores.emplace(it.first, parse_ret.first);
-        hash_stores.insert(hash_stores.end(), parse_ret.second.begin(), parse_ret.second.end());
+      StoreConfig ret;
+      for (auto& it : (*store_config_json)["stores"]->as_dict()) {
+        auto sub_ret = this->parse_store_config(it.second);
+        ret.hash_stores.insert(ret.hash_stores.end(),
+            sub_ret.hash_stores.begin(), sub_ret.hash_stores.end());
+        if (sub_ret.requires_network_calls) {
+          ret.requires_network_calls = true;
+        }
+        substores.emplace(piecewise_construct, forward_as_tuple(it.first),
+            forward_as_tuple(sub_ret.store, sub_ret.requires_network_calls));
       }
 
-      int64_t precision = (*store_config)["precision"]->as_int();
-      shared_ptr<ConsistentHashMultiStore> store(new ConsistentHashMultiStore(stores, precision));
-      hash_stores.emplace_back(store);
-      return make_pair(store, hash_stores);
+      int64_t precision = (*store_config_json)["precision"]->as_int();
+      shared_ptr<ConsistentHashMultiStore> store(new ConsistentHashMultiStore(
+          substores, precision));
+      ret.store = store;
+      ret.hash_stores.emplace_back(store);
+      return ret;
     }
 
     if (!type.compare("multi")) {
-      vector<shared_ptr<ConsistentHashMultiStore>> hash_stores;
-      unordered_map<string, shared_ptr<Store>> stores;
+      StoreConfig ret;
+      ret.requires_network_calls = false;
 
-      for (auto& it : (*store_config)["stores"]->as_dict()) {
-        auto parse_ret = this->parse_store_config(it.second);
-        stores.emplace(it.first, parse_ret.first);
-        hash_stores.insert(hash_stores.end(), parse_ret.second.begin(), parse_ret.second.end());
+      unordered_map<string, MultiStore::StoreInfo> substores;
+      for (auto& it : (*store_config_json)["stores"]->as_dict()) {
+        auto sub_ret = this->parse_store_config(it.second);
+        ret.hash_stores.insert(ret.hash_stores.end(),
+            sub_ret.hash_stores.begin(), sub_ret.hash_stores.end());
+        if (sub_ret.requires_network_calls) {
+          ret.requires_network_calls = true;
+        }
+        substores.emplace(piecewise_construct, forward_as_tuple(it.first),
+            forward_as_tuple(sub_ret.store, sub_ret.requires_network_calls));
       }
 
-      return make_pair(shared_ptr<Store>(new MultiStore(stores)), hash_stores);
+      ret.store.reset(new MultiStore(substores));
+      return ret;
     }
 
     if (!type.compare("remote")) {
-      string hostname = (*store_config)["hostname"]->as_string();
-      int port = (*store_config)["port"]->as_int();
-      int64_t connection_limit = (*store_config)["connection_limit"]->as_int();
-      return make_pair(
-          shared_ptr<Store>(new RemoteStore(hostname, port, connection_limit)),
-          vector<shared_ptr<ConsistentHashMultiStore>>());
+      string hostname = (*store_config_json)["hostname"]->as_string();
+      int port = (*store_config_json)["port"]->as_int();
+      int64_t connection_limit = (*store_config_json)["connection_limit"]->as_int();
+      return StoreConfig(new RemoteStore(hostname, port, connection_limit));
     }
 
     if (!type.compare("disk")) {
-      string directory = (*store_config)["directory"]->as_string();
-      return make_pair(shared_ptr<Store>(new DiskStore(directory)),
-          vector<shared_ptr<ConsistentHashMultiStore>>());
+      string directory = (*store_config_json)["directory"]->as_string();
+      return StoreConfig(new DiskStore(directory));
     }
 
     if (!type.compare("cached_disk")) {
-      string directory = (*store_config)["directory"]->as_string();
-      int64_t directory_limit = (*store_config)["directory_limit"]->as_int();
-      int64_t file_limit = (*store_config)["file_limit"]->as_int();
-      return make_pair(shared_ptr<Store>(new CachedDiskStore(directory, directory_limit, file_limit)),
-          vector<shared_ptr<ConsistentHashMultiStore>>());
+      string directory = (*store_config_json)["directory"]->as_string();
+      int64_t directory_limit = (*store_config_json)["directory_limit"]->as_int();
+      int64_t file_limit = (*store_config_json)["file_limit"]->as_int();
+      return StoreConfig(new CachedDiskStore(directory, directory_limit, file_limit));
     }
 
     if (!type.compare("write_buffer")) {
-      size_t num_write_threads = (*store_config)["num_write_threads"]->as_int();
-      size_t batch_size = (*store_config)["batch_size"]->as_int();
-      size_t max_update_metadatas_per_second = (*store_config)["max_update_metadatas_per_second"]->as_int();
-      size_t max_write_batches_per_second = (*store_config)["max_write_batches_per_second"]->as_int();
-      size_t disable_rate_limit_for_queue_length = (*store_config)["disable_rate_limit_for_queue_length"]->as_int();
+      size_t num_write_threads = (*store_config_json)["num_write_threads"]->as_int();
+      size_t batch_size = (*store_config_json)["batch_size"]->as_int();
+      size_t max_update_metadatas_per_second = (*store_config_json)["max_update_metadatas_per_second"]->as_int();
+      size_t max_write_batches_per_second = (*store_config_json)["max_write_batches_per_second"]->as_int();
+      size_t disable_rate_limit_for_queue_length = (*store_config_json)["disable_rate_limit_for_queue_length"]->as_int();
       bool merge_find_patterns = true;
       try {
-        merge_find_patterns = (*store_config)["merge_find_patterns"]->as_bool();
+        merge_find_patterns = (*store_config_json)["merge_find_patterns"]->as_bool();
       } catch (const JSONObject::key_error&) { }
       bool enable_deferred_deletes = true;
       try {
-        enable_deferred_deletes = (*store_config)["enable_deferred_deletes"]->as_bool();
+        enable_deferred_deletes = (*store_config_json)["enable_deferred_deletes"]->as_bool();
       } catch (const JSONObject::key_error&) { }
-      auto parse_ret = this->parse_store_config((*store_config)["substore"]);
-      return make_pair(
-          shared_ptr<Store>(new WriteBufferStore(parse_ret.first,
-            num_write_threads, batch_size, max_update_metadatas_per_second,
+
+      auto ret = this->parse_store_config((*store_config_json)["substore"]);
+      ret.store.reset(new WriteBufferStore(ret.store, num_write_threads,
+            batch_size, max_update_metadatas_per_second,
             max_write_batches_per_second, disable_rate_limit_for_queue_length,
-            merge_find_patterns, enable_deferred_deletes)),
-          parse_ret.second);
+            merge_find_patterns, enable_deferred_deletes));
+      return ret;
     }
 
     if (!type.compare("read_only")) {
-      auto parse_ret = this->parse_store_config((*store_config)["substore"]);
-      return make_pair(shared_ptr<Store>(new ReadOnlyStore(parse_ret.first)), parse_ret.second);
+      auto ret = this->parse_store_config((*store_config_json)["substore"]);
+      ret.store.reset(new ReadOnlyStore(ret.store));
+      return ret;
     }
 
     if (!type.compare("empty")) {
-      return make_pair(shared_ptr<Store>(new EmptyStore()),
-          vector<shared_ptr<ConsistentHashMultiStore>>());
+      return StoreConfig(new EmptyStore());
     }
 
     throw runtime_error("invalid store config");
@@ -271,12 +288,12 @@ struct Options {
   }
 };
 
-void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
-    shared_ptr<const JSONObject> new_store_config,
+void apply_store_config(shared_ptr<const JSONObject> orig_store_config_json,
+    shared_ptr<const JSONObject> new_store_config_json,
     shared_ptr<Store> base, std::string prefix = "base") {
   try {
-    string orig_type = (*orig_store_config)["type"]->as_string();
-    string new_type = (*new_store_config)["type"]->as_string();
+    string orig_type = (*orig_store_config_json)["type"]->as_string();
+    string new_type = (*new_store_config_json)["type"]->as_string();
     if (orig_type != new_type) {
       log(ERROR, "store type in configuration has changed from %s to %s; ignoring",
           orig_type.c_str(), new_type.c_str());
@@ -289,14 +306,14 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       if (new_type == "cached_disk") {
         CachedDiskStore* cd = reinterpret_cast<CachedDiskStore*>(d);
 
-        size_t new_directory_limit = (*new_store_config)["directory_limit"]->as_int();
+        size_t new_directory_limit = (*new_store_config_json)["directory_limit"]->as_int();
         if (new_directory_limit != cd->get_directory_limit()) {
           log(INFO, "%s.cached_disk.directory_limit changed from %" PRId64 " to %" PRId64,
               prefix.c_str(), cd->get_directory_limit(), new_directory_limit);
           cd->set_directory_limit(new_directory_limit);
         }
 
-        size_t new_file_limit = (*new_store_config)["file_limit"]->as_int();
+        size_t new_file_limit = (*new_store_config_json)["file_limit"]->as_int();
         if (new_file_limit != cd->get_file_limit()) {
           log(INFO, "%s.cached_disk.file_limit changed from %" PRId64 " to %" PRId64,
               prefix.c_str(), cd->get_file_limit(), new_file_limit);
@@ -304,7 +321,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
         }
       }
 
-      string new_directory = (*new_store_config)["directory"]->as_string();
+      string new_directory = (*new_store_config_json)["directory"]->as_string();
       if (new_directory != d->get_directory()) {
         log(INFO, "%s.%s.directory changed from %s to %s", prefix.c_str(),
             new_type.c_str(), d->get_directory().c_str(),
@@ -316,7 +333,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       WriteBufferStore* wb = reinterpret_cast<WriteBufferStore*>(base.get());
 
       {
-        size_t new_batch_size = (*new_store_config)["batch_size"]->as_int();
+        size_t new_batch_size = (*new_store_config_json)["batch_size"]->as_int();
         if (new_batch_size != wb->get_batch_size()) {
           log(INFO, "%s.write_buffer.batch_size changed from %zu to %zu",
               prefix.c_str(), wb->get_batch_size(), new_batch_size);
@@ -325,7 +342,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       }
 
       {
-        size_t new_value = (*new_store_config)["max_update_metadatas_per_second"]->as_int();
+        size_t new_value = (*new_store_config_json)["max_update_metadatas_per_second"]->as_int();
         if (new_value != wb->get_max_update_metadatas_per_second()) {
           log(INFO, "%s.write_buffer.max_update_metadatas_per_second changed from %zu to %zu",
               prefix.c_str(), wb->get_max_update_metadatas_per_second(), new_value);
@@ -334,7 +351,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       }
 
       {
-        size_t new_value = (*new_store_config)["max_write_batches_per_second"]->as_int();
+        size_t new_value = (*new_store_config_json)["max_write_batches_per_second"]->as_int();
         if (new_value != wb->get_max_write_batches_per_second()) {
           log(INFO, "%s.write_buffer.max_write_batches_per_second changed from %zu to %zu",
               prefix.c_str(), wb->get_max_write_batches_per_second(), new_value);
@@ -343,7 +360,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       }
 
       {
-        ssize_t new_value = (*new_store_config)["disable_rate_limit_for_queue_length"]->as_int();
+        ssize_t new_value = (*new_store_config_json)["disable_rate_limit_for_queue_length"]->as_int();
         if (new_value != wb->get_disable_rate_limit_for_queue_length()) {
           log(INFO, "%s.write_buffer.disable_rate_limit_for_queue_length changed from %zd to %zd",
               prefix.c_str(), wb->get_disable_rate_limit_for_queue_length(), new_value);
@@ -352,7 +369,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       }
 
       {
-        bool new_value = (*new_store_config)["merge_find_patterns"]->as_bool();
+        bool new_value = (*new_store_config_json)["merge_find_patterns"]->as_bool();
         if (new_value != wb->get_merge_find_patterns()) {
           log(INFO, "%s.write_buffer.merge_find_patterns changed from %s to %s",
               prefix.c_str(), wb->get_merge_find_patterns() ? "true" : "false",
@@ -362,7 +379,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       }
 
       {
-        bool new_value = (*new_store_config)["enable_deferred_deletes"]->as_bool();
+        bool new_value = (*new_store_config_json)["enable_deferred_deletes"]->as_bool();
         if (new_value != wb->get_enable_deferred_deletes()) {
           log(INFO, "%s.write_buffer.enable_deferred_deletes changed from %s to %s",
               prefix.c_str(), wb->get_enable_deferred_deletes() ? "true" : "false",
@@ -371,15 +388,15 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
         }
       }
 
-      auto orig_substore_config = (*orig_store_config)["substore"];
-      auto new_substore_config = (*new_store_config)["substore"];
-      apply_store_config(orig_substore_config, new_substore_config,
+      auto orig_substore_config_json = (*orig_store_config_json)["substore"];
+      auto new_substore_config_json = (*new_store_config_json)["substore"];
+      apply_store_config(orig_substore_config_json, new_substore_config_json,
           wb->get_substore(), prefix + ".write_buffer");
 
     } else if (new_type == "remote") {
       RemoteStore* r = reinterpret_cast<RemoteStore*>(base.get());
 
-      size_t new_connection_limit = (*new_store_config)["connection_limit"]->as_int();
+      size_t new_connection_limit = (*new_store_config_json)["connection_limit"]->as_int();
       if (new_connection_limit != r->get_connection_limit()) {
         log(INFO, "%s.remote.connection_limit changed from %zu to %zu",
             prefix.c_str(), r->get_connection_limit(),
@@ -387,8 +404,8 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
         r->set_connection_limit(new_connection_limit);
       }
 
-      string new_hostname = (*new_store_config)["hostname"]->as_string();
-      int new_port = (*new_store_config)["port"]->as_int();
+      string new_hostname = (*new_store_config_json)["hostname"]->as_string();
+      int new_port = (*new_store_config_json)["port"]->as_int();
       if (new_hostname != r->get_hostname() || new_port != r->get_port()) {
         log(INFO, "%s.remote.netloc changed from %s:%d to %s:%d",
             prefix.c_str(), r->get_hostname().c_str(), r->get_port(),
@@ -398,16 +415,16 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
 
     } else if (new_type == "read_only") {
       ReadOnlyStore* ro = reinterpret_cast<ReadOnlyStore*>(base.get());
-      auto orig_substore_config = (*orig_store_config)["substore"];
-      auto new_substore_config = (*new_store_config)["substore"];
-      apply_store_config(orig_substore_config, new_substore_config,
+      auto orig_substore_config_json = (*orig_store_config_json)["substore"];
+      auto new_substore_config_json = (*new_store_config_json)["substore"];
+      apply_store_config(orig_substore_config_json, new_substore_config_json,
           ro->get_substore(), prefix + ".read_only");
 
     } else if (new_type == "query") {
       QueryStore* q = reinterpret_cast<QueryStore*>(base.get());
-      auto orig_substore_config = (*orig_store_config)["substore"];
-      auto new_substore_config = (*new_store_config)["substore"];
-      apply_store_config(orig_substore_config, new_substore_config,
+      auto orig_substore_config_json = (*orig_store_config_json)["substore"];
+      auto new_substore_config_json = (*new_store_config_json)["substore"];
+      apply_store_config(orig_substore_config_json, new_substore_config_json,
           q->get_substore(), prefix + ".query");
 
     } else if ((new_type == "multi") || (new_type == "hash")) {
@@ -416,7 +433,7 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
       if (new_type == "hash") {
         ConsistentHashMultiStore* hm = reinterpret_cast<ConsistentHashMultiStore*>(m);
 
-        int64_t new_precision = (*new_store_config)["precision"]->as_int();
+        int64_t new_precision = (*new_store_config_json)["precision"]->as_int();
         if (new_precision != hm->get_precision()) {
           log(INFO, "%s.hash.precision changed from %zu to %zu",
               prefix.c_str(), hm->get_precision(), new_precision);
@@ -424,24 +441,24 @@ void apply_store_config(shared_ptr<const JSONObject> orig_store_config,
         }
       }
 
-      const auto& new_substore_configs = (*new_store_config)["stores"]->as_dict();
+      const auto& new_substore_config_jsons = (*new_store_config_json)["stores"]->as_dict();
       for (const auto& it : m->get_substores()) {
-        if (!new_substore_configs.count(it.first)) {
+        if (!new_substore_config_jsons.count(it.first)) {
           log(ERROR, "substores cannot be removed from multi stores without restarting");
           return;
         }
       }
-      for (const auto& it : new_substore_configs) {
+      for (const auto& it : new_substore_config_jsons) {
         if (!m->get_substores().count(it.first)) {
           log(ERROR, "substores cannot be added to multi stores without restarting");
           return;
         }
       }
 
-      const auto& orig_substore_configs = (*new_store_config)["stores"]->as_dict();
+      const auto& orig_substore_config_jsons = (*new_store_config_json)["stores"]->as_dict();
       for (auto& it : m->get_substores()) {
-        apply_store_config(orig_substore_configs.at(it.first),
-            new_substore_configs.at(it.first), it.second,
+        apply_store_config(orig_substore_config_jsons.at(it.first),
+            new_substore_config_jsons.at(it.first), it.second,
             string_printf("%s.%s[%s]", prefix.c_str(), new_type.c_str(), it.first.c_str()));
       }
 
@@ -506,13 +523,13 @@ int main(int argc, char **argv) {
       vector<string> patterns({pattern});
       string function_name = Store::string_for_find(patterns, true);
       ProfilerGuard pg(create_internal_profiler("main", function_name));
-      auto find_result_map = opt.store->find({pattern}, true, pg.profiler.get());
+      auto task = opt.store_config.store->find(NULL, {pattern}, true, pg.profiler.get());
 
       if (level >= opt.prepopulate_depth) {
         continue;
       }
 
-      auto& result = find_result_map.at(pattern);
+      auto& result = task->value().at(pattern);
       for (const string& item : result.results) {
         if (ends_with(item, ".*")) {
           pending_patterns.emplace_back(make_pair(item, level + 1));
@@ -523,8 +540,8 @@ int main(int argc, char **argv) {
 
   vector<shared_ptr<Server>> servers;
   if (!opt.http_listen_addrs.empty()) {
-    shared_ptr<HTTPServer> s(new CycloneHTTPServer(opt.store, opt.http_threads,
-        opt.filename));
+    shared_ptr<HTTPServer> s(new CycloneHTTPServer(opt.store_config.store,
+        opt.http_threads, opt.filename));
     for (const auto& addr : opt.http_listen_addrs) {
       if (addr.second == 0) {
         s->listen(addr.first);
@@ -537,8 +554,8 @@ int main(int argc, char **argv) {
 
   if (!opt.line_stream_listen_addrs.empty() || !opt.pickle_listen_addrs.empty() ||
       !opt.shell_listen_addrs.empty()) {
-    shared_ptr<StreamServer> s(new StreamServer(opt.store, opt.hash_stores,
-        opt.stream_threads));
+    shared_ptr<StreamServer> s(new StreamServer(opt.store_config.store,
+        opt.store_config.hash_stores, opt.stream_threads));
     for (const auto& addr : opt.line_stream_listen_addrs) {
       if (addr.second == 0) {
         s->listen(addr.first, StreamServer::Protocol::Line);
@@ -564,7 +581,7 @@ int main(int argc, char **argv) {
   }
 
   if (!opt.line_datagram_listen_addrs.empty()) {
-    shared_ptr<DatagramServer> s(new DatagramServer(opt.store,
+    shared_ptr<DatagramServer> s(new DatagramServer(opt.store_config.store,
         opt.datagram_threads));
     for (const auto& addr : opt.line_datagram_listen_addrs) {
       if (addr.second == 0) {
@@ -577,8 +594,8 @@ int main(int argc, char **argv) {
   }
 
   if (opt.thrift_port) {
-    servers.emplace_back(new ThriftServer(opt.store, opt.hash_stores,
-        opt.thrift_port, opt.thrift_threads));
+    servers.emplace_back(new ThriftServer(opt.store_config.store,
+        opt.store_config.hash_stores, opt.thrift_port, opt.thrift_threads));
   }
 
   for (auto& it : servers) {
@@ -615,7 +632,7 @@ int main(int argc, char **argv) {
         if (new_opt.autocreate_rules != opt.autocreate_rules) {
           log(INFO, "autocreate rules changed");
           opt.autocreate_rules = new_opt.autocreate_rules;
-          opt.store->set_autocreate_rules(opt.autocreate_rules);
+          opt.store_config.store->set_autocreate_rules(opt.autocreate_rules);
         }
 
         if (new_opt.log_level != opt.log_level) {
@@ -639,8 +656,9 @@ int main(int argc, char **argv) {
           set_profiler_threshold(true, opt.internal_profiler_threshold_usecs);
         }
 
-        apply_store_config(opt.store_config, new_opt.store_config, opt.store);
-        opt.store_config = new_opt.store_config;
+        apply_store_config(opt.store_config_json, new_opt.store_config_json,
+            opt.store_config.store);
+        opt.store_config_json = new_opt.store_config_json;
 
         config_modification_time = t;
       }
@@ -650,7 +668,7 @@ int main(int argc, char **argv) {
 
     if (next_stats_report_time && (now() >= next_stats_report_time)) {
       string hostname = gethostname();
-      auto stats = gather_stats(opt.store, servers);
+      auto stats = gather_stats(opt.store_config.store, servers);
 
       unordered_map<string, Series> data_to_write;
 
@@ -668,7 +686,8 @@ int main(int argc, char **argv) {
           false);
       ProfilerGuard pg(create_internal_profiler("main", function_name));
       try {
-        opt.store->write(data_to_write, false, false, pg.profiler.get());
+        opt.store_config.store->write(NULL, data_to_write, false, false,
+            pg.profiler.get());
       } catch (const exception& e) {
         log(INFO, "failed to report stats: %s\n", e.what());
       }
@@ -677,7 +696,8 @@ int main(int argc, char **argv) {
     }
 
     if (should_flush) {
-      opt.store->flush();
+      StoreTaskManager m;
+      opt.store_config.store->flush(&m);
       should_flush = false;
     }
 
@@ -703,7 +723,10 @@ int main(int argc, char **argv) {
     it->wait_for_stop();
   }
 
-  opt.store->flush();
+  {
+    StoreTaskManager m;
+    opt.store_config.store->flush(&m);
+  }
 
   return 0;
 }

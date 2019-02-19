@@ -83,15 +83,13 @@ void DiskStore::set_directory(const std::string& new_value) {
   WhisperArchive::clear_files_lru();
 }
 
-unordered_map<string, Error> DiskStore::update_metadata(
-    const SeriesMetadataMap& m, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
+shared_ptr<Store::UpdateMetadataTask> DiskStore::update_metadata(StoreTaskManager*,
+    shared_ptr<const UpdateMetadataArguments> args, BaseFunctionProfiler* profiler) {
 
   // TODO: add profiling metadata and checkpoints for this function
 
   unordered_map<string, Error> ret;
-  for (auto& it : m) {
+  for (auto& it : args->metadata) {
     auto& key_name = it.first;
     auto& metadata = it.second;
 
@@ -104,22 +102,22 @@ unordered_map<string, Error> DiskStore::update_metadata(
       string filename = this->filename_for_key(key_name);
 
       // create directories if we need to
-      if (create_new) {
+      if (args->create_new) {
         this->stats[0].directory_creates += makedirs_for_file(filename);
       }
 
       // create or update the series
       if (isfile(filename)) {
-        if (update_behavior == UpdateMetadataBehavior::Ignore) {
+        if (args->behavior == UpdateMetadataBehavior::Ignore) {
           ret.emplace(key_name, make_ignored());
 
-        } else if (update_behavior == UpdateMetadataBehavior::Update) {
+        } else if (args->behavior == UpdateMetadataBehavior::Update) {
           WhisperArchive(filename).update_metadata(metadata.archive_args,
               metadata.x_files_factor, metadata.agg_method);
           ret.emplace(key_name, make_success());
           this->stats[0].series_update_metadatas++;
 
-        } else if (update_behavior == UpdateMetadataBehavior::Recreate) {
+        } else if (args->behavior == UpdateMetadataBehavior::Recreate) {
           WhisperArchive(filename, metadata.archive_args, metadata.x_files_factor,
               metadata.agg_method);
           ret.emplace(key_name, make_success());
@@ -127,7 +125,7 @@ unordered_map<string, Error> DiskStore::update_metadata(
         }
 
       } else {
-        if (create_new) {
+        if (args->create_new) {
           WhisperArchive(filename, metadata.archive_args, metadata.x_files_factor,
               metadata.agg_method);
           ret.emplace(key_name, make_success());
@@ -143,16 +141,16 @@ unordered_map<string, Error> DiskStore::update_metadata(
     }
   }
 
-  return ret;
+  return shared_ptr<UpdateMetadataTask>(new UpdateMetadataTask(move(ret)));
 }
 
-unordered_map<string, DeleteResult> DiskStore::delete_series(
-    const vector<string>& patterns, bool deferred, bool local_only,
+shared_ptr<Store::DeleteSeriesTask> DiskStore::delete_series(StoreTaskManager*,
+    shared_ptr<const DeleteSeriesArguments> args,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, DeleteResult> ret;
 
   // create results for all input patterns
-  for (const auto& pattern : patterns) {
+  for (const auto& pattern : args->patterns) {
     auto& res = ret[pattern];
     res.disk_series_deleted = 0;
     res.buffer_series_deleted = 0;
@@ -163,7 +161,7 @@ unordered_map<string, DeleteResult> DiskStore::delete_series(
   // resolve_patterns and isn't allowed anywhere else in patterns, so
   // special-case it here
   vector<string> determinate_patterns;
-  for (const auto& pattern : patterns) {
+  for (const auto& pattern : args->patterns) {
     if (ends_with(pattern, ".**")) {
       string directory_pattern = pattern.substr(0, pattern.size() - 3);
       string directory_path = this->filename_for_key(directory_pattern, false);
@@ -206,8 +204,11 @@ unordered_map<string, DeleteResult> DiskStore::delete_series(
   }
   profiler->checkpoint("separate_determinate_patterns");
 
-  auto key_to_patterns = this->resolve_patterns(determinate_patterns,
-      local_only, profiler);
+  StoreTaskManager m;
+  auto resolve_patterns_task = this->resolve_patterns(&m, determinate_patterns,
+      args->local_only, profiler);
+  m.run(resolve_patterns_task);
+  auto key_to_patterns = resolve_patterns_task->value();
   profiler->checkpoint("resolve_patterns");
 
   for (const auto& key_it : key_to_patterns) {
@@ -243,24 +244,30 @@ unordered_map<string, DeleteResult> DiskStore::delete_series(
   }
   profiler->checkpoint("delete_files");
 
-  return ret;
+  return shared_ptr<DeleteSeriesTask>(new DeleteSeriesTask(move(ret)));
 }
 
-unordered_map<string, Error> DiskStore::rename_series(
-    const unordered_map<string, string>& renames, bool merge, bool local_only,
-    BaseFunctionProfiler* profiler) {
+shared_ptr<Store::RenameSeriesTask> DiskStore::rename_series(StoreTaskManager*,
+    shared_ptr<const RenameSeriesArguments> args, BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
 
-  // if merging, be lazy and do the read+create+write procedure instead
-  if (merge) {
-    for (const auto& it : renames) {
-      ret.emplace(it.first, this->emulate_rename_series(this, it.first, this,
-          it.second, merge, profiler));
+  // if merging, be lazy and do the read+create+write procedure instead. note
+  // that we can use a trivial task manager here because there are no network
+  // calls involved. for the same reason, it doesn't help to parallelize these
+  // rename tasks (and doing so might be bad because it would increase memory
+  // requirements)
+  if (args->merge) {
+    for (const auto& it : args->renames) {
+      StoreTaskManager m;
+      auto task = this->emulate_rename_series(&m, this, it.first, this,
+          it.second, args->merge, profiler);
+      m.run(task);
+      ret.emplace(it.first, task->value());
     }
-    return ret;
+    return shared_ptr<RenameSeriesTask>(new RenameSeriesTask(move(ret)));
   }
 
-  for (const auto& rename_it : renames) {
+  for (const auto& rename_it : args->renames) {
     if (rename_it.first == rename_it.second) {
       ret.emplace(rename_it.first, make_success());
       continue;
@@ -296,15 +303,17 @@ unordered_map<string, Error> DiskStore::rename_series(
   }
   profiler->checkpoint("rename_files");
 
-  return ret;
+  return shared_ptr<RenameSeriesTask>(new RenameSeriesTask(move(ret)));
 }
 
-unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only, BaseFunctionProfiler* profiler) {
+shared_ptr<Store::ReadTask> DiskStore::read(StoreTaskManager*,
+    shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler) {
 
-  auto key_to_patterns = this->resolve_patterns(key_names, local_only,
-      profiler);
+  StoreTaskManager m;
+  auto resolve_patterns_task = this->resolve_patterns(&m, args->key_names,
+      args->local_only, profiler);
+  m.run(resolve_patterns_task);
+  auto key_to_patterns = resolve_patterns_task->value();
   profiler->checkpoint("resolve_patterns");
 
   unordered_map<string, ReadResult*> key_to_read_result;
@@ -328,8 +337,8 @@ unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
 
       try {
         WhisperArchive d(this->filename_for_key(key_name));
-        if (start_time && end_time) {
-          auto res = d.read(start_time, end_time);
+        if (args->start_time && args->end_time) {
+          auto res = d.read(args->start_time, args->end_time);
           r.data = move(res.data);
           r.start_time = res.start_time;
           r.end_time = res.end_time;
@@ -338,8 +347,8 @@ unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
 
       } catch (const cannot_open_file& e) {
         if (e.error == ENOENT) {
-          r.start_time = start_time;
-          r.end_time = end_time;
+          r.start_time = args->start_time;
+          r.end_time = args->end_time;
           r.step = 0;
         } else {
           r.error = make_error(e.what());
@@ -353,14 +362,14 @@ unordered_map<string, unordered_map<string, ReadResult>> DiskStore::read(
   profiler->checkpoint("read_data");
 
   this->stats[0].report_read_request(ret);
-  return ret;
+  return shared_ptr<ReadTask>(new ReadTask(move(ret)));
 }
 
-ReadAllResult DiskStore::read_all(const string& key_name, bool local_only,
-    BaseFunctionProfiler* profiler) {
+shared_ptr<Store::ReadAllTask> DiskStore::read_all(StoreTaskManager*,
+    shared_ptr<const ReadAllArguments> args, BaseFunctionProfiler* profiler) {
   ReadAllResult ret;
   try {
-    WhisperArchive d(this->filename_for_key(key_name));
+    WhisperArchive d(this->filename_for_key(args->key_name));
 
     ret.data = d.read_all();
 
@@ -380,15 +389,14 @@ ReadAllResult DiskStore::read_all(const string& key_name, bool local_only,
   } catch (const exception& e) {
     ret.error = make_error(e.what());
   }
-  return ret;
+  return shared_ptr<ReadAllTask>(new ReadAllTask(move(ret)));
 }
 
-unordered_map<string, Error> DiskStore::write(
-    const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
+shared_ptr<Store::WriteTask> DiskStore::write(StoreTaskManager*,
+    shared_ptr<const WriteArguments> args, BaseFunctionProfiler* profiler) {
 
   unordered_map<string, Error> ret;
-  for (const auto& it : data) {
+  for (const auto& it : args->data) {
     if (!this->key_name_is_valid(it.first)) {
       ret.emplace(it.first, make_ignored("key contains invalid characters"));
       continue;
@@ -408,9 +416,17 @@ unordered_map<string, Error> DiskStore::write(
           ret.emplace(it.first, make_error("series does not exist"));
 
         } else {
-          auto update_metadata_ret = this->update_metadata({{it.first, m}},
-              true, UpdateMetadataBehavior::Ignore, skip_buffering, local_only,
-              profiler);
+          shared_ptr<UpdateMetadataArguments> sub_args(new UpdateMetadataArguments());
+          sub_args->metadata.emplace(it.first, m);
+          sub_args->behavior = UpdateMetadataBehavior::Ignore;
+          sub_args->create_new = true;
+          sub_args->skip_buffering = args->skip_buffering;
+          sub_args->local_only = args->local_only;
+
+          StoreTaskManager m;
+          auto task = this->update_metadata(&m, sub_args, profiler);
+          m.run(task);
+          auto& update_metadata_ret = task->value();
           auto series_ret = update_metadata_ret.at(it.first);
 
           if (series_ret.description.empty() || series_ret.ignored) {
@@ -430,8 +446,8 @@ unordered_map<string, Error> DiskStore::write(
     }
   }
 
-  this->stats[0].report_write_request(ret, data);
-  return ret;
+  this->stats[0].report_write_request(ret, args->data);
+  return shared_ptr<WriteTask>(new WriteTask(move(ret)));
 }
 
 void DiskStore::find_recursive(vector<string>& ret,
@@ -488,11 +504,10 @@ void DiskStore::find_recursive(vector<string>& ret,
   profiler->checkpoint("list_directory:" + current_path_prefix);
 }
 
-unordered_map<string, FindResult> DiskStore::find(
-    const vector<string>& patterns, bool local_only,
-    BaseFunctionProfiler* profiler) {
+shared_ptr<Store::FindTask> DiskStore::find(StoreTaskManager*,
+    shared_ptr<const FindArguments> args, BaseFunctionProfiler* profiler) {
   unordered_map<string, FindResult> ret;
-  for (const auto& pattern : patterns) {
+  for (const auto& pattern : args->patterns) {
     FindResult& r = ret[pattern];
     try {
       vector<string> pattern_parts = split(pattern, '.');
@@ -504,7 +519,7 @@ unordered_map<string, FindResult> DiskStore::find(
   }
 
   this->stats[0].report_find_request(ret);
-  return ret;
+  return shared_ptr<FindTask>(new FindTask(move(ret)));
 }
 
 unordered_map<string, int64_t> DiskStore::get_stats(bool rotate) {

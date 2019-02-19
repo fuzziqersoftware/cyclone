@@ -44,31 +44,29 @@ public:
   virtual void set_autocreate_rules(
       const std::vector<std::pair<std::string, SeriesMetadata>>& autocreate_rules);
 
-  virtual std::unordered_map<std::string, Error> update_metadata(
-      const SeriesMetadataMap& metadata, bool create_new,
-      UpdateMetadataBehavior update_behavior, bool skip_buffering,
-      bool local_only, BaseFunctionProfiler* profiler);
-  virtual std::unordered_map<std::string, DeleteResult> delete_series(
-      const std::vector<std::string>& patterns, bool deferred, bool local_only,
+  virtual std::shared_ptr<UpdateMetadataTask> update_metadata(
+      StoreTaskManager* m, std::shared_ptr<const UpdateMetadataArguments> args,
       BaseFunctionProfiler* profiler);
-  virtual std::unordered_map<std::string, Error> rename_series(
-      const std::unordered_map<std::string, std::string>& renames,
-      bool merge, bool local_only, BaseFunctionProfiler* profiler);
-
-  virtual std::unordered_map<std::string, std::unordered_map<std::string, ReadResult>> read(
-      const std::vector<std::string>& key_names, int64_t start_time,
-      int64_t end_time, bool local_only, BaseFunctionProfiler* profiler);
-  virtual ReadAllResult read_all(const std::string& key_name, bool local_only,
+  virtual std::shared_ptr<DeleteSeriesTask> delete_series(StoreTaskManager* m,
+      std::shared_ptr<const DeleteSeriesArguments> args,
       BaseFunctionProfiler* profiler);
-  virtual std::unordered_map<std::string, Error> write(
-      const std::unordered_map<std::string, Series>& data, bool skip_buffering,
-      bool local_only, BaseFunctionProfiler* profiler);
-
-  virtual std::unordered_map<std::string, FindResult> find(
-      const std::vector<std::string>& patterns, bool local_only,
+  virtual std::shared_ptr<RenameSeriesTask> rename_series(StoreTaskManager* m,
+      std::shared_ptr<const RenameSeriesArguments> args,
       BaseFunctionProfiler* profiler);
 
-  virtual void flush();
+  virtual std::shared_ptr<ReadTask> read(StoreTaskManager* m,
+      std::shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler);
+  virtual std::shared_ptr<ReadAllTask> read_all(StoreTaskManager* m,
+      std::shared_ptr<const ReadAllArguments> args,
+      BaseFunctionProfiler* profiler);
+
+  virtual std::shared_ptr<WriteTask> write(StoreTaskManager* m,
+      std::shared_ptr<const WriteArguments> args, BaseFunctionProfiler* profiler);
+
+  virtual std::shared_ptr<FindTask> find(StoreTaskManager* m,
+      std::shared_ptr<const FindArguments> args, BaseFunctionProfiler* profiler);
+
+  virtual void flush(StoreTaskManager* m);
 
   virtual std::unordered_map<std::string, int64_t> get_stats(
       bool rotate = false);
@@ -140,4 +138,9 @@ private:
 
   void write_thread_routine(size_t thread_index);
   void delete_thread_routine();
+
+  class WriteBufferStoreDeleteSeriesTask;
+  class WriteBufferStoreRenameSeriesTask;
+  class WriteBufferStoreReadTask;
+  class WriteBufferStoreFindTask;
 };

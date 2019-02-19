@@ -20,6 +20,74 @@
 using namespace std;
 
 
+
+class QueryStore::QueryStoreReadTask : public Store::ReadTask {
+public:
+  virtual ~QueryStoreReadTask() = default;
+  QueryStoreReadTask(StoreTaskManager* m, QueryStore* s,
+      shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler) :
+      ReadTask(m, args, profiler), store(s) {
+    for (const auto& query : this->args->key_names) {
+      try {
+        auto tokens = tokenize_query(query);
+        this->parsed_queries.emplace(query, parse_query(tokens));
+      } catch (const exception& e) {
+        this->return_value[query][query].error = make_error(e.what());
+      }
+    }
+    this->profiler->checkpoint("parse_query");
+
+    // find all the read patterns and execute them all
+    // TODO: we can probably do something better than this (copying the
+    // unordered_set to a vector)
+    shared_ptr<Store::ReadArguments> subread_args(new Store::ReadArguments());
+    vector<string>& substore_reads = subread_args->key_names;
+    subread_args->start_time = args->start_time;
+    subread_args->end_time = args->end_time;
+    subread_args->local_only = args->local_only;
+    {
+      unordered_set<string> substore_reads_set;
+      for (const auto& it : parsed_queries) {
+        QueryStore::extract_series_references_into(substore_reads_set, it.second);
+      }
+      substore_reads.insert(substore_reads.end(), substore_reads_set.begin(),
+          substore_reads_set.end());
+    }
+    profiler->checkpoint("extract_series_references");
+
+    this->read_task = this->store->store->read(this->manager, subread_args, this->profiler);
+    this->delegate(this->read_task, bind(&QueryStoreReadTask::on_read_complete, this));
+  }
+
+  void on_read_complete() {
+    auto substore_results = this->read_task->value();
+    this->profiler->checkpoint("query_substore_read");
+
+    // now apply the relevant functions on top of them
+    // TODO: if a series is only referenced once, we probably can move the data
+    // instead of copying
+    for (auto& it : this->parsed_queries) {
+      auto error = this->store->execute_query(it.second, substore_results);
+      if (!error.description.empty()) {
+        this->return_value[it.first][it.first].error = move(error);
+      } else {
+        this->return_value.emplace(it.first, it.second.series_data);
+      }
+    }
+    profiler->checkpoint("execute_query");
+
+    this->set_complete();
+  }
+
+private:
+  QueryStore* store;
+  unordered_map<string, Query> parsed_queries;
+
+  shared_ptr<ReadTask> read_task;
+};
+
+
+
 QueryStore::QueryStore(shared_ptr<Store> store) : Store(), store(store) { }
 
 shared_ptr<Store> QueryStore::get_substore() const {
@@ -32,91 +100,39 @@ void QueryStore::set_autocreate_rules(
   this->store->set_autocreate_rules(autocreate_rules);
 }
 
-unordered_map<string, Error> QueryStore::update_metadata(
-    const SeriesMetadataMap& metadata, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
-  return this->store->update_metadata(metadata, create_new, update_behavior,
-      skip_buffering, local_only, profiler);
+shared_ptr<Store::UpdateMetadataTask> QueryStore::update_metadata(StoreTaskManager* m,
+    shared_ptr<const UpdateMetadataArguments> args, BaseFunctionProfiler* profiler) {
+  return this->store->update_metadata(m, args, profiler);
 }
 
-unordered_map<string, DeleteResult> QueryStore::delete_series(
-    const vector<string>& patterns, bool deferred, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  return this->store->delete_series(patterns, deferred, local_only, profiler);
+shared_ptr<Store::DeleteSeriesTask> QueryStore::delete_series(StoreTaskManager* m,
+    shared_ptr<const DeleteSeriesArguments> args, BaseFunctionProfiler* profiler) {
+  return this->store->delete_series(m, args, profiler);
 }
 
-unordered_map<string, Error> QueryStore::rename_series(
-    const unordered_map<string, string>& renames, bool merge, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  return this->store->rename_series(renames, merge, local_only, profiler);
+shared_ptr<Store::RenameSeriesTask> QueryStore::rename_series(StoreTaskManager* m,
+    shared_ptr<const RenameSeriesArguments> args, BaseFunctionProfiler* profiler) {
+  return this->store->rename_series(m, args, profiler);
 }
 
-unordered_map<string, unordered_map<string, ReadResult>> QueryStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only, BaseFunctionProfiler* profiler) {
-
-  unordered_map<string, Query> parsed_queries;
-  unordered_map<string, unordered_map<string, ReadResult>> ret;
-  for (const auto& query : key_names) {
-    try {
-      auto tokens = tokenize_query(query);
-      parsed_queries.emplace(query, parse_query(tokens));
-    } catch (const exception& e) {
-      ret[query][query].error = make_error(e.what());
-    }
-  }
-  profiler->checkpoint("parse_query");
-
-  // find all the read patterns and execute them all
-  // TODO: we can probably do something better than this (copying the
-  // unordered_set to a vector)
-  vector<string> substore_reads;
-  {
-    unordered_set<string> substore_reads_set;
-    for (const auto& it : parsed_queries) {
-      this->extract_series_references_into(substore_reads_set, it.second);
-    }
-    substore_reads.insert(substore_reads.end(), substore_reads_set.begin(),
-        substore_reads_set.end());
-  }
-  profiler->checkpoint("extract_series_references");
-
-  auto substore_results = this->store->read(substore_reads, start_time,
-      end_time, local_only, profiler);
-  profiler->checkpoint("query_substore_read");
-
-  // now apply the relevant functions on top of them
-  // TODO: if a series is only referenced once, we probably can move the data
-  // instead of copying
-  for (auto& it : parsed_queries) {
-    auto error = this->execute_query(it.second, substore_results);
-    if (!error.description.empty()) {
-      ret[it.first][it.first].error = error;
-    } else {
-      ret.emplace(it.first, it.second.series_data);
-    }
-  }
-  profiler->checkpoint("execute_query");
-
-  return ret;
+shared_ptr<Store::ReadTask> QueryStore::read(StoreTaskManager* m,
+    shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler) {
+  return shared_ptr<ReadTask>(new QueryStoreReadTask(m, this, args, profiler));
 }
 
-ReadAllResult QueryStore::read_all(const string& key_name, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  return this->store->read_all(key_name, local_only, profiler);
+shared_ptr<Store::ReadAllTask> QueryStore::read_all(StoreTaskManager* m,
+    shared_ptr<const ReadAllArguments> args, BaseFunctionProfiler* profiler) {
+  return this->store->read_all(m, args, profiler);
 }
 
-unordered_map<string, Error> QueryStore::write(
-    const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
-  return this->store->write(data, skip_buffering, local_only, profiler);
+shared_ptr<Store::WriteTask> QueryStore::write(StoreTaskManager* m,
+    shared_ptr<const WriteArguments> args, BaseFunctionProfiler* profiler) {
+  return this->store->write(m, args, profiler);
 }
 
-unordered_map<string, FindResult> QueryStore::find(
-    const vector<string>& patterns, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  return this->store->find(patterns, local_only, profiler);
+shared_ptr<Store::FindTask> QueryStore::find(StoreTaskManager* m,
+    shared_ptr<const FindArguments> args, BaseFunctionProfiler* profiler) {
+  return this->store->find(m, args, profiler);
 }
 
 unordered_map<string, int64_t> QueryStore::get_stats(bool rotate) {

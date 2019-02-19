@@ -24,66 +24,65 @@ shared_ptr<Store> ReadOnlyStore::get_substore() const {
   return this->store;
 }
 
-unordered_map<string, Error> ReadOnlyStore::update_metadata(
-      const SeriesMetadataMap& metadata_map, bool create_new,
-      UpdateMetadataBehavior update_behavior, bool skip_buffering,
-      bool local_only, BaseFunctionProfiler* profiler) {
+shared_ptr<Store::UpdateMetadataTask> ReadOnlyStore::update_metadata(
+    StoreTaskManager* m, shared_ptr<const UpdateMetadataArguments> args,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
-  for (const auto& it : metadata_map) {
+  for (const auto& it : args->metadata) {
     ret.emplace(it.first, make_error("writes not allowed"));
   }
-  return ret;
+  return shared_ptr<UpdateMetadataTask>(new UpdateMetadataTask(move(ret)));
 }
 
-unordered_map<string, DeleteResult> ReadOnlyStore::delete_series(
-    const vector<string>& patterns, bool deferred, bool local_only,
+shared_ptr<Store::DeleteSeriesTask> ReadOnlyStore::delete_series(
+    StoreTaskManager* m, shared_ptr<const DeleteSeriesArguments> args,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, DeleteResult> ret;
-  for (const auto& pattern : patterns) {
+  for (const auto& pattern : args->patterns) {
     auto& res = ret[pattern];
     res.disk_series_deleted = 0;
     res.buffer_series_deleted = 0;
     res.error = make_error("writes not allowed");
   }
-  return ret;
+  return shared_ptr<DeleteSeriesTask>(new DeleteSeriesTask(move(ret)));
 }
 
-unordered_map<string, Error> ReadOnlyStore::rename_series(
-    const unordered_map<string, string>& renames, bool merge, bool local_only,
+shared_ptr<Store::RenameSeriesTask> ReadOnlyStore::rename_series(
+    StoreTaskManager* m, shared_ptr<const RenameSeriesArguments> args,
     BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
-  for (const auto& it : renames) {
+  for (const auto& it : args->renames) {
     ret.emplace(it.first, make_error("writes not allowed"));
   }
-  return ret;
+  return shared_ptr<RenameSeriesTask>(new RenameSeriesTask(move(ret)));
 }
 
-unordered_map<string, unordered_map<string, ReadResult>> ReadOnlyStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only, BaseFunctionProfiler* profiler) {
-  return this->store->read(key_names, start_time, end_time, local_only,
-      profiler);
-}
-
-ReadAllResult ReadOnlyStore::read_all(const string& key_name, bool local_only,
+shared_ptr<Store::ReadTask> ReadOnlyStore::read(
+    StoreTaskManager* m, shared_ptr<const ReadArguments> args,
     BaseFunctionProfiler* profiler) {
-  return this->store->read_all(key_name, local_only, profiler);
+  return this->store->read(m, args, profiler);
 }
 
-unordered_map<string, Error> ReadOnlyStore::write(
-    const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
+shared_ptr<Store::ReadAllTask> ReadOnlyStore::read_all(
+    StoreTaskManager* m, shared_ptr<const ReadAllArguments> args,
+    BaseFunctionProfiler* profiler) {
+  return this->store->read_all(m, args, profiler);
+}
+
+shared_ptr<Store::WriteTask> ReadOnlyStore::write(
+    StoreTaskManager* m, shared_ptr<const WriteArguments> args,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
-  for (const auto& it : data) {
+  for (const auto& it : args->data) {
     ret.emplace(it.first, make_error("writes not allowed"));
   }
-  return ret;
+  return shared_ptr<WriteTask>(new WriteTask(move(ret)));
 }
 
-unordered_map<string, FindResult> ReadOnlyStore::find(
-    const vector<string>& patterns, bool local_only,
+shared_ptr<Store::FindTask> ReadOnlyStore::find(
+    StoreTaskManager* m, shared_ptr<const FindArguments> args,
     BaseFunctionProfiler* profiler) {
-  return this->store->find(patterns, local_only, profiler);
+  return this->store->find(m, args, profiler);
 }
 
 unordered_map<string, int64_t> ReadOnlyStore::get_stats(bool rotate) {

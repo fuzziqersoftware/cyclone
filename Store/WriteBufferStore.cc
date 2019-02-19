@@ -114,22 +114,22 @@ void WriteBufferStore::set_autocreate_rules(
   this->store->set_autocreate_rules(autocreate_rules);
 }
 
-unordered_map<string, Error> WriteBufferStore::update_metadata(
-      const SeriesMetadataMap& metadata_map, bool create_new,
-      UpdateMetadataBehavior update_behavior, bool skip_buffering,
-      bool local_only, BaseFunctionProfiler* profiler) {
-  profiler->add_metadata("series_count",
-      string_printf("%zu", metadata_map.size()));
 
-  if (skip_buffering) {
+
+shared_ptr<Store::UpdateMetadataTask> WriteBufferStore::update_metadata(
+    StoreTaskManager* m, shared_ptr<const UpdateMetadataArguments> args,
+    BaseFunctionProfiler* profiler) {
+  profiler->add_metadata("series_count",
+      string_printf("%zu", args->metadata.size()));
+
+  if (args->skip_buffering) {
     profiler->add_metadata("skip_buffering", "true");
-    return this->store->update_metadata(metadata_map, create_new,
-        update_behavior, skip_buffering, local_only, profiler);
+    return this->store->update_metadata(m, args, profiler);
   }
 
   unordered_map<string, Error> ret;
 
-  for (const auto& it : metadata_map) {
+  for (const auto& it : args->metadata) {
     const auto& key_name = it.first;
     const auto& metadata = it.second;
 
@@ -139,28 +139,28 @@ unordered_map<string, Error> WriteBufferStore::update_metadata(
 
       auto emplace_ret = this->queue.emplace(piecewise_construct,
           forward_as_tuple(key_name),
-          forward_as_tuple(metadata, create_new, update_behavior));
+          forward_as_tuple(metadata, args->create_new, args->behavior));
 
       if (emplace_ret.second) {
         this->queued_update_metadatas++;
 
       } else {
-        if (update_behavior == UpdateMetadataBehavior::Ignore) {
+        if (args->behavior == UpdateMetadataBehavior::Ignore) {
           ret.emplace(key_name, make_ignored());
           continue;
         }
 
         auto& command = emplace_ret.first->second;
 
-        if (!command.create_new && create_new) {
+        if (!command.create_new && args->create_new) {
           command.create_new = true;
         }
 
-        if (update_behavior == UpdateMetadataBehavior::Recreate) {
+        if (args->behavior == UpdateMetadataBehavior::Recreate) {
           command.update_behavior = UpdateMetadataBehavior::Recreate;
           command.data.clear();
 
-        } else if ((update_behavior == UpdateMetadataBehavior::Update) &&
+        } else if ((args->behavior == UpdateMetadataBehavior::Update) &&
             (command.update_behavior != UpdateMetadataBehavior::Recreate)) {
           command.update_behavior = UpdateMetadataBehavior::Update;
         }
@@ -174,333 +174,400 @@ unordered_map<string, Error> WriteBufferStore::update_metadata(
     }
   }
 
-  return ret;
+  return shared_ptr<UpdateMetadataTask>(new UpdateMetadataTask(move(ret)));
 }
 
-unordered_map<string, DeleteResult> WriteBufferStore::delete_series(
-    const vector<string>& patterns, bool deferred, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  profiler->add_metadata("pattern_count",
-      string_printf("%zu", patterns.size()));
 
-  // remove any pending writes/creates first
 
-  // we move the items out of the map so the destructors will be called outside
-  // of the lock context
-  unordered_map<string, DeleteResult> ret;
+class WriteBufferStore::WriteBufferStoreDeleteSeriesTask : public Store::DeleteSeriesTask {
+public:
+  virtual ~WriteBufferStoreDeleteSeriesTask() = default;
+  WriteBufferStoreDeleteSeriesTask(StoreTaskManager* m, WriteBufferStore* s,
+      shared_ptr<const DeleteSeriesArguments> args,
+      BaseFunctionProfiler* profiler) : DeleteSeriesTask(m, args, profiler),
+      store(s), num_deleted_from_queue(0) {
+    this->profiler->add_metadata("pattern_count",
+        string_printf("%zu", args->patterns.size()));
+
+    // remove any pending writes/creates first
+    {
+      rw_guard g(this->store->queue_lock, true);
+      for (const auto& key_name : this->args->patterns) {
+        auto& res = this->return_value[key_name];
+
+        // we move the items out of the map so the destructors will be called
+        // outside of the lock context (specifically, they'll be called when
+        // this task is destroyed)
+
+        // optimization: the queue is ordered, and usually we don't have a pattern
+        // at the root level, so we only need to scan a portion of the queue for
+        // items to delete. this can be done by finding the first pattern token
+        // and scanning only the range of the queue that matches the string before
+        // that token.
+        size_t pattern_start_offset = key_name.find_first_of("[{*");
+        if (pattern_start_offset != string::npos) {
+          string prefix = key_name.substr(0, pattern_start_offset);
+          auto end_it = this->store->queue.upper_bound(key_name);
+          for (auto it = this->store->queue.lower_bound(key_name); it != end_it;) {
+            if (!Store::name_matches_pattern(it->first, key_name)) {
+              it++;
+              continue;
+            }
+
+            this->items_to_delete.emplace_back(move(it->second));
+            it = this->store->queue.erase(it);
+            res.buffer_series_deleted++;
+          }
+
+        } else {
+          auto it = this->store->queue.find(key_name);
+          if (it == this->store->queue.end()) {
+            continue;
+          }
+          this->items_to_delete.emplace_back(move(it->second));
+          this->store->queue.erase(it);
+          res.buffer_series_deleted++;
+        }
+      }
+    }
+
+    this->profiler->add_metadata("num_deleted_from_queue",
+        string_printf("%zu", num_deleted_from_queue));
+    this->profiler->checkpoint("write_buffer_delete");
+
+    // if the deletes are deferred, just stick them in the queue and return
+    if (this->args->deferred && this->store->enable_deferred_deletes) {
+      {
+        rw_guard g(this->store->delete_queue_lock, true);
+        for (const string& pattern : this->args->patterns) {
+          this->store->delete_queue.emplace_back(pattern);
+        }
+      }
+      this->profiler->checkpoint("enqueue_delete");
+
+      this->on_delete_complete();
+
+    } else {
+      // issue the delete to the underlying store
+      this->delete_task = this->store->store->delete_series(this->manager,
+          this->args, profiler);
+      this->delegate(this->delete_task, bind(
+          &WriteBufferStoreDeleteSeriesTask::on_delete_complete, this));
+    }
+  }
+
+  void on_delete_complete() {
+    // note: in case of deferred deletes, this method is called with a null
+    // delete task
+    if (this->delete_task.get()) {
+      Store::combine_delete_results(this->return_value, move(this->delete_task->value()));
+    }
+
+    // count the items that are about to be deleted
+    size_t num_update_metadatas_deleted = 0;
+    size_t num_writes_deleted = 0;
+    size_t num_datapoints_deleted = 0;
+    for (const auto& it : items_to_delete) {
+      if (it.has_update_metadata()) {
+        num_update_metadatas_deleted++;
+      }
+      size_t num_datapoints = it.data.size();
+      num_datapoints_deleted += num_datapoints;
+      if (num_datapoints) {
+        num_writes_deleted++;
+      }
+    }
+    this->store->queued_update_metadatas -= num_update_metadatas_deleted;
+    this->store->queued_writes -= num_writes_deleted;
+    this->store->queued_datapoints -= num_datapoints_deleted;
+    profiler->checkpoint("write_buffer_merge");
+
+    this->set_complete();
+  }
+
+private:
+  WriteBufferStore* store;
   vector<QueueItem> items_to_delete;
-  size_t num_deleted_from_queue = 0;
-  {
-    rw_guard g(this->queue_lock, true);
-    for (const auto& key_name : patterns) {
-      auto& res = ret[key_name];
+  size_t num_deleted_from_queue;
+  shared_ptr<DeleteSeriesTask> delete_task;
+};
 
-      // optimization: the queue is ordered, and usually we don't have a pattern
-      // at the root level, so we only need to scan a portion of the queue for
-      // items to delete. this can be done by finding the first pattern token
-      // and scanning only the range of the queue that matches the string before
-      // that token.
-      size_t pattern_start_offset = key_name.find_first_of("[{*");
-      if (pattern_start_offset != string::npos) {
-        string prefix = key_name.substr(0, pattern_start_offset);
-        auto end_it = this->queue.upper_bound(key_name);
-        for (auto it = this->queue.lower_bound(key_name); it != end_it;) {
-          if (!this->name_matches_pattern(it->first, key_name)) {
-            it++;
+shared_ptr<Store::DeleteSeriesTask> WriteBufferStore::delete_series(
+    StoreTaskManager* m, shared_ptr<const DeleteSeriesArguments> args,
+    BaseFunctionProfiler* profiler) {
+  return shared_ptr<DeleteSeriesTask>(new WriteBufferStoreDeleteSeriesTask(
+      m, this, args, profiler));
+}
+
+
+
+class WriteBufferStore::WriteBufferStoreRenameSeriesTask : public Store::RenameSeriesTask {
+public:
+  virtual ~WriteBufferStoreRenameSeriesTask() = default;
+  WriteBufferStoreRenameSeriesTask(StoreTaskManager* m, WriteBufferStore* s,
+      shared_ptr<const RenameSeriesArguments> args,
+      BaseFunctionProfiler* profiler) : RenameSeriesTask(m, args), store(s) {
+    profiler->add_metadata("rename_count",
+        string_printf("%zu", this->args->renames.size()));
+
+    // if there are queue items, temporarily remove them from the queue - this is
+    // necessary to make sure they don't get written during the rename
+    {
+      rw_guard g(this->store->queue_lock, true);
+      for (const auto& rename_it : this->args->renames) {
+        auto queue_it = this->store->queue.find(rename_it.first);
+        if (queue_it == this->store->queue.end()) {
+          continue;
+        }
+        items_to_merge.emplace(rename_it.second, move(queue_it->second));
+        this->store->queue.erase(queue_it);
+      }
+    }
+
+    profiler->add_metadata("num_renamed_in_queue",
+        string_printf("%zu", items_to_merge.size()));
+    profiler->checkpoint("write_buffer_remove");
+
+    // issue the rename to the underlying store
+    this->rename_task = this->store->store->rename_series(this->manager,
+        this->args, profiler);
+    this->delegate(this->rename_task, bind(
+        &WriteBufferStoreRenameSeriesTask::on_rename_complete, this));
+  }
+
+  void on_rename_complete() {
+    for (const auto& it : this->rename_task->value()) {
+      if (!it.second.description.empty()) {
+        // un-rename the queue item so that the writes don't get reassigned,
+        // because this rename failed in the substore and reassigning the writes
+        // is definitely not expected behavior from the caller's perspective
+        auto item_it = this->items_to_merge.find(this->args->renames.at(it.first));
+        if (item_it != this->items_to_merge.end()) {
+          this->items_to_merge.emplace(it.first, move(item_it->second));
+          this->items_to_merge.erase(item_it);
+        }
+      }
+      this->return_value.emplace(it.first, move(it.second));
+    }
+
+    // merge the renamed queue items back in
+    {
+      rw_guard g(this->store->queue_lock, true);
+      this->store->merge_earlier_queue_items_locked(move(this->items_to_merge));
+    }
+
+    this->set_complete();
+  }
+
+private:
+  WriteBufferStore* store;
+  unordered_map<string, QueueItem> items_to_merge;
+  shared_ptr<RenameSeriesTask> rename_task;
+};
+
+shared_ptr<Store::RenameSeriesTask> WriteBufferStore::rename_series(
+    StoreTaskManager* m, shared_ptr<const RenameSeriesArguments> args,
+    BaseFunctionProfiler* profiler) {
+  return shared_ptr<RenameSeriesTask>(new WriteBufferStoreRenameSeriesTask(m,
+      this, args, profiler));
+}
+
+
+
+class WriteBufferStore::WriteBufferStoreReadTask : public Store::ReadTask {
+public:
+  virtual ~WriteBufferStoreReadTask() = default;
+  WriteBufferStoreReadTask(StoreTaskManager* m, WriteBufferStore* s,
+      shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler) :
+      ReadTask(m, args, profiler), store(s) {
+    // TODO: merge with writes in progress somehow, so data in the process of
+    // being written isn't temporarily invisible. this will be nontrivial since
+    // we pop things from the queue in the write threads - there could be data
+    // on the write threads' stacks that will be invisible here. potential
+    // solutions:
+    // 1. have a vector of maps of in-progress writes for each thread and look
+    //    through that too
+    // 2. replace the queue with a vector of writes for each thread and
+    //    distribute writes via ConsistentHashRing (will need a special case for
+    //    num_threads=0)
+    // 3. don't pop queue items in write threads and instead mark them as in
+    //    progress somehow so other threads won't claim them
+
+    this->read_task = this->store->store->read(this->manager, this->args, this->profiler);
+    this->delegate(this->read_task, bind(&WriteBufferStoreReadTask::on_read_complete, this));
+  }
+
+  void on_read_complete() {
+    this->profiler->checkpoint("write_buffer_substore_read");
+
+    this->return_value = move(this->read_task->value());
+    for (auto& it : this->return_value) { // (pattern, key_to_result)
+      for (auto& it2 : it.second) { // (key, result)
+        const auto& key_name = it2.first;
+        auto& result = it2.second;
+
+        map<uint32_t, double> data_to_insert;
+        try {
+          rw_guard g(this->store->queue_lock, false);
+          auto& item = this->store->queue.at(key_name);
+
+          bool series_exists_in_substore = (result.step != 0);
+          bool item_can_create_series = !item.metadata.archive_args.empty();
+          bool item_will_truncate_series = (item.update_behavior == UpdateMetadataBehavior::Recreate);
+
+          // if this item will truncate the series, then behave as if the
+          // substore read returned nothing, and apply the writes from the queue
+          // item only
+          // TODO: we can skip the substore read in this case but I'm lazy
+          if (item_can_create_series &&
+              (item_will_truncate_series ||
+               (item.create_new && !series_exists_in_substore))) {
+            // if there's data, reduce resolution to that of the first archive
+            result.data.clear();
+            if (item.has_data()) {
+              result.step = item.metadata.archive_args[0].precision;
+              result.start_time = 0;
+              result.end_time = 0;
+
+              uint32_t precision = item.metadata.archive_args[0].precision;
+              uint32_t current_ts = 0;
+              for (const auto& queue_data_it : item.data) {
+                uint32_t effective_ts = (queue_data_it.first / precision) * precision;
+                if (!current_ts || (effective_ts != current_ts)) {
+                  result.data.emplace_back();
+                  result.data.back().timestamp = effective_ts;
+                  current_ts = effective_ts;
+                }
+                result.data.back().value = queue_data_it.second;
+                if (!result.start_time || (effective_ts < result.start_time)) {
+                  result.start_time = effective_ts;
+                }
+                if (effective_ts > result.end_time) {
+                  result.end_time = effective_ts;
+                }
+              }
+            } else {
+              result.step = item.metadata.archive_args[0].precision;
+              result.start_time = this->args->start_time + result.step - (this->args->start_time % result.step);
+              result.end_time = this->args->end_time + result.step - (this->args->end_time % result.step);
+            }
             continue;
           }
 
-          items_to_delete.emplace_back(move(it->second));
-          it = this->queue.erase(it);
-          res.buffer_series_deleted++;
-        }
+          auto dp_it = item.data.lower_bound(this->args->start_time);
+          if (dp_it == item.data.end()) {
+            continue;
+          }
+          auto dp_end_it = item.data.upper_bound(this->args->end_time);
+          if (dp_end_it == dp_it) {
+            continue;
+          }
 
-      } else {
-        auto it = this->queue.find(key_name);
-        if (it == this->queue.end()) {
-          continue;
-        }
-        items_to_delete.emplace_back(move(it->second));
-        this->queue.erase(it);
-        res.buffer_series_deleted++;
-      }
-    }
-  }
-
-  profiler->add_metadata("num_deleted_from_queue",
-      string_printf("%zu", num_deleted_from_queue));
-  profiler->checkpoint("write_buffer_delete");
-
-  // if the deletes are deferred, just stick them in the queue and return
-  if (deferred && this->enable_deferred_deletes) {
-    {
-      rw_guard g(this->delete_queue_lock, true);
-      for (const string& pattern : patterns) {
-        this->delete_queue.emplace_back(pattern);
-      }
-    }
-    profiler->checkpoint("enqueue_delete");
-
-  } else {
-    // issue the delete to the underlying store
-    auto store_ret = this->store->delete_series(patterns, deferred, local_only,
-        profiler);
-    this->combine_delete_results(ret, move(store_ret));
-  }
-
-  // count the items that are about to be deleted
-  size_t num_update_metadatas_deleted = 0;
-  size_t num_writes_deleted = 0;
-  size_t num_datapoints_deleted = 0;
-  for (const auto& it : items_to_delete) {
-    if (it.has_update_metadata()) {
-      num_update_metadatas_deleted++;
-    }
-    size_t num_datapoints = it.data.size();
-    num_datapoints_deleted += num_datapoints;
-    if (num_datapoints) {
-      num_writes_deleted++;
-    }
-  }
-  this->queued_update_metadatas -= num_update_metadatas_deleted;
-  this->queued_writes -= num_writes_deleted;
-  this->queued_datapoints -= num_datapoints_deleted;
-  profiler->checkpoint("write_buffer_merge");
-
-  return ret;
-
-  // items_to_delete are deleted here. importantly, this is after we call
-  // delete_series on the substore to minimize the time between removing the
-  // pending writes from the queue and deleting the keys in the substore
-}
-
-unordered_map<string, Error> WriteBufferStore::rename_series(
-    const unordered_map<string, string>& renames, bool merge, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  profiler->add_metadata("rename_count",
-      string_printf("%zu", renames.size()));
-
-  unordered_map<string, string> renames_to_forward = renames;
-  unordered_map<string, Error> ret;
-
-  // if there are queue items, temporarily remove them from the queue - this is
-  // necessary to make sure they don't get written during the rename
-  unordered_map<string, QueueItem> items_to_merge;
-  {
-    rw_guard g(this->queue_lock, true);
-    for (auto rename_it = renames_to_forward.begin(); rename_it != renames_to_forward.end();) {
-      auto queue_it = this->queue.find(rename_it->first);
-      if (queue_it == this->queue.end()) {
-        rename_it++;
-        continue;
-      }
-      items_to_merge.emplace(rename_it->second, move(queue_it->second));
-      this->queue.erase(queue_it);
-      rename_it++;
-    }
-  }
-
-  profiler->add_metadata("num_renamed_in_queue",
-      string_printf("%zu", items_to_merge.size()));
-  profiler->checkpoint("write_buffer_remove");
-
-  // issue the rename to the underlying store
-  for (const auto& it : this->store->rename_series(renames_to_forward, merge,
-      local_only, profiler)) {
-    if (!it.second.description.empty()) {
-      // un-rename the queue item so that the writes don't get reassigned,
-      // because this rename failed in the substore and reassigning the writes
-      // is definitely not expected behavior from the caller's perspective
-      auto item_it = items_to_merge.find(renames.at(it.first));
-      if (item_it != items_to_merge.end()) {
-        items_to_merge.emplace(it.first, move(item_it->second));
-        items_to_merge.erase(item_it);
-      }
-    }
-    ret.emplace(it.first, move(it.second));
-  }
-
-  // merge the renamed queue items back in
-  {
-    rw_guard g(this->queue_lock, true);
-    this->merge_earlier_queue_items_locked(move(items_to_merge));
-  }
-
-  return ret;
-}
-
-unordered_map<string, unordered_map<string, ReadResult>> WriteBufferStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only, BaseFunctionProfiler* profiler) {
-  // TODO: merge with writes in progress somehow, so data in the process of
-  // being written isn't temporarily invisible. this will be nontrivial since we
-  // pop things from the queue in the write threads - there could be data on the
-  // write threads' stacks that will be invisible here. potential solutions:
-  // 1. have a vector of maps of in-progress writes for each thread and look
-  //    through that too
-  // 2. replace the queue with a vector of writes for each thread and distribute
-  //    writes via ConsistentHashRing (will need a special case for
-  //    num_threads=0)
-  // 3. don't pop queue items in write threads and instead mark them as in
-  //    progress somehow so other threads won't claim them
-
-  auto ret = this->store->read(key_names, start_time, end_time, local_only,
-      profiler);
-
-  profiler->checkpoint("write_buffer_substore_read");
-
-  for (auto& it : ret) { // (pattern, key_to_result)
-    for (auto& it2 : it.second) { // (key, result)
-      const auto& key_name = it2.first;
-      auto& result = it2.second;
-
-      map<uint32_t, double> data_to_insert;
-      try {
-        rw_guard g(this->queue_lock, false);
-        auto& item = this->queue.at(key_name);
-
-        bool series_exists_in_substore = (result.step != 0);
-        bool item_can_create_series = !item.metadata.archive_args.empty();
-        bool item_will_truncate_series = (item.update_behavior == UpdateMetadataBehavior::Recreate);
-
-        // if this item will truncate the series, then behave as if the substore
-        // read returned nothing, and apply the writes from the queue item only
-        // TODO: we can skip the substore read in this case but I'm lazy
-        if (item_can_create_series &&
-            (item_will_truncate_series ||
-             (item.create_new && !series_exists_in_substore))) {
-          // if there's data, reduce its resolution to that of the first archive
-          result.data.clear();
-          if (item.has_data()) {
-            result.step = item.metadata.archive_args[0].precision;
-            result.start_time = 0;
-            result.end_time = 0;
-
-            uint32_t precision = item.metadata.archive_args[0].precision;
-            uint32_t current_ts = 0;
-            for (const auto& queue_data_it : item.data) {
-              uint32_t effective_ts = (queue_data_it.first / precision) * precision;
-              if (!current_ts || (effective_ts != current_ts)) {
-                result.data.emplace_back();
-                result.data.back().timestamp = effective_ts;
-                current_ts = effective_ts;
-              }
-              result.data.back().value = queue_data_it.second;
-              if (!result.start_time || (effective_ts < result.start_time)) {
-                result.start_time = effective_ts;
-              }
-              if (effective_ts > result.end_time) {
-                result.end_time = effective_ts;
+          // note: we round the timestamps to the right interval based on the
+          // step returned by the read result, disregarding any pending
+          // update_metadata commands. if there's no read result (step == 0)
+          // then we get the step from the first archive in the metadata (if
+          // this item can create the series), then from the autocreate
+          // metadata. if none of these work, return an error
+          if (!series_exists_in_substore) {
+            if (item_can_create_series && item.create_new) {
+              result.step = item.metadata.archive_args[0].precision;
+            }
+            if (!result.step) {
+              auto metadata = this->store->get_autocreate_metadata_for_key(it2.first);
+              if (!metadata.archive_args.empty()) {
+                result.step = metadata.archive_args[0].precision;
               }
             }
-          } else {
-            result.step = item.metadata.archive_args[0].precision;
-            result.start_time = start_time + result.step - (start_time % result.step);
-            result.end_time = end_time + result.step - (end_time % result.step);
           }
-          continue;
-        }
-
-        auto dp_it = item.data.lower_bound(start_time);
-        if (dp_it == item.data.end()) {
-          continue;
-        }
-        auto dp_end_it = item.data.upper_bound(end_time);
-        if (dp_end_it == dp_it) {
-          continue;
-        }
-
-        // note: we round the timestamps to the right interval based on the step
-        // returned by the read result, disregarding any pending update_metadata
-        // commands. if there's no read result (step == 0) then we get the step
-        // from the first archive in the metadata (if this item can create the
-        // series), then from the autocreate metadata. if none of these work,
-        // return an error
-        if (!series_exists_in_substore) {
-          if (item_can_create_series && item.create_new) {
-            result.step = item.metadata.archive_args[0].precision;
+          for (; dp_it != dp_end_it; dp_it++) {
+            uint32_t ts = (dp_it->first / result.step) * result.step;
+            data_to_insert[ts] = dp_it->second;
           }
-          if (!result.step) {
-            auto metadata = this->get_autocreate_metadata_for_key(it2.first);
-            if (!metadata.archive_args.empty()) {
-              result.step = metadata.archive_args[0].precision;
+
+        } catch (const out_of_range& e) { }
+
+        // if we get here, then data_to_insert cannot be empty
+        if (!data_to_insert.empty()) {
+          size_t ret_dp_index = 0;
+          size_t ret_dp_check_count = result.data.size();
+          bool needs_sort = false;
+          for (const auto& dp : data_to_insert) {
+            for (; (ret_dp_index < ret_dp_check_count) &&
+                   (result.data[ret_dp_index].timestamp < dp.first); ret_dp_index++);
+
+            if ((ret_dp_index < ret_dp_check_count) &&
+                (result.data[ret_dp_index].timestamp == dp.first)) {
+              result.data[ret_dp_index].value = dp.second;
+
+            } else {
+              result.data.emplace_back();
+              auto& ret_dp = result.data.back();
+              ret_dp.timestamp = dp.first;
+              ret_dp.value = dp.second;
+              // we only have to sort if there are datapoints after this one
+              if (ret_dp_index < ret_dp_check_count) {
+                needs_sort = true;
+              }
             }
           }
-        }
-        for (; dp_it != dp_end_it; dp_it++) {
-          data_to_insert[(dp_it->first / result.step) * result.step] = dp_it->second;
-        }
 
-      } catch (const out_of_range& e) { }
-
-      // if we get here, then data_to_insert cannot be empty
-      if (!data_to_insert.empty()) {
-        size_t ret_dp_index = 0;
-        size_t ret_dp_check_count = result.data.size();
-        bool needs_sort = false;
-        for (const auto& dp : data_to_insert) {
-          for (; (ret_dp_index < ret_dp_check_count) &&
-                 (result.data[ret_dp_index].timestamp < dp.first); ret_dp_index++);
-
-          if ((ret_dp_index < ret_dp_check_count) &&
-              (result.data[ret_dp_index].timestamp == dp.first)) {
-            result.data[ret_dp_index].value = dp.second;
-
-          } else {
-            result.data.emplace_back();
-            auto& ret_dp = result.data.back();
-            ret_dp.timestamp = dp.first;
-            ret_dp.value = dp.second;
-            // we only have to sort if there are datapoints after this one
-            if (ret_dp_index < ret_dp_check_count) {
-              needs_sort = true;
-            }
+          // sort by timestamp if needed
+          if (needs_sort) {
+            sort(result.data.begin(), result.data.end(), +[](const Datapoint& a, const Datapoint& b) {
+              return a.timestamp < b.timestamp;
+            });
           }
-        }
 
-        // sort by timestamp if needed
-        if (needs_sort) {
-          sort(result.data.begin(), result.data.end(), +[](const Datapoint& a, const Datapoint& b) {
-            return a.timestamp < b.timestamp;
-          });
+          // set start_time and end_time appropriately
+          // note that results.data cannot be empty here because data_to_insert
+          // was not empty
+          result.start_time = result.data.begin()->timestamp;
+          result.end_time = result.data.rbegin()->timestamp;
         }
-
-        // set start_time and end_time appropriately
-        // note that results.data cannot be empty here because data_to_insert
-        // was not empty
-        result.start_time = result.data.begin()->timestamp;
-        result.end_time = result.data.rbegin()->timestamp;
       }
     }
-  }
-  profiler->checkpoint("write_buffer_read_merge");
+    profiler->checkpoint("write_buffer_read_merge");
 
-  return ret;
+    this->set_complete();
+  }
+
+private:
+  WriteBufferStore* store;
+  shared_ptr<ReadTask> read_task;
+};
+
+shared_ptr<Store::ReadTask> WriteBufferStore::read(StoreTaskManager* m,
+    shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler) {
+  return shared_ptr<ReadTask>(new WriteBufferStoreReadTask(m, this, args, profiler));
 }
 
-ReadAllResult WriteBufferStore::read_all(const string& key_name,
-    bool local_only, BaseFunctionProfiler* profiler) {  
+
+
+shared_ptr<Store::ReadAllTask> WriteBufferStore::read_all(StoreTaskManager* m,
+    shared_ptr<const ReadAllArguments> args, BaseFunctionProfiler* profiler) {
   // TODO: we really should merge the result with anything in the write buffer.
   // but I'm lazy and this is primarily used for verification+repair, during
   // which there should not be writes to series that exist on the wrong node
-  return this->store->read_all(key_name, local_only, profiler);
+  return this->store->read_all(m, args, profiler);
 }
 
-unordered_map<string, Error> WriteBufferStore::write(
-    const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
-  if (skip_buffering) {
+
+
+shared_ptr<Store::WriteTask> WriteBufferStore::write(StoreTaskManager* m,
+    shared_ptr<const WriteArguments> args, BaseFunctionProfiler* profiler) {
+  if (args->skip_buffering) {
     profiler->add_metadata("skip_buffering", "true");
-    return this->store->write(data, skip_buffering, local_only, profiler);
+    return this->store->write(m, args, profiler);
   }
 
   unordered_map<string, Error> ret;
-  for (const auto& it : data) {
+  for (const auto& it : args->data) {
     ret.emplace(it.first, make_success());
   }
 
   // construct a copy of data so we don't do this inside the lock context
-  unordered_map<string, Series> mutable_data = data;
+  unordered_map<string, Series> mutable_data = args->data;
   {
     rw_guard g(this->queue_lock, true);
     for (auto& it : mutable_data) {
@@ -523,115 +590,135 @@ unordered_map<string, Error> WriteBufferStore::write(
       }
     }
   }
-  return ret;
+  return shared_ptr<WriteTask>(new WriteTask(move(ret)));
 }
 
-unordered_map<string, FindResult> WriteBufferStore::find(
-    const vector<string>& patterns, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  // the comment in read() about data temporarily disappearing applies here too
-  auto ret = this->store->find(patterns, local_only, profiler);
 
-  profiler->checkpoint("write_buffer_substore_find");
 
-  // merge the find results with the create queue
-  for (auto& it : ret) {
-    // if there was an error, don't bother merging for this query
-    if (!it.second.error.description.empty()) {
-      continue;
-    }
+class WriteBufferStore::WriteBufferStoreFindTask : public Store::FindTask {
+public:
+  virtual ~WriteBufferStoreFindTask() = default;
+  WriteBufferStoreFindTask(StoreTaskManager* m, WriteBufferStore* s,
+      shared_ptr<const FindArguments> args, BaseFunctionProfiler* profiler) :
+      FindTask(m, args, profiler), store(s) {
+    // the comment in read() about data temporarily disappearing applies here
+    this->find_task = this->store->store->find(this->manager, this->args, this->profiler);
+    this->delegate(this->find_task, bind(&WriteBufferStoreFindTask::on_find_complete, this));
+  }
 
-    size_t pattern_start_offset = it.first.find_first_of("[{*");
-    if (pattern_start_offset != string::npos) {
-      // if merging patterns is disabled, don't do anything (this can be slow)
-      if (!this->merge_find_patterns) {
+  void on_find_complete() {
+    this->return_value = this->find_task->value();
+    this->profiler->checkpoint("write_buffer_substore_find");
+
+    // merge the find results with the create queue
+    for (auto& it : this->return_value) {
+      // if there was an error, don't bother merging for this query
+      if (!it.second.error.description.empty()) {
         continue;
       }
 
-      // this query is a pattern; need to merge with a queue range. but we can
-      // make it faster by only skipping the parts of the queue that we know
-      // won't match the pattern.
-      // TODO: upper_bound can cause us to miss keys that end in multiple \xFF
-      // chars. I'm too lazy to fix this; it's bad practice to use nonprintable
-      // chars in key names anyway
-      string lower_bound_str = it.first.substr(0, pattern_start_offset);
-      string upper_bound_str = lower_bound_str + "\xFF";
+      size_t pattern_start_offset = it.first.find_first_of("[{*");
+      if (pattern_start_offset != string::npos) {
+        // if merging patterns is disabled, don't do anything (this can be slow)
+        if (!this->store->merge_find_patterns) {
+          continue;
+        }
 
-      // convert the results to an unordered_set, then scan through the queue
-      // and put stuff in the result set appropriately
-      // TODO: is this slower than the super-complex code that was here before
-      // that scanned through the vectors and didn't handle directory matches
-      // correctly? at least the copies aren't within the lock context
-      unordered_set<string> results(
-          make_move_iterator(it.second.results.begin()),
-          make_move_iterator(it.second.results.end()));
+        // this query is a pattern; need to merge with a queue range. but we can
+        // make it faster by only skipping the parts of the queue that we know
+        // won't match the pattern.
+        // TODO: upper_bound can cause us to miss keys that end in multiple \xFF
+        // chars. I'm too lazy to fix this; it's bad practice to use
+        // nonprintable chars in key names anyway
+        string lower_bound_str = it.first.substr(0, pattern_start_offset);
+        string upper_bound_str = lower_bound_str + "\xFF";
 
-      // scan the queue segment that matches the prefix we're looking for
-      {
-        rw_guard g(this->queue_lock, false);
-        auto queue_it = this->queue.lower_bound(lower_bound_str);
-        auto queue_end_it = this->queue.upper_bound(upper_bound_str);
-        for (; queue_it != queue_end_it; queue_it++) {
-          // we should only add the queue item if it has create_new = true. if
-          // it doesn't and the series doesn't exist in the substore, then this
-          // queued command won't create it.
-          // TODO: we should consider autocreate rules here too
-          if (!queue_it->second.create_new) {
-            continue;
-          }
+        // convert the results to an unordered_set, then scan through the queue
+        // and put stuff in the result set appropriately
+        // TODO: is this slower than the super-complex code that was here before
+        // that scanned through the vectors and didn't handle directory matches
+        // correctly? at least the copies aren't within the lock context
+        unordered_set<string> results(
+            make_move_iterator(it.second.results.begin()),
+            make_move_iterator(it.second.results.end()));
 
-          if (this->name_matches_pattern(queue_it->first, it.first)) {
-            // the queue item directly matches the pattern; just add it
-            results.emplace(queue_it->first);
-          } else {
-            // the queue item doesn't match the pattern; check if any of its
-            // directories do
-            string item = queue_it->first;
-            while (!item.empty()) {
-              size_t dot_pos = item.rfind('.');
-              if (dot_pos == string::npos) {
-                break;
-              }
-              item.resize(dot_pos);
-              if (this->name_matches_pattern(item, it.first)) {
-                results.emplace(item + ".*");
+        // scan the queue segment that matches the prefix we're looking for
+        {
+          rw_guard g(this->store->queue_lock, false);
+          auto queue_it = this->store->queue.lower_bound(lower_bound_str);
+          auto queue_end_it = this->store->queue.upper_bound(upper_bound_str);
+          for (; queue_it != queue_end_it; queue_it++) {
+            // we should only add the queue item if it has create_new = true. if
+            // it doesn't and the series doesn't exist in the substore, then this
+            // queued command won't create it.
+            // TODO: we should consider autocreate rules here too
+            if (!queue_it->second.create_new) {
+              continue;
+            }
+
+            if (this->store->name_matches_pattern(queue_it->first, it.first)) {
+              // the queue item directly matches the pattern; just add it
+              results.emplace(queue_it->first);
+            } else {
+              // the queue item doesn't match the pattern; check if any of its
+              // directories do
+              string item = queue_it->first;
+              while (!item.empty()) {
+                size_t dot_pos = item.rfind('.');
+                if (dot_pos == string::npos) {
+                  break;
+                }
+                item.resize(dot_pos);
+                if (this->store->name_matches_pattern(item, it.first)) {
+                  results.emplace(item + ".*");
+                }
               }
             }
           }
         }
-      }
 
-      // move the results back into the ret vector
-      // TODO: is it safe to do this? presumably since we have an iterator we
-      // don't need to worry about the hash result changing?
-      it.second.results.clear();
-      for (auto results_it = results.begin(); results_it != results.end(); results_it++) {
-        it.second.results.emplace_back(move(*results_it));
-      }
-
-    } else {
-      // this query is not a pattern - we only have to spot-check the queue if
-      // there are no results; if there are results, we don't have to check the
-      // queue at all
-      if (it.second.results.empty()) {
-        bool should_insert = false;
-        {
-          rw_guard g(this->queue_lock, false);
-          should_insert = this->queue.count(it.first);
+        // move the results back into the ret vector
+        // TODO: is it safe to do this? presumably since we have an iterator we
+        // don't need to worry about the hash result changing?
+        it.second.results.clear();
+        for (auto results_it = results.begin(); results_it != results.end(); results_it++) {
+          it.second.results.emplace_back(move(*results_it));
         }
-        if (should_insert) {
-          it.second.results.emplace_back(it.first);
+
+      } else {
+        // this query is not a pattern - we only have to spot-check the queue if
+        // there are no results; if there are results, we don't have to check the
+        // queue at all
+        if (it.second.results.empty()) {
+          bool should_insert = false;
+          {
+            rw_guard g(this->store->queue_lock, false);
+            should_insert = this->store->queue.count(it.first);
+          }
+          if (should_insert) {
+            it.second.results.emplace_back(it.first);
+          }
         }
       }
     }
+    this->profiler->checkpoint("write_buffer_find_merge");
+    this->set_complete();
   }
-  profiler->checkpoint("write_buffer_find_merge");
 
-  return ret;
+private:
+  WriteBufferStore* store;
+  unordered_map<string, QueueItem> items_to_merge;
+  shared_ptr<FindTask> find_task;
+};
+
+shared_ptr<Store::FindTask> WriteBufferStore::find(StoreTaskManager* m,
+    shared_ptr<const FindArguments> args, BaseFunctionProfiler* profiler) {
+  return shared_ptr<FindTask>(new WriteBufferStoreFindTask(m, this, args, profiler));
 }
 
 
-void WriteBufferStore::flush() {
+
+void WriteBufferStore::flush(StoreTaskManager* m) {
   auto profiler = create_profiler("WriteBufferStore::flush", "flush()", -1);
 
   unordered_map<string, Series> write_batch;
@@ -648,9 +735,13 @@ void WriteBufferStore::flush() {
 
       // if archive_args isn't empty, there was an update_metadata request
       if (command.has_update_metadata()) {
-        this->store->update_metadata({{key_name, command.metadata}},
-            command.create_new, command.update_behavior, false, false,
-            profiler.get());
+        shared_ptr<UpdateMetadataArguments> args(new UpdateMetadataArguments());
+        args->metadata.emplace(key_name, command.metadata);
+        args->behavior = command.update_behavior;
+        args->create_new = command.create_new;
+        args->skip_buffering = false;
+        args->local_only = false;
+        this->store->update_metadata(m, args, profiler.get());
       }
 
       // if data isn't empty, there was a write request
@@ -673,7 +764,11 @@ void WriteBufferStore::flush() {
   uint64_t lock_end_time = now();
 
   if (!write_batch.empty()) {
-    this->store->write(write_batch, false, false, profiler.get());
+    shared_ptr<WriteArguments> args(new WriteArguments());
+    args->data = move(write_batch);
+    args->skip_buffering = false;
+    args->local_only = false;
+    this->store->write(m, args, profiler.get());
   }
 
   uint64_t end_time = now();
@@ -859,6 +954,8 @@ WriteBufferStore::WriteThread::WriteThread() : t(), last_queue_restart(0),
     queue_sweep_time(0) { }
 
 void WriteBufferStore::write_thread_routine(size_t thread_index) {
+  // note: we use blocking calls (manager = NULL) in this function to limit load
+
   string queue_position;
   string thread_name = string_printf("WriteBufferStore::write_thread_routine (thread_id=%zu)",
       this_thread::get_id());
@@ -904,7 +1001,10 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
 
       // execute the creates in order, and batch the writes
       size_t write_batch_datapoints = 0;
-      unordered_map<string, Series> write_batch;
+      shared_ptr<WriteArguments> write_args(new WriteArguments());
+      write_args->skip_buffering = false;
+      write_args->local_only = false;
+      auto& write_batch = write_args->data;
       for (auto& it : commands) {
         const auto& key_name = it.first;
         auto& command = it.second;
@@ -920,9 +1020,18 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
           }
 
           try {
-            auto errors = this->store->update_metadata(
-                {{key_name, command.metadata}}, command.create_new,
-                command.update_behavior, false, false, pg.profiler.get());
+            shared_ptr<UpdateMetadataArguments> args(new UpdateMetadataArguments());
+            args->metadata.emplace(key_name, command.metadata);
+            args->behavior = command.update_behavior;
+            args->create_new = command.create_new;
+            args->skip_buffering = false;
+            args->local_only = false;
+
+            StoreTaskManager m;
+            auto task = this->store->update_metadata(&m, args, pg.profiler.get());
+            m.run(task);
+            auto& errors = task->value();
+
             const auto& error = errors.at(key_name);
             if (!error.description.empty()) {
               string error_str = string_for_error(error);
@@ -967,9 +1076,13 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
 
         this->queued_datapoints -= write_batch_datapoints;
         try {
-          auto write_errors = this->store->write(write_batch, false, false,
-              pg.profiler.get());
-          for (const auto& it : write_errors) {
+          // note: write_batch is a reference to write_args->data, so it's
+          // already populated
+          StoreTaskManager m;
+          auto task = this->store->write(&m, write_args, pg.profiler.get());
+          m.run(task);
+
+          for (const auto& it : task->value()) {
             if (!it.second.description.empty()) {
               string error_str = string_for_error(it.second);
               log(WARNING, "[WriteBufferStore] write error on key %s: %s",
@@ -1024,10 +1137,16 @@ void WriteBufferStore::delete_thread_routine() {
       continue;
     }
 
-    vector<string> series({query});
+    shared_ptr<DeleteSeriesArguments> args(new DeleteSeriesArguments());
+    args->patterns.emplace_back(query);
+    args->deferred = false;
+    args->local_only = false;
 
     ProfilerGuard pg(create_internal_profiler(thread_name,
-        string_for_delete_series(series, false, false)));
-    this->delete_series(series, false, false, pg.profiler.get());
+        string_for_delete_series(args->patterns, false, false)));
+    StoreTaskManager m;
+    auto task = this->delete_series(&m, args, pg.profiler.get());
+    m.run(task);
+    // TODO: report errors here somehow
   }
 }

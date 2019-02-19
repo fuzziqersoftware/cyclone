@@ -19,12 +19,6 @@
 
 #include "Utils/Errors.hh"
 
-#ifdef _THRIFT_STDCXX_H_
-#define thrift_ptr apache::thrift::stdcxx::shared_ptr
-#else
-#define thrift_ptr boost::shared_ptr
-#endif
-
 using namespace std;
 
 
@@ -56,211 +50,429 @@ void RemoteStore::set_netloc(const std::string& new_hostname, int new_port) {
   this->netloc_token = now();
 }
 
-unordered_map<string, Error> RemoteStore::update_metadata(
-    const SeriesMetadataMap& metadata_map, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, Error> ret;
-  if (local_only) {
-    profiler->add_metadata("local_only", "true");
-    return ret;
-  }
 
-  try {
-    auto c = this->get_client();
-    profiler->checkpoint("get_client");
-    c->client->update_metadata(ret, metadata_map, create_new,
-        (update_behavior == UpdateMetadataBehavior::Ignore),
-        (update_behavior == UpdateMetadataBehavior::Recreate), skip_buffering,
-        true);
-    profiler->checkpoint("remote_call");
-    this->return_client(move(c));
 
-  } catch (const exception& e) {
-    profiler->checkpoint("remote_call");
-    profiler->add_metadata("remote_error", e.what());
-    this->stats[0].server_disconnects++;
-    for (const auto& it : metadata_map) {
-      ret.emplace(it.first, make_error(e.what(), true));
+class RemoteStore::RemoteStoreUpdateMetadataTask : public Store::UpdateMetadataTask {
+public:
+  virtual ~RemoteStoreUpdateMetadataTask() = default;
+  RemoteStoreUpdateMetadataTask(StoreTaskManager* m, RemoteStore* s,
+      shared_ptr<const UpdateMetadataArguments> args,
+      BaseFunctionProfiler* profiler) : UpdateMetadataTask(m, args, profiler),
+      store(s) {
+    try {
+      this->client = this->store->get_client();
+      this->profiler->checkpoint("get_client");
+      this->client->client->send_update_metadata(this->args->metadata,
+          this->args->create_new,
+          (this->args->behavior == UpdateMetadataBehavior::Ignore),
+          (this->args->behavior == UpdateMetadataBehavior::Recreate),
+          this->args->skip_buffering, true);
+      this->read_suspend(this->client->socket->getSocketFD(), bind(
+          &RemoteStoreUpdateMetadataTask::on_socket_readable, this));
+
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
     }
   }
-  this->stats[0].update_metadata_commands++;
-  return ret;
-}
 
-unordered_map<string, DeleteResult> RemoteStore::delete_series(
-    const vector<string>& patterns, bool deferred, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  unordered_map<string, DeleteResult> ret;
-  if (local_only) {
-    profiler->add_metadata("local_only", "true");
-    return ret;
+  void on_socket_readable() {
+    try {
+      this->client->client->recv_update_metadata(this->return_value);
+      this->set_complete();
+      this->store->return_client(move(this->client));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+    this->store->stats[0].update_metadata_commands++;
   }
 
-  try {
-    auto c = this->get_client();
-    profiler->checkpoint("get_client");
-    c->client->delete_series(ret, patterns, deferred, true);
-    profiler->checkpoint("remote_call");
-    this->return_client(move(c));
+  void set_value_from_error(const exception& e) {
+    this->profiler->checkpoint("remote_call");
+    this->profiler->add_metadata("remote_error", e.what());
+    this->store->stats[0].server_disconnects++;
+    for (const auto& it : this->args->metadata) {
+      this->return_value.emplace(it.first, make_error(e.what(), true));
+    }
+    this->set_complete();
+  }
 
-  } catch (const exception& e) {
-    profiler->checkpoint("remote_call");
-    profiler->add_metadata("remote_error", e.what());
-    this->stats[0].server_disconnects++;
-    for (const auto& it : patterns) {
-      auto& res = ret[it];
+private:
+  RemoteStore* store;
+  unique_ptr<RemoteStore::Client> client;
+};
+
+shared_ptr<Store::UpdateMetadataTask> RemoteStore::update_metadata(StoreTaskManager* m,
+    shared_ptr<const UpdateMetadataArguments> args, BaseFunctionProfiler* profiler) {
+  static shared_ptr<UpdateMetadataTask> empty_result_task(new UpdateMetadataTask({}));
+  if (args->metadata.empty()) {
+    return empty_result_task;
+  }
+  if (args->local_only) {
+    profiler->add_metadata("local_only", "true");
+    return empty_result_task;
+  }
+  return shared_ptr<UpdateMetadataTask>(new RemoteStoreUpdateMetadataTask(m,
+      this, args, profiler));
+}
+
+
+
+class RemoteStore::RemoteStoreDeleteSeriesTask : public Store::DeleteSeriesTask {
+public:
+  virtual ~RemoteStoreDeleteSeriesTask() = default;
+  RemoteStoreDeleteSeriesTask(StoreTaskManager* m, RemoteStore* s,
+      shared_ptr<const DeleteSeriesArguments> args,
+      BaseFunctionProfiler* profiler) : DeleteSeriesTask(m, args, profiler),
+      store(s) {
+    try {
+      this->client = this->store->get_client();
+      this->profiler->checkpoint("get_client");
+      this->client->client->send_delete_series(this->args->patterns,
+          this->args->deferred, true);
+      this->read_suspend(this->client->socket->getSocketFD(), bind(
+          &RemoteStoreDeleteSeriesTask::on_socket_readable, this));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+  }
+
+  void on_socket_readable() {
+    try {
+      this->client->client->recv_delete_series(this->return_value);
+      this->set_complete();
+      this->store->return_client(move(this->client));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+    this->store->stats[0].delete_series_commands++;
+  }
+
+  void set_value_from_error(const exception& e) {
+    this->profiler->checkpoint("remote_call");
+    this->profiler->add_metadata("remote_error", e.what());
+    this->store->stats[0].server_disconnects++;
+    for (const auto& it : this->args->patterns) {
+      auto& res = this->return_value[it];
       res.disk_series_deleted = 0;
       res.buffer_series_deleted = 0;
       res.error = make_error(e.what());
     }
+    this->set_complete();
   }
-  this->stats[0].delete_series_commands++;
-  return ret;
+
+private:
+  RemoteStore* store;
+  unique_ptr<RemoteStore::Client> client;
+};
+
+shared_ptr<Store::DeleteSeriesTask> RemoteStore::delete_series(StoreTaskManager* m,
+    shared_ptr<const DeleteSeriesArguments> args, BaseFunctionProfiler* profiler) {
+  static shared_ptr<DeleteSeriesTask> empty_result_task(new DeleteSeriesTask({}));
+  if (args->patterns.empty()) {
+    return empty_result_task;
+  }
+  if (args->local_only) {
+    profiler->add_metadata("local_only", "true");
+    return empty_result_task;
+  }
+  return shared_ptr<DeleteSeriesTask>(new RemoteStoreDeleteSeriesTask(m, this,
+      args, profiler));
 }
 
-unordered_map<string, Error> RemoteStore::rename_series(
-    const unordered_map<string, string>& renames, bool merge, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  unordered_map<string, Error> ret;
-  if (local_only) {
-    profiler->add_metadata("local_only", "true");
-    return ret;
-  }
 
-  try {
-    auto c = this->get_client();
-    profiler->checkpoint("get_client");
-    c->client->rename_series(ret, renames, merge, true);
-    profiler->checkpoint("remote_call");
-    this->return_client(move(c));
 
-  } catch (const exception& e) {
-    profiler->checkpoint("remote_call");
-    profiler->add_metadata("remote_error", e.what());
-    this->stats[0].server_disconnects++;
-    for (const auto& it : renames) {
-      ret.emplace(it.first, make_error(e.what(), true));
+class RemoteStore::RemoteStoreRenameSeriesTask : public Store::RenameSeriesTask {
+public:
+  virtual ~RemoteStoreRenameSeriesTask() = default;
+  RemoteStoreRenameSeriesTask(StoreTaskManager* m, RemoteStore* s,
+      shared_ptr<const RenameSeriesArguments> args,
+      BaseFunctionProfiler* profiler) : RenameSeriesTask(m, args, profiler),
+      store(s) {
+    try {
+      this->client = this->store->get_client();
+      this->profiler->checkpoint("get_client");
+      this->client->client->send_rename_series(this->args->renames,
+          this->args->merge, true);
+      this->read_suspend(this->client->socket->getSocketFD(), bind(
+          &RemoteStoreRenameSeriesTask::on_socket_readable, this));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
     }
   }
-  this->stats[0].rename_series_commands++;
-  return ret;
+
+  void on_socket_readable() {
+    try {
+      this->client->client->recv_rename_series(this->return_value);
+      this->set_complete();
+      this->store->return_client(move(this->client));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+    this->store->stats[0].rename_series_commands++;
+  }
+
+  void set_value_from_error(const exception& e) {
+    this->profiler->checkpoint("remote_call");
+    this->profiler->add_metadata("remote_error", e.what());
+    this->store->stats[0].server_disconnects++;
+    for (const auto& it : this->args->renames) {
+      this->return_value.emplace(it.first, make_error(e.what(), true));
+    }
+    this->set_complete();
+  }
+
+private:
+  RemoteStore* store;
+  unique_ptr<RemoteStore::Client> client;
+};
+
+shared_ptr<Store::RenameSeriesTask> RemoteStore::rename_series(StoreTaskManager* m,
+    shared_ptr<const RenameSeriesArguments> args, BaseFunctionProfiler* profiler) {
+  static shared_ptr<RenameSeriesTask> empty_result_task(new RenameSeriesTask({}));
+  if (args->renames.empty()) {
+    return empty_result_task;
+  }
+  if (args->local_only) {
+    profiler->add_metadata("local_only", "true");
+    return empty_result_task;
+  }
+  return shared_ptr<RenameSeriesTask>(new RemoteStoreRenameSeriesTask(m, this,
+      args, profiler));
 }
 
-unordered_map<string, unordered_map<string, ReadResult>> RemoteStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, unordered_map<string, ReadResult>> ret;
-  if (key_names.empty()) {
-    return ret;
-  }
-  if (local_only) {
-    profiler->add_metadata("local_only", "true");
-    return ret;
-  }
 
-  try {
-    auto c = this->get_client();
-    profiler->checkpoint("get_client");
-    c->client->read(ret, key_names, start_time, end_time, true);
-    profiler->checkpoint("remote_call");
-    this->return_client(move(c));
 
-  } catch (const exception& e) {
-    profiler->checkpoint("remote_call");
-    profiler->add_metadata("remote_error", e.what());
-    this->stats[0].server_disconnects++;
-    for (const auto& it : key_names) {
-      ret[it][it].error = make_error(e.what(), true);
+class RemoteStore::RemoteStoreReadTask : public Store::ReadTask {
+public:
+  virtual ~RemoteStoreReadTask() = default;
+  RemoteStoreReadTask(StoreTaskManager* m, RemoteStore* s,
+      shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler) :
+      ReadTask(m, args, profiler), store(s) {
+    try {
+      this->client = this->store->get_client();
+      this->profiler->checkpoint("get_client");
+      this->client->client->send_read(this->args->key_names,
+          this->args->start_time, this->args->end_time, true);
+      this->read_suspend(this->client->socket->getSocketFD(), bind(
+          &RemoteStoreReadTask::on_socket_readable, this));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
     }
   }
-  this->stats[0].read_commands++;
-  return ret;
+
+  void on_socket_readable() {
+    try {
+      this->client->client->recv_read(this->return_value);
+      this->set_complete();
+      this->store->return_client(move(this->client));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+    this->store->stats[0].read_commands++;
+  }
+
+  void set_value_from_error(const exception& e) {
+    this->profiler->checkpoint("remote_call");
+    this->profiler->add_metadata("remote_error", e.what());
+    this->store->stats[0].server_disconnects++;
+    for (const auto& it : this->args->key_names) {
+      this->return_value[it][it].error = make_error(e.what(), true);
+    }
+    this->set_complete();
+  }
+
+private:
+  RemoteStore* store;
+  unique_ptr<RemoteStore::Client> client;
+};
+
+shared_ptr<Store::ReadTask> RemoteStore::read(StoreTaskManager* m,
+    shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler) {
+  static shared_ptr<ReadTask> empty_result_task(new ReadTask({}));
+  if (args->key_names.empty()) {
+    return empty_result_task;
+  }
+  if (args->local_only) {
+    profiler->add_metadata("local_only", "true");
+    return empty_result_task;
+  }
+  return shared_ptr<RemoteStoreReadTask>(new RemoteStoreReadTask(m, this,
+      args, profiler));
 }
 
-ReadAllResult RemoteStore::read_all(const string& key_name, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  ReadAllResult ret;
-  if (local_only) {
-    profiler->add_metadata("local_only", "true");
-    return ret;
-  }
 
-  try {
-    auto c = this->get_client();
-    profiler->checkpoint("get_client");
-    c->client->read_all(ret, key_name, true);
-    profiler->checkpoint("remote_call");
-    this->return_client(move(c));
 
-  } catch (const exception& e) {
-    profiler->checkpoint("remote_call");
-    profiler->add_metadata("remote_error", e.what());
-    this->stats[0].server_disconnects++;
-    ret.error = make_error(e.what(), true);
-  }
-  this->stats[0].read_all_commands++;
-  return ret;
-}
-
-unordered_map<string, Error> RemoteStore::write(
-    const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
-  unordered_map<string, Error> ret;
-  if (data.empty()) {
-    return ret;
-  }
-  if (local_only) {
-    profiler->add_metadata("local_only", "true");
-    return ret;
-  }
-
-  try {
-    auto c = this->get_client();
-    profiler->checkpoint("get_client");
-    c->client->write(ret, data, skip_buffering, true);
-    profiler->checkpoint("remote_call");
-    this->return_client(move(c));
-
-  } catch (const exception& e) {
-    profiler->checkpoint("remote_call");
-    profiler->add_metadata("remote_error", e.what());
-    this->stats[0].server_disconnects++;
-    for (const auto& it : data) {
-      ret.emplace(it.first, make_error(e.what(), true));
+class RemoteStore::RemoteStoreReadAllTask : public Store::ReadAllTask {
+public:
+  virtual ~RemoteStoreReadAllTask() = default;
+  RemoteStoreReadAllTask(StoreTaskManager* m, RemoteStore* s,
+      shared_ptr<const ReadAllArguments> args, BaseFunctionProfiler* profiler) :
+      ReadAllTask(m, args, profiler), store(s) {
+    try {
+      this->client = this->store->get_client();
+      this->profiler->checkpoint("get_client");
+      this->client->client->send_read_all(this->args->key_name, true);
+      this->read_suspend(this->client->socket->getSocketFD(), bind(
+          &RemoteStoreReadAllTask::on_socket_readable, this));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
     }
   }
-  this->stats[0].write_commands++;
-  return ret;
-}
 
-unordered_map<string, FindResult> RemoteStore::find(
-    const vector<string>& patterns, bool local_only,
-    BaseFunctionProfiler* profiler) {
-  unordered_map<string, FindResult> ret;
-  if (local_only) {
-    profiler->add_metadata("local_only", "true");
-    return ret;
+  void on_socket_readable() {
+    try {
+      this->client->client->recv_read_all(this->return_value);
+      this->set_complete();
+      this->store->return_client(move(this->client));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+    this->store->stats[0].read_all_commands++;
   }
 
-  try {
-    auto c = this->get_client();
-    profiler->checkpoint("get_client");
-    c->client->find(ret, patterns, true);
-    profiler->checkpoint("remote_call");
-    this->return_client(move(c));
+  void set_value_from_error(const exception& e) {
+    this->profiler->checkpoint("remote_call");
+    this->profiler->add_metadata("remote_error", e.what());
+    this->store->stats[0].server_disconnects++;
+    this->return_value.error = make_error(e.what(), true);
+    this->set_complete();
+  }
 
-  } catch (const exception& e) {
-    profiler->checkpoint("remote_call");
-    profiler->add_metadata("remote_error", e.what());
-    this->stats[0].server_disconnects++;
-    for (const auto& it : patterns) {
-      ret[it].error = make_error(e.what(), true);
+private:
+  RemoteStore* store;
+  unique_ptr<RemoteStore::Client> client;
+};
+
+shared_ptr<Store::ReadAllTask> RemoteStore::read_all(StoreTaskManager* m,
+    shared_ptr<const ReadAllArguments> args, BaseFunctionProfiler* profiler) {
+  static shared_ptr<ReadAllTask> empty_result_task(new ReadAllTask(ReadAllResult()));
+  if (args->local_only) {
+    profiler->add_metadata("local_only", "true");
+    return empty_result_task;
+  }
+  return shared_ptr<ReadAllTask>(new RemoteStoreReadAllTask(m, this, args,
+      profiler));
+}
+
+
+
+class RemoteStore::RemoteStoreWriteTask : public Store::WriteTask {
+public:
+  virtual ~RemoteStoreWriteTask() = default;
+  RemoteStoreWriteTask(StoreTaskManager* m, RemoteStore* s,
+      shared_ptr<const WriteArguments> args, BaseFunctionProfiler* profiler) :
+      WriteTask(m, args, profiler), store(s) {
+    try {
+      this->client = this->store->get_client();
+      this->profiler->checkpoint("get_client");
+      this->client->client->send_write(this->args->data,
+          this->args->skip_buffering, true);
+      this->read_suspend(this->client->socket->getSocketFD(), bind(
+          &RemoteStoreWriteTask::on_socket_readable, this));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
     }
   }
-  this->stats[0].find_commands++;
-  return ret;
+
+  void on_socket_readable() {
+    try {
+      this->client->client->recv_write(this->return_value);
+      this->set_complete();
+      this->store->return_client(move(this->client));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+    this->store->stats[0].write_commands++;
+  }
+
+  void set_value_from_error(const exception& e) {
+    this->profiler->checkpoint("remote_call");
+    this->profiler->add_metadata("remote_error", e.what());
+    this->store->stats[0].server_disconnects++;
+    for (const auto& it : this->args->data) {
+      this->return_value.emplace(it.first, make_error(e.what(), true));
+    }
+    this->set_complete();
+  }
+
+private:
+  RemoteStore* store;
+  unique_ptr<RemoteStore::Client> client;
+};
+
+shared_ptr<Store::WriteTask> RemoteStore::write(StoreTaskManager* m,
+    shared_ptr<const WriteArguments> args, BaseFunctionProfiler* profiler) {
+  static shared_ptr<WriteTask> empty_result_task(new WriteTask({}));
+  if (args->data.empty()) {
+    return empty_result_task;
+  }
+  if (args->local_only) {
+    profiler->add_metadata("local_only", "true");
+    return empty_result_task;
+  }
+  return shared_ptr<RemoteStoreWriteTask>(new RemoteStoreWriteTask(m, this,
+      args, profiler));
 }
+
+
+
+class RemoteStore::RemoteStoreFindTask : public Store::FindTask {
+public:
+  virtual ~RemoteStoreFindTask() = default;
+  RemoteStoreFindTask(StoreTaskManager* m, RemoteStore* s,
+      shared_ptr<const FindArguments> args, BaseFunctionProfiler* profiler) :
+      FindTask(m, args, profiler), store(s) {
+    try {
+      this->client = this->store->get_client();
+      this->profiler->checkpoint("get_client");
+      this->client->client->send_find(this->args->patterns, true);
+      this->read_suspend(this->client->socket->getSocketFD(), bind(
+          &RemoteStoreFindTask::on_socket_readable, this));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+  }
+
+  void on_socket_readable() {
+    try {
+      this->client->client->recv_find(this->return_value);
+      this->set_complete();
+      this->store->return_client(move(this->client));
+    } catch (const exception& e) {
+      this->set_value_from_error(e);
+    }
+    this->store->stats[0].find_commands++;
+  }
+
+  void set_value_from_error(const exception& e) {
+    this->profiler->checkpoint("remote_call");
+    this->profiler->add_metadata("remote_error", e.what());
+    this->store->stats[0].server_disconnects++;
+    for (const auto& it : this->args->patterns) {
+      this->return_value[it].error = make_error(e.what(), true);
+    }
+    this->set_complete();
+  }
+
+private:
+  RemoteStore* store;
+  unique_ptr<RemoteStore::Client> client;
+};
+
+shared_ptr<Store::FindTask> RemoteStore::find(StoreTaskManager* m,
+    shared_ptr<const FindArguments> args, BaseFunctionProfiler* profiler) {
+  static shared_ptr<FindTask> empty_result_task(new FindTask({}));
+  if (args->patterns.empty()) {
+    return empty_result_task;
+  }
+  if (args->local_only) {
+    profiler->add_metadata("local_only", "true");
+    return empty_result_task;
+  }
+  return shared_ptr<FindTask>(new RemoteStoreFindTask(m, this, args, profiler));
+}
+
+
 
 unordered_map<string, int64_t> RemoteStore::get_stats(bool rotate) {
   const Stats& current_stats = this->stats[0];
@@ -313,10 +525,9 @@ std::unique_ptr<RemoteStore::Client> RemoteStore::get_client() {
 
   // there are no clients; make a new one
   unique_ptr<Client> c(new Client());
-  thrift_ptr<apache::thrift::transport::TSocket> socket(
-      new apache::thrift::transport::TSocket(hostname, port));
+  c->socket.reset(new apache::thrift::transport::TSocket(hostname, port));
   thrift_ptr<apache::thrift::transport::TTransport> trans(
-      new apache::thrift::transport::TFramedTransport(socket));
+      new apache::thrift::transport::TFramedTransport(c->socket));
   thrift_ptr<apache::thrift::protocol::TProtocol> proto(
       new apache::thrift::protocol::TBinaryProtocol(trans));
   trans->open();

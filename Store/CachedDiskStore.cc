@@ -369,13 +369,12 @@ void CachedDiskStore::check_and_delete_cache_path(const KeyPath& path) {
   }
 }
 
-unordered_map<string, Error> CachedDiskStore::update_metadata(
-    const SeriesMetadataMap& metadata_map, bool create_new,
-    UpdateMetadataBehavior update_behavior, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
+shared_ptr<Store::UpdateMetadataTask> CachedDiskStore::update_metadata(
+    StoreTaskManager*, shared_ptr<const UpdateMetadataArguments> args,
+    BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
 
-  for (auto& it : metadata_map) {
+  for (auto& it : args->metadata) {
     const auto& key_name = it.first;
     const auto& metadata = it.second;
 
@@ -388,7 +387,7 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
       KeyPath p(key_name);
       // TODO: can we use the metadata_to_create argument here? might help to
       // clean up some of the below logic
-      CacheTraversal t = this->traverse_cache_tree(p.directories, create_new);
+      CacheTraversal t = this->traverse_cache_tree(p.directories, args->create_new);
 
       // construct the full key filename
       t.filesystem_path += '/';
@@ -419,7 +418,7 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
       // now the file exists or is missing from both the cache and filesystem.
       // if it exists, we'll apply the update behavior; if it doesn't, then
       // we'll create it if requested.
-      if (!file_exists && create_new) {
+      if (!file_exists && args->create_new) {
         rw_guard g(t.level->files_lock, true);
         auto emplace_ret = t.level->files.emplace(piecewise_construct,
             forward_as_tuple(p.basename),
@@ -453,17 +452,17 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
           t.level->files_lru.touch(p.basename);
         }
 
-        if (update_behavior == UpdateMetadataBehavior::Recreate) {
+        if (args->behavior == UpdateMetadataBehavior::Recreate) {
           d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method, true);
           ret.emplace(key_name, make_success());
           this->stats[0].series_truncates++;
 
-        } else if (update_behavior == UpdateMetadataBehavior::Update) {
+        } else if (args->behavior == UpdateMetadataBehavior::Update) {
           d.update_metadata(metadata.archive_args, metadata.x_files_factor, metadata.agg_method);
           ret.emplace(key_name, make_success());
           this->stats[0].series_update_metadatas++;
 
-        } else if (update_behavior == UpdateMetadataBehavior::Ignore) {
+        } else if (args->behavior == UpdateMetadataBehavior::Ignore) {
           ret.emplace(key_name, make_ignored());
         }
 
@@ -480,16 +479,15 @@ unordered_map<string, Error> CachedDiskStore::update_metadata(
     }
   }
 
-  return ret;
+  return shared_ptr<UpdateMetadataTask>(new UpdateMetadataTask(move(ret)));
 }
 
-unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
-    const vector<string>& patterns, bool deferred, bool local_only,
-    BaseFunctionProfiler* profiler) {
+shared_ptr<Store::DeleteSeriesTask> CachedDiskStore::delete_series(StoreTaskManager*,
+    shared_ptr<const DeleteSeriesArguments> args, BaseFunctionProfiler* profiler) {
   unordered_map<string, DeleteResult> ret;
 
   // create results for all input patterns
-  for (const auto& pattern : patterns) {
+  for (const auto& pattern : args->patterns) {
     auto& res = ret[pattern];
     res.disk_series_deleted = 0;
     res.buffer_series_deleted = 0;
@@ -501,7 +499,7 @@ unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
   // special-case it here
   vector<string> determinate_patterns;
   vector<string> delete_all_patterns;
-  for (const auto& pattern : patterns) {
+  for (const auto& pattern : args->patterns) {
     if (ends_with(pattern, ".**")) {
       delete_all_patterns.emplace_back(pattern);
     } else {
@@ -605,8 +603,11 @@ unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
     profiler->checkpoint("delete_indeterminate_patterns");
   }
 
-  auto key_to_patterns = this->resolve_patterns(determinate_patterns,
-      local_only, profiler);
+  StoreTaskManager m;
+  auto resolve_patterns_task = this->resolve_patterns(&m, determinate_patterns,
+      args->local_only, profiler);
+  m.run(resolve_patterns_task);
+  auto key_to_patterns = resolve_patterns_task->value();
   profiler->checkpoint("resolve_patterns");
 
   for (auto key_it : key_to_patterns) {
@@ -644,24 +645,27 @@ unordered_map<string, DeleteResult> CachedDiskStore::delete_series(
   }
   profiler->checkpoint("delete_files");
 
-  return ret;
+  return shared_ptr<DeleteSeriesTask>(new DeleteSeriesTask(move(ret)));
 }
 
-unordered_map<string, Error> CachedDiskStore::rename_series(
-    const unordered_map<string, string>& renames, bool merge, bool local_only,
-    BaseFunctionProfiler* profiler) {
+shared_ptr<Store::RenameSeriesTask> CachedDiskStore::rename_series(StoreTaskManager*,
+    shared_ptr<const RenameSeriesArguments> args, BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
 
-  // if merging, be lazy and do the read+create+write procedure instead
-  if (merge) {
-    for (const auto& it : renames) {
-      ret.emplace(it.first, this->emulate_rename_series(this, it.first, this,
-          it.second, merge, profiler));
+  // if merging, be lazy and do the read+create+write procedure instead. see
+  // comment in DiskStore about why we don't parallelize these
+  if (args->merge) {
+    StoreTaskManager m;
+    for (const auto& it : args->renames) {
+      auto task = this->emulate_rename_series(&m, this, it.first, this,
+          it.second, args->merge, profiler);
+      m.run(task);
+      ret.emplace(it.first, move(task->value()));
     }
-    return ret;
+    return shared_ptr<RenameSeriesTask>(new RenameSeriesTask(move(ret)));
   }
 
-  for (auto rename_it : renames) {
+  for (auto rename_it : args->renames) {
     const string& from_key_name = rename_it.first;
     const string& to_key_name = rename_it.second;
 
@@ -715,15 +719,17 @@ unordered_map<string, Error> CachedDiskStore::rename_series(
   }
   profiler->checkpoint("rename_files");
 
-  return ret;
+  return shared_ptr<RenameSeriesTask>(new RenameSeriesTask(move(ret)));
 }
 
-unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
-    const vector<string>& key_names, int64_t start_time, int64_t end_time,
-    bool local_only, BaseFunctionProfiler* profiler) {
+shared_ptr<Store::ReadTask> CachedDiskStore::read(StoreTaskManager*,
+    shared_ptr<const ReadArguments> args, BaseFunctionProfiler* profiler) {
 
-  auto key_to_patterns = this->resolve_patterns(key_names, local_only,
-      profiler);
+  StoreTaskManager m;
+  auto resolve_patterns_task = this->resolve_patterns(&m, args->key_names,
+      args->local_only, profiler);
+  m.run(resolve_patterns_task);
+  auto key_to_patterns = resolve_patterns_task->value();
   profiler->checkpoint("resolve_patterns");
 
   unordered_map<string, ReadResult*> key_to_read_result;
@@ -748,8 +754,8 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
       KeyPath p(key_name);
       try {
         CacheTraversal t = this->traverse_cache_tree(p);
-        if (start_time && end_time) {
-          auto res = t.archive->read(start_time, end_time);
+        if (args->start_time && args->end_time) {
+          auto res = t.archive->read(args->start_time, args->end_time);
           r.data = move(res.data);
           r.start_time = res.start_time;
           r.end_time = res.end_time;
@@ -758,16 +764,16 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
 
       } catch (const out_of_range& e) {
         // one of the directories doesn't exist
-        r.start_time = start_time;
-        r.end_time = end_time;
+        r.start_time = args->start_time;
+        r.end_time = args->end_time;
         r.step = 0;
 
       } catch (const cannot_open_file& e) {
         if (e.error == ENOENT) {
           // apparently the file was deleted; remove it from the cache
           this->check_and_delete_cache_path(p);
-          r.start_time = start_time;
-          r.end_time = end_time;
+          r.start_time = args->start_time;
+          r.end_time = args->end_time;
           r.step = 0;
         } else {
           r.error = make_error(e.what());
@@ -781,14 +787,14 @@ unordered_map<string, unordered_map<string, ReadResult>> CachedDiskStore::read(
   profiler->checkpoint("read_data");
 
   this->stats[0].report_read_request(ret);
-  return ret;
+  return shared_ptr<ReadTask>(new ReadTask(move(ret)));
 }
 
-ReadAllResult CachedDiskStore::read_all(const string& key_name,
-    bool local_only, BaseFunctionProfiler* profiler) {  
+shared_ptr<Store::ReadAllTask> CachedDiskStore::read_all(StoreTaskManager*,
+    shared_ptr<const ReadAllArguments> args, BaseFunctionProfiler* profiler) {  
   ReadAllResult ret;
 
-  KeyPath p(key_name);
+  KeyPath p(args->key_name);
   try {
     CacheTraversal t = this->traverse_cache_tree(p);
 
@@ -818,14 +824,13 @@ ReadAllResult CachedDiskStore::read_all(const string& key_name,
     ret.error = make_error(e.what());
   }
 
-  return ret;
+  return shared_ptr<ReadAllTask>(new ReadAllTask(move(ret)));
 }
 
-unordered_map<string, Error> CachedDiskStore::write(
-    const unordered_map<string, Series>& data, bool skip_buffering,
-    bool local_only, BaseFunctionProfiler* profiler) {
+shared_ptr<Store::WriteTask> CachedDiskStore::write(StoreTaskManager*,
+    shared_ptr<const WriteArguments> args, BaseFunctionProfiler* profiler) {
   unordered_map<string, Error> ret;
-  for (auto& it : data) {
+  for (auto& it : args->data) {
     if (!this->key_name_is_valid(it.first)) {
       ret.emplace(it.first, make_ignored("key contains invalid characters"));
       continue;
@@ -875,8 +880,8 @@ unordered_map<string, Error> CachedDiskStore::write(
     }
   }
 
-  this->stats[0].report_write_request(ret, data);
-  return ret;
+  this->stats[0].report_write_request(ret, args->data);
+  return shared_ptr<WriteTask>(new WriteTask(move(ret)));
 }
 
 static string path_join(const string& a, const string& b) {
@@ -936,13 +941,12 @@ void CachedDiskStore::find_all_recursive(FindResult& r,
   }
 }
 
-unordered_map<string, FindResult> CachedDiskStore::find(
-    const vector<string>& patterns, bool local_only,
-    BaseFunctionProfiler* profiler) {
+shared_ptr<Store::FindTask> CachedDiskStore::find(StoreTaskManager*,
+    shared_ptr<const FindArguments> args, BaseFunctionProfiler* profiler) {
 
   vector<KeyPath> paths_to_check_and_delete;
   unordered_map<string, FindResult> ret;
-  for (const auto& pattern : patterns) {
+  for (const auto& pattern : args->patterns) {
     auto emplace_ret = ret.emplace(piecewise_construct,
         forward_as_tuple(pattern), forward_as_tuple());
     if (!emplace_ret.second) {
@@ -1172,7 +1176,7 @@ unordered_map<string, FindResult> CachedDiskStore::find(
   }
   profiler->checkpoint("check_and_delete_missing_cache_paths");
 
-  return ret;
+  return shared_ptr<FindTask>(new FindTask(move(ret)));
 }
 
 unordered_map<string, int64_t> CachedDiskStore::get_stats(bool rotate) {
