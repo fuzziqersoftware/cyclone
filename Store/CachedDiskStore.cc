@@ -501,15 +501,23 @@ shared_ptr<Store::DeleteSeriesTask> CachedDiskStore::delete_series(StoreTaskMana
   vector<string> delete_all_patterns;
   for (const auto& pattern : args->patterns) {
     if (ends_with(pattern, ".**")) {
-      delete_all_patterns.emplace_back(pattern);
+      delete_all_patterns.emplace_back(pattern.substr(0, pattern.size() - 3));
     } else {
       determinate_patterns.emplace_back(pattern);
     }
   }
   profiler->checkpoint("separate_determinate_patterns");
 
+  StoreTaskManager m;
   if (!delete_all_patterns.empty()) {
-    for (const string& pattern : delete_all_patterns) {
+    auto resolve_patterns_task = this->resolve_patterns(&m, delete_all_patterns,
+        args->local_only, profiler);
+    m.run(resolve_patterns_task);
+    profiler->checkpoint("resolve_patterns");
+
+    for (const auto& key_it : resolve_patterns_task->value()) {
+      const auto& directory_key = key_it.first;
+      const auto& input_patterns = key_it.second;
 
       std::unique_ptr<CachedDirectoryContents> deleted_level;
       string path_to_delete;
@@ -518,7 +526,7 @@ shared_ptr<Store::DeleteSeriesTask> CachedDiskStore::delete_series(StoreTaskMana
         // after the traversal, the last level in t.levels is actually the one
         // that needs to be deleted, so the second-to-last entry in t.levels is
         // the one that gets modified
-        KeyPath p(pattern);
+        KeyPath p(directory_key, false);
         {
           auto t = this->traverse_cache_tree(p.directories, false);
 
@@ -593,57 +601,61 @@ shared_ptr<Store::DeleteSeriesTask> CachedDiskStore::delete_series(StoreTaskMana
             }
           }
         }
-        ret.at(pattern).disk_series_deleted = files_deleted;
+        for (const auto& pattern : input_patterns) {
+          ret.at(pattern + ".**").disk_series_deleted = files_deleted;
+        }
 
       } catch (const exception& e) {
-        ret.at(pattern).error = make_error(e.what());
+        for (const auto& pattern : input_patterns) {
+          ret.at(pattern + ".**").error = make_error(e.what());
+        }
       }
     }
 
     profiler->checkpoint("delete_indeterminate_patterns");
   }
 
-  StoreTaskManager m;
-  auto resolve_patterns_task = this->resolve_patterns(&m, determinate_patterns,
-      args->local_only, profiler);
-  m.run(resolve_patterns_task);
-  auto key_to_patterns = resolve_patterns_task->value();
-  profiler->checkpoint("resolve_patterns");
+  if (!determinate_patterns.empty()) {
+    auto resolve_patterns_task = this->resolve_patterns(&m, determinate_patterns,
+        args->local_only, profiler);
+    m.run(resolve_patterns_task);
+    profiler->checkpoint("resolve_patterns");
 
-  for (auto key_it : key_to_patterns) {
-    // if the token is a pattern, don't delete it - directory trees must be
-    // deleted with the .** form of this command instead
-    if (this->token_is_pattern(key_it.first)) {
-      continue;
-    }
+    for (auto key_it : resolve_patterns_task->value()) {
+      // if the token is a pattern, don't delete it - directory trees must be
+      // deleted with the .** form of this command instead
+      if (this->token_is_pattern(key_it.first)) {
+        continue;
+      }
 
-    try {
-      KeyPath p(key_it.first);
-
-      // delete the file on disk
-      string filename = this->filename_for_key(key_it.first);
       try {
-        unlink(filename);
-        this->stats[0].series_deletes++;
-      } catch (const runtime_error& e) { }
+        KeyPath p(key_it.first);
 
-      // note: we don't need to explicitly close the fd in WhisperArchive's file
-      // cache; it should be closed in the WhisperArchive destructor, which is
-      // indirectly called in check_and_delete_cache_path
-      this->check_and_delete_cache_path(p);
+        // delete the file on disk
+        string filename = this->filename_for_key(key_it.first);
+        try {
+          unlink(filename);
+          this->stats[0].series_deletes++;
+        } catch (const runtime_error& e) { }
 
-      for (const string& pattern : key_it.second) {
-        ret.at(pattern).disk_series_deleted++;
-      }
+        // note: we don't need to explicitly close the fd in WhisperArchive's file
+        // cache; it should be closed in the WhisperArchive destructor, which is
+        // indirectly called in check_and_delete_cache_path
+        this->check_and_delete_cache_path(p);
 
-    } catch (const exception& e) {
-      for (const string& pattern : key_it.second) {
-        ret.at(pattern).error = make_error(string_printf(
-            "failed to delete series %s (%s)", key_it.first.c_str(), e.what()));
+        for (const string& pattern : key_it.second) {
+          ret.at(pattern).disk_series_deleted++;
+        }
+
+      } catch (const exception& e) {
+        for (const string& pattern : key_it.second) {
+          ret.at(pattern).error = make_error(string_printf(
+              "failed to delete series %s (%s)", key_it.first.c_str(), e.what()));
+        }
       }
     }
+    profiler->checkpoint("delete_files");
   }
-  profiler->checkpoint("delete_files");
 
   return shared_ptr<DeleteSeriesTask>(new DeleteSeriesTask(move(ret)));
 }

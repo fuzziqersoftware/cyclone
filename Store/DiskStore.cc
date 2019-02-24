@@ -161,13 +161,76 @@ shared_ptr<Store::DeleteSeriesTask> DiskStore::delete_series(StoreTaskManager*,
   // resolve_patterns and isn't allowed anywhere else in patterns, so
   // special-case it here
   vector<string> determinate_patterns;
+  vector<string> directory_patterns_to_delete;
   for (const auto& pattern : args->patterns) {
     if (ends_with(pattern, ".**")) {
-      string directory_pattern = pattern.substr(0, pattern.size() - 3);
-      string directory_path = this->filename_for_key(directory_pattern, false);
+      directory_patterns_to_delete.emplace_back(pattern.substr(0, pattern.size() - 3));
+    } else {
+      determinate_patterns.emplace_back(pattern);
+    }
+  }
+  profiler->checkpoint("separate_determinate_patterns");
 
-      DeleteResult& res = ret.at(pattern);
+  StoreTaskManager m;
+  if (!determinate_patterns.empty()) {
+    auto resolve_patterns_task = this->resolve_patterns(&m,
+        determinate_patterns, args->local_only, profiler);
+    m.run(resolve_patterns_task);
+    profiler->checkpoint("resolve_file_patterns");
 
+    for (const auto& key_it : resolve_patterns_task->value()) {
+      // if the token is a pattern, don't delete it - directory trees must be
+      // deleted with the .** form of this command instead
+      if (this->token_is_pattern(key_it.first)) {
+        continue;
+      }
+
+      try {
+        // delete the file. note: we don't need to explicitly close the fd in
+        // WhisperArchive's file cache; there shouldn't be an open file for this
+        // series because it was closed in the WhisperArchive destructor
+        string filename = this->filename_for_key(key_it.first);
+        unlink(filename);
+        this->stats[0].series_deletes++;
+
+        // then delete any empty directories in which the file resided. stop
+        // when we reach the data directory or any directory isn't empty
+        delete_empty_directories_for_file(this->directory, filename);
+
+        for (const auto& pattern : key_it.second) {
+          ret.at(pattern).disk_series_deleted++;
+        }
+
+      } catch (const exception& e) {
+        for (const auto& pattern : key_it.second) {
+          ret.at(pattern).error = make_error(string_printf(
+              "failed to delete series %s (%s)", key_it.first.c_str(), e.what()));
+        }
+      }
+    }
+    profiler->checkpoint("delete_files");
+  }
+
+  if (!directory_patterns_to_delete.empty()) {
+    auto resolve_patterns_task = this->resolve_patterns(&m,
+        directory_patterns_to_delete, args->local_only, profiler);
+    m.run(resolve_patterns_task);
+    profiler->checkpoint("resolve_directory_patterns");
+
+    for (const auto& key_it : resolve_patterns_task->value()) {
+      string key = key_it.first; // copy so we can modify it
+      const auto& patterns = key_it.second;
+
+      // trim off the .* from the directory name. this is safe because files
+      // have the .wsp suffix so we won't accidentally delete a file that has
+      // the same name as a directory
+      if (ends_with(key, ".*")) {
+        key.resize(key.size() - 2);
+      }
+
+      string directory_path = this->filename_for_key(key, false);
+
+      size_t disk_series_deleted = 0;
       vector<string> paths_to_count;
       paths_to_count.emplace_back(directory_path);
       while (!paths_to_count.empty()) {
@@ -186,63 +249,27 @@ shared_ptr<Store::DeleteSeriesTask> DiskStore::delete_series(StoreTaskManager*,
           if (isdir(item_path)) {
             paths_to_count.emplace_back(item_path);
           } else {
-            res.disk_series_deleted += 1;
+            disk_series_deleted += 1;
           }
         }
       }
 
+      Error error;
       try {
         unlink(directory_path, true);
       } catch (const exception& e) {
-        res.error = make_error(string_printf(
+        error = make_error(string_printf(
             "failed to delete directory %s (%s)", directory_path.c_str(), e.what()));
       }
 
-    } else {
-      determinate_patterns.emplace_back(pattern);
-    }
-  }
-  profiler->checkpoint("separate_determinate_patterns");
-
-  StoreTaskManager m;
-  auto resolve_patterns_task = this->resolve_patterns(&m, determinate_patterns,
-      args->local_only, profiler);
-  m.run(resolve_patterns_task);
-  auto key_to_patterns = resolve_patterns_task->value();
-  profiler->checkpoint("resolve_patterns");
-
-  for (const auto& key_it : key_to_patterns) {
-    // if the token is a pattern, don't delete it - directory trees must be
-    // deleted with the .** form of this command instead
-    if (this->token_is_pattern(key_it.first)) {
-      continue;
-    }
-
-    try {
-      // delete the file
-      // note: we don't need to explicitly close the fd in WhisperArchive's file
-      // cache; there shouldn't be an open file for this series because it was
-      // closed in the WhisperArchive destructor
-      string filename = this->filename_for_key(key_it.first);
-      unlink(filename);
-      this->stats[0].series_deletes++;
-
-      // then delete any empty directories in which the file resided. stop when
-      // we reach the data directory or any directory isn't empty
-      delete_empty_directories_for_file(this->directory, filename);
-
-      for (const auto& pattern : key_it.second) {
-        ret.at(pattern).disk_series_deleted++;
-      }
-
-    } catch (const exception& e) {
-      for (const auto& pattern : key_it.second) {
-        ret.at(pattern).error = make_error(string_printf(
-            "failed to delete series %s (%s)", key_it.first.c_str(), e.what()));
+      for (const auto& pattern : patterns) {
+        DeleteResult& res = ret.at(pattern + ".**");
+        res.disk_series_deleted = disk_series_deleted;
+        res.error = error;
       }
     }
+    profiler->checkpoint("delete_directories");
   }
-  profiler->checkpoint("delete_files");
 
   return shared_ptr<DeleteSeriesTask>(new DeleteSeriesTask(move(ret)));
 }
