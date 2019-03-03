@@ -316,6 +316,7 @@
     "max_write_batches_per_second": 100,
     "disable_rate_limit_for_queue_length": 1000000,
     "merge_find_patterns": false,
+    "enable_deferred_deletes": true,
     "substore": {
       "type": "cached_disk",
       "directory_limit": 10000,
