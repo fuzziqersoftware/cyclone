@@ -33,7 +33,7 @@ public:
       all_servers(all_servers) { }
 
   ProfilerGuard create_profiler(const string& function_name) {
-    string thread_name = string_printf("ThriftServer::serve (thread_id=%zu)",
+    string thread_name = string_printf("ThriftServer::serve-%016zX",
         this_thread::get_id());
     return ProfilerGuard(::create_profiler(thread_name, function_name));
   }

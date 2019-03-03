@@ -36,8 +36,8 @@ StreamServer::Client::Client(int fd, const struct sockaddr& remote_addr,
 StreamServer::WorkerThread::WorkerThread(StreamServer* server, int worker_num) :
     server(server), worker_num(worker_num),
     base(event_base_new(), event_base_free), t() {
-  this->thread_name = string_printf("StreamServer::run_thread (worker_num=%d)",
-      worker_num);
+  this->thread_name = string_printf("StreamServer::run_thread-%016" PRIX64,
+      reinterpret_cast<uint64_t>(this->base.get()));
 }
 
 void StreamServer::WorkerThread::disconnect_client(struct bufferevent* bev) {

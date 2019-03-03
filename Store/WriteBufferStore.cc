@@ -957,8 +957,8 @@ void WriteBufferStore::write_thread_routine(size_t thread_index) {
   // note: we use blocking calls (manager = NULL) in this function to limit load
 
   string queue_position;
-  string thread_name = string_printf("WriteBufferStore::write_thread_routine (thread_id=%zu)",
-      this_thread::get_id());
+  string thread_name = string_printf("WriteBufferStore::write_thread_routine-%016" PRIX64 "-%016" PRIX64,
+      reinterpret_cast<uint64_t>(this), this_thread::get_id());
 
   auto& wt = this->write_threads[thread_index];
   wt->last_queue_restart = now();

@@ -217,8 +217,8 @@ HTTPServer::Thread::Thread(HTTPServer* s) : server(s),
         &HTTPServer::Thread::dispatch_exit_check, this), event_free),
     http(evhttp_new(this->base.get()), evhttp_free), t() {
 
-  this->thread_name = string_printf("HTTPServer::worker_thread_routine (base=0x%016" PRIX64 ")",
-      reinterpret_cast<uint64_t>(base.get()));
+  this->thread_name = string_printf("HTTPServer::worker_thread_routine-%016" PRIX64,
+      reinterpret_cast<uint64_t>(this->base.get()));
 
   evhttp_set_gencb(this->http.get(), HTTPServer::dispatch_handle_request, this);
 

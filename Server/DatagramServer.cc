@@ -25,8 +25,8 @@ using namespace std;
 DatagramServer::WorkerThread::WorkerThread(DatagramServer* server,
     int worker_num) : server(server), worker_num(worker_num),
     base(event_base_new(), event_base_free), fd_to_event(), t() {
-  this->thread_name = string_printf("DatagramServer::run_thread (worker_num=%d)",
-      worker_num);
+  this->thread_name = string_printf("DatagramServer::run_thread-%016" PRIX64,
+      reinterpret_cast<uint64_t>(this->base.get()));
 }
 
 void DatagramServer::WorkerThread::check_for_thread_exit(evutil_socket_t fd,

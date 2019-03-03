@@ -463,6 +463,9 @@ bool ConsistentHashMultiStore::cancel_verify() {
 void ConsistentHashMultiStore::verify_thread_routine() {
   log(INFO, "[ConsistentHashMultiStore] starting verify");
 
+  string thread_name = string_printf("ConsistentHashMultiStore::verify_thread_routine-%016" PRIX64,
+      reinterpret_cast<uint64_t>(this));
+
   this->verify_progress.end_time = 0;
   this->verify_progress.start_time = now();
   this->verify_progress.keys_examined = 0;
@@ -480,8 +483,7 @@ void ConsistentHashMultiStore::verify_thread_routine() {
     pending_patterns.pop_back();
 
     string function_name = string_printf("verify(%s)", pattern.c_str());
-    ProfilerGuard pg(create_internal_profiler(
-        "ConsistentHashMultiStore::verify_thread_routine", function_name.c_str()));
+    ProfilerGuard pg(create_internal_profiler(thread_name, function_name.c_str()));
 
     shared_ptr<FindTask> find_task;
     {
