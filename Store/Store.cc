@@ -1,5 +1,6 @@
 #include "Store.hh"
 
+#include <algorithm>
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
 
