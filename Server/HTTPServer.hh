@@ -37,6 +37,8 @@ public:
 
   static std::unordered_multimap<std::string, std::string> parse_url_params(
       const std::string& query);
+  static std::unordered_map<std::string, std::string> parse_url_params_unique(
+      const std::string& query);
 
   static const std::string& get_url_param(
       const std::unordered_multimap<std::string, std::string>& params,

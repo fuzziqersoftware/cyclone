@@ -35,7 +35,7 @@ void HTMLRenderer::render_find_results(
     evbuffer_add(this->buf, "<!DOCTYPE html><html><head><title>cyclone: multiple queries</title></head>", 74);
   }
 
-  evbuffer_add_printf(this->buf, "<style type=\"text/css\">body { background-color: #000000; color: #FFFFFF; } a.query_link { color: #00FF00; } a.series_link { color: #00FFFF }</style>");
+  evbuffer_add_printf(this->buf, "<style type=\"text/css\">body { background-color: #FFFFFF; color: #000000; } a.query_link { color: #009900; } a.series_link { color: #0000FF }</style>");
 
   for (const auto& query_it : data) {
     if (!query_it.second.error.description.empty()) {

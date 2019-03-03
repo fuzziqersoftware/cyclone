@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <phosg/Filesystem.hh>
+#include <phosg/Network.hh>
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
 
@@ -23,7 +24,8 @@ using namespace std;
 
 CycloneHTTPServer::CycloneHTTPServer(shared_ptr<Store> store,
     size_t num_threads, const string& config_filename) :
-    HTTPServer(num_threads), store(store), config_filename(config_filename) { }
+    HTTPServer(num_threads), store(store), config_filename(config_filename),
+    start_time(now()) { }
 
 void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* req) {
   BusyThreadGuard g(&this->idle_thread_count);
@@ -47,22 +49,22 @@ void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* 
       content_type = this->handle_graphite_find_request(t, req, out_buffer.get());
 
     // cyclone api
+    } else if (!strncmp(uri, "/y/action", 9)) {
+      content_type = this->handle_action_request(t, req, out_buffer.get());
     } else if (!strncmp(uri, "/y/stats", 8)) {
       content_type = this->handle_stats_request(t, req, out_buffer.get());
+    } else if (!strncmp(uri, "/y/thread-status", 16)) {
+      content_type = this->handle_thread_status_request(t, req, out_buffer.get());
     } else if (!strncmp(uri, "/y/config", 9)) {
       content_type = this->handle_config_request(t, req, out_buffer.get());
-    } else if (!strncmp(uri, "/y/read_all", 11)) {
+    } else if (!strncmp(uri, "/y/read-all", 11)) {
       content_type = this->handle_read_all_request(t, req, out_buffer.get());
     // } else if (!strcmp(uri, "/create")) {
     //   content_type = this->handle_create_request(t, req, out_buffer.get());
     // } else if (!strcmp(uri, "/delete")) {
     //   content_type = this->handle_delete_request(t, req, out_buffer.get());
-    // } else if (!strncmp(uri, "/read/?", 7) || !strncmp(uri, "/read?", 6)) {
-    //   content_type = this->handle_read_request(t, req, out_buffer.get());
     // } else if (!strncmp(uri, "/write", 6)) {
     //   content_type = this->handle_write_request(t, req, out_buffer.get());
-    // } else if (!strncmp(uri, "/find/?", 7) || !strncmp(uri, "/find?", 6)) {
-    //   content_type = this->handle_find_request(t, req, out_buffer.get());
 
     } else {
       throw http_error(404, "unknown action");
@@ -102,22 +104,68 @@ unique_ptr<Renderer> CycloneHTTPServer::create_renderer(const string& format,
 }
 
 
-const string INDEX_HTML("\
+const string INDEX_HTML_HEADER("\
 <!DOCTYPE html>\n\
 <html><head><title>cyclone</title></head><body>\n\
-<h3>cyclone</h3>\n\
-<a href=\"/metrics/find/?query=*&format=html\">browse</a> - <a href=\"/y/stats\">stats</a> - <a href=\"/y/config\">config</a>\n\
-<form method=\"GET\" action=\"/metrics/find/\"><input name=\"query\" /><input type=\"hidden\" name=\"format\" value=\"html\" /><input type=\"submit\" value=\"find\" /></form><br />\n\
+<style type=\"text/css\">\n\
+body {text-align:center; color: #000000; background-color: #FFFFFF}\n\
+a {color: #0000CC}\n\
+.small-note {color: #333333; font-size: 80%}\n\
+</style>\n\
+<h3>cyclone</h3>");
+
+const string INDEX_HTML_FOOTER("\
+<a href=\"/metrics/find/?query=*&format=html\">browse all metrics</a> or \n\
+  find metrics matching <form style=\"display:inline\" method=\"GET\" action=\"/metrics/find/\">\n\
+    <input name=\"query\" placeholder=\"pattern or series name\"/>\n\
+    <input type=\"hidden\" name=\"format\" value=\"html\" />\n\
+    <input type=\"submit\" value=\"find\" /></form><br />\n\
+<form style=\"display:inline\" method=\"GET\" action=\"/render\">\n\
+  read from <input name=\"target\" placeholder=\"pattern or series name\" />\n\
+  from <input name=\"from\" value=\"-1h\"/>\n\
+  until <input name=\"until\" value=\"now\"/>\n\
+  <input type=\"hidden\" name=\"format\" value=\"json\" />\n\
+  <input type=\"submit\" value=\"read\" /></form><br />\n\
+<br />\n\
+<form style=\"display:inline\" method=\"GET\" action=\"/y/action\">\n\
+  rename <input name=\"from_key_name\" placeholder=\"original series name\" />\n\
+  to <input name=\"to_key_name\" placeholder=\"new series name\">\n\
+  <input name=\"merge\" type=\"checkbox\"> and merge with existing data\n\
+  <input type=\"hidden\" name=\"action\" value=\"rename_series\" />\n\
+  <input type=\"submit\" value=\"rename\" /></form><br />\n\
+<form style=\"display:inline\" method=\"GET\" action=\"/y/action\">\n\
+  delete <input name=\"pattern\" placeholder=\"pattern or series name\" />\n\
+  <input type=\"checkbox\" name=\"deferred\"/> asynchronously\n\
+  <input type=\"hidden\" name=\"action\" value=\"delete_series\" />\n\
+  <input type=\"submit\" value=\"delete\" /></form><br />\n\
+<br />\n\
+<a href=\"/y/thread-status\">thread status</a><br />\n\
+<a href=\"/y/stats\">server stats</a><br />\n\
+<a href=\"/y/config\">server configuration</a><br />\n\
 </body></html>");
 
 string CycloneHTTPServer::handle_index_request(struct Thread& t,
     struct evhttp_request* req, struct evbuffer* out_buffer) {
-  evbuffer_add_reference(out_buffer, INDEX_HTML.data(), INDEX_HTML.size(), NULL, NULL);
+  ProfilerGuard pg(create_profiler(t.thread_name, "(http) /"));
+
+  evbuffer_add_reference(out_buffer, INDEX_HTML_HEADER.data(),
+      INDEX_HTML_HEADER.size(), NULL, NULL);
+
+  string hostname = gethostname();
+  string start_time_str = format_time(this->start_time);
+  evbuffer_add_printf(out_buffer, "\
+<span class=\"small-note\">running on %s, started at %s</span><br />\n\
+<br />\n", hostname.c_str(), start_time_str.c_str());
+
+  evbuffer_add_reference(out_buffer, INDEX_HTML_FOOTER.data(),
+      INDEX_HTML_FOOTER.size(), NULL, NULL);
   return "text/html";
 }
 
 string CycloneHTTPServer::handle_stats_request(struct Thread& t,
     struct evhttp_request* req, struct evbuffer* out_buffer) {
+  ProfilerGuard pg(create_profiler(t.thread_name, "(http) /y/stats"));
+
   auto stats = gather_stats(this->store, this->all_servers);
 
   map<string, int64_t> sorted_stats;
@@ -132,8 +180,106 @@ string CycloneHTTPServer::handle_stats_request(struct Thread& t,
   return "text/plain";
 }
 
+string CycloneHTTPServer::handle_thread_status_request(struct Thread& t,
+    struct evhttp_request* req, struct evbuffer* out_buffer) {
+  ProfilerGuard pg(create_profiler(t.thread_name, "(http) /y/thread-status"));
+
+  auto profilers = get_active_profilers();
+  for (const auto& it : profilers) {
+    if (it.second->done()) {
+      evbuffer_add_printf(out_buffer, "[%s] idle\n", it.first.c_str());
+    } else {
+      string function_name = it.second->get_function_name();
+      evbuffer_add_printf(out_buffer, "[%s] %s\n", it.first.c_str(),
+          function_name.c_str());
+    }
+  }
+
+  return "text/plain";
+}
+
+string CycloneHTTPServer::handle_action_request(struct Thread& t,
+    struct evhttp_request* req, struct evbuffer* out_buffer) {
+
+  const struct evhttp_uri* uri = evhttp_request_get_evhttp_uri(req);
+  const char* query_string = evhttp_uri_get_query(uri);
+  unordered_map<string, string> params;
+  if (query_string) {
+    params = this->parse_url_params_unique(query_string);
+  }
+
+  string action;
+  try {
+    action = params.at("action");
+  } catch (const out_of_range&) {
+    throw http_error(400, "action is required");
+  }
+
+  if (action == "rename_series") {
+    string from_key_name, to_key_name;
+    bool merge;
+    try {
+      from_key_name = params.at("from_key_name");
+      to_key_name = params.at("to_key_name");
+      merge = params.count("merge");
+    } catch (const out_of_range&) {
+      throw http_error(400, "from_key_name and to_key_name are required");
+    }
+
+    unordered_map<string, string> renames({{from_key_name, to_key_name}});
+
+    ProfilerGuard pg(create_profiler(t.thread_name,
+        Store::string_for_rename_series(renames, merge, false)));
+    auto task = this->store->rename_series(NULL, renames, merge, false,
+        pg.profiler.get());
+    for (const auto& it : task->value()) {
+      if (it.second.description.empty()) {
+        evbuffer_add_printf(out_buffer, "[%s->%s] success\n",
+            it.first.c_str(), renames.at(it.first).c_str());
+      } else {
+        string error_str = string_for_error(it.second);
+        evbuffer_add_printf(out_buffer, "[%s->%s] FAILED: %s\n",
+            it.first.c_str(), renames.at(it.first).c_str(), error_str.c_str());
+      }
+    }
+
+  } else if (action == "delete_series") {
+    string pattern;
+    bool deferred;
+    try {
+      pattern = params.at("pattern");
+      deferred = params.count("deferred");
+    } catch (const out_of_range&) {
+      throw http_error(400, "pattern is required");
+    }
+
+    vector<string> patterns({pattern});
+    ProfilerGuard pg(create_profiler(t.thread_name,
+        Store::string_for_delete_series(patterns, deferred, false)));
+    auto task = this->store->delete_series(NULL, patterns, deferred, false,
+        pg.profiler.get());
+    for (const auto& it : task->value()) {
+      if (it.second.error.description.empty()) {
+        evbuffer_add_printf(out_buffer, "[%s] %" PRId64 " series deleted from disk, %" PRId64 " series deleted from buffer\n",
+            it.first.c_str(), it.second.disk_series_deleted, it.second.buffer_series_deleted);
+      } else {
+        evbuffer_add_printf(out_buffer, "[%s] FAILED: %s (%" PRId64 " series deleted from disk, %" PRId64 " series deleted from buffer)\n",
+            it.first.c_str(), it.second.error.description.c_str(),
+            it.second.disk_series_deleted, it.second.buffer_series_deleted);
+      }
+    }
+
+  } else {
+    throw http_error(400, "unknown action");
+  }
+
+  return "text/plain";
+}
+
 string CycloneHTTPServer::handle_config_request(struct Thread& t,
     struct evhttp_request* req, struct evbuffer* out_buffer) {
+  ProfilerGuard pg(create_profiler(t.thread_name, "(http) /y/config"));
+
   string contents = load_file(this->config_filename);
   evbuffer_add_printf(out_buffer,
       "// configuration filename: %s\n", this->config_filename.c_str());

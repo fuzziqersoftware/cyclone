@@ -57,7 +57,7 @@ class CycloneHTTPClient(threading.local):
 
   def read_all(self, key_name):
     """Reads all datapoints from the given key."""
-    url = 'http://%s:%d/y/read_all?target=%s' % (self.host, self.port, key_name,)
+    url = 'http://%s:%d/y/read-all?target=%s' % (self.host, self.port, key_name,)
     raw_data = urllib.urlopen(url).read()
     result = json.loads(raw_data)
     if isinstance(result, list):

@@ -116,6 +116,15 @@ unordered_multimap<string, string> HTTPServer::parse_url_params(
   return params;
 }
 
+unordered_map<string, string> HTTPServer::parse_url_params_unique(
+    const string& query) {
+  unordered_map<string, string> ret;
+  for (const auto& it : HTTPServer::parse_url_params(query)) {
+    ret.emplace(it.first, move(it.second));
+  }
+  return ret;
+}
+
 const string& HTTPServer::get_url_param(
     const unordered_multimap<string, string>& params, const string& key,
     const string* _default) {
