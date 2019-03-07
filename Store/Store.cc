@@ -518,14 +518,24 @@ bool Store::key_char_is_valid(char ch) {
 }
 
 bool Store::key_name_is_valid(const string& key_name) {
-  // allowed characters are [a-zA-Z0-9.:_-]
-  // if the key contains any other character, it's not valid
+  // the empty string is not valid
+  if (key_name.empty()) {
+    return false;
+  }
+
+  // allowed characters are [a-zA-Z0-9.:_-], but . may not appear next to
+  // another . and the key cannot begin or end with .
+  uint8_t last_ch = '.';
   for (uint8_t ch : key_name) {
     if (!VALID_CHARS[ch]) {
       return false;
     }
+    if ((last_ch == '.') && (ch == '.')) {
+      return false;
+    }
+    last_ch = ch;
   }
-  return true;
+  return (last_ch != '.');
 }
 
 void Store::validate_autocreate_rules(
