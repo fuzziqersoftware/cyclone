@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <phosg/Filesystem.hh>
+#include <phosg/Image.hh>
 #include <phosg/Network.hh>
 #include <phosg/Strings.hh>
 #include <phosg/Time.hh>
@@ -25,7 +26,22 @@ using namespace std;
 CycloneHTTPServer::CycloneHTTPServer(shared_ptr<Store> store,
     size_t num_threads, const string& config_filename) :
     HTTPServer(num_threads), store(store), config_filename(config_filename),
-    start_time(now()) { }
+    start_time(now()) {
+  // generate the favicon
+  Image img(16, 16);
+  img.draw_horizontal_line(0, 15, 0, 0, 0, 0xFF, 0);
+  img.draw_horizontal_line(0, 14, 1, 0, 0, 0xFF, 0);
+  img.draw_vertical_line(0, 2, 15, 0, 0, 0xFF, 0);
+  img.draw_vertical_line(1, 2, 14, 0, 0, 0xFF, 0);
+  img.draw_horizontal_line(1, 15, 15, 0, 0, 0x80, 0);
+  img.draw_horizontal_line(2, 15, 14, 0, 0, 0x80, 0);
+  img.draw_vertical_line(15, 1, 13, 0, 0, 0x80, 0);
+  img.draw_vertical_line(14, 2, 13, 0, 0, 0x80, 0);
+  img.fill_rect(2, 2, 12, 12, 0, 0xC0, 0);
+  img.fill_rect(3, 9, 4, 4, 0xFF, 0xFF, 0xFF);
+  img.fill_rect(9, 3, 4, 4, 0xFF, 0xFF, 0xFF);
+  this->favicon_data = img.save(Image::ImageFormat::WindowsBitmap);
+}
 
 void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* req) {
   BusyThreadGuard g(&this->idle_thread_count);
@@ -65,6 +81,10 @@ void CycloneHTTPServer::handle_request(struct Thread& t, struct evhttp_request* 
     //   content_type = this->handle_delete_request(t, req, out_buffer.get());
     // } else if (!strncmp(uri, "/write", 6)) {
     //   content_type = this->handle_write_request(t, req, out_buffer.get());
+
+    // other stuff
+    } else if (!strcmp(uri, "/favicon.ico")) {
+      content_type = this->handle_favicon_request(t, req, out_buffer.get());
 
     } else {
       throw http_error(404, "unknown action");
@@ -160,6 +180,15 @@ string CycloneHTTPServer::handle_index_request(struct Thread& t,
   evbuffer_add_reference(out_buffer, INDEX_HTML_FOOTER.data(),
       INDEX_HTML_FOOTER.size(), NULL, NULL);
   return "text/html";
+}
+
+string CycloneHTTPServer::handle_favicon_request(struct Thread& t,
+    struct evhttp_request* req, struct evbuffer* out_buffer) {
+  ProfilerGuard pg(create_profiler(t.thread_name, "(http) /favicon.ico"));
+
+  evbuffer_add_reference(out_buffer, this->favicon_data.data(),
+      this->favicon_data.size(), NULL, NULL);
+  return "image/x-icon";
 }
 
 string CycloneHTTPServer::handle_stats_request(struct Thread& t,
