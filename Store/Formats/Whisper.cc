@@ -89,7 +89,7 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
   // because this is a guess, we can't use preadx - it's ok to read fewer bytes
   size_t archives_read = 10;
   vector<uint8_t> data(sizeof(FileHeader) + archives_read * sizeof(ArchiveMetadata));
-  ssize_t bytes_read = pread(lease.fd, data.data(), data.size(), 0);
+  ssize_t bytes_read = pread(lease->fd, data.data(), data.size(), 0);
   if (bytes_read < static_cast<ssize_t>(sizeof(FileHeader))) {
     throw runtime_error("can\'t read header for " + this->filename);
   }
@@ -111,7 +111,7 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
     data.resize(sizeof(FileHeader) + this->metadata->num_archives * sizeof(ArchiveMetadata));
     off_t off = sizeof(FileHeader) + archives_read * sizeof(ArchiveMetadata);
     size_t size = (this->metadata->num_archives - archives_read) * sizeof(ArchiveMetadata);
-    preadx(lease.fd, &data[off], size, off);
+    preadx(lease->fd, &data[off], size, off);
   }
 
   // convert the archive headers into a usable format
@@ -123,7 +123,7 @@ WhisperArchive::WhisperArchive(const string& filename) : filename(filename) {
   }
 
   // verify the metadata
-  size_t file_size = fstat(lease.fd).st_size;
+  size_t file_size = fstat(lease->fd).st_size;
 
   if (this->metadata->aggregation_method < 1 || this->metadata->aggregation_method > 5) {
     throw runtime_error(this->filename + " has invalid aggregation method");
@@ -371,7 +371,7 @@ WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time,
     auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
 
     // find out where to begin & end
-    uint64_t archive_start_time = this->get_base_interval_locked(lease.fd, archive_index);
+    uint64_t archive_start_time = this->get_base_interval_locked(lease->fd, archive_index);
     if (archive_start_time == 0) {
       // archive is blank
       // TODO: we should read from multiple archives in this case
@@ -400,7 +400,7 @@ WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time,
     if (start_offset < end_offset) {
       num_points = (end_offset - start_offset) / sizeof(FilePoint);
       raw_points.reset(new FilePoint[num_points]);
-      preadx(lease.fd, raw_points.get(), sizeof(FilePoint) * num_points, start_offset);
+      preadx(lease->fd, raw_points.get(), sizeof(FilePoint) * num_points, start_offset);
 
     } else {
       uint32_t num_points_first = archive.points - (start_offset - archive.offset) / sizeof(FilePoint);
@@ -408,9 +408,9 @@ WhisperArchive::ReadResult WhisperArchive::read(uint64_t start_time,
       num_points = num_points_first + num_points_second;
 
       raw_points.reset(new FilePoint[num_points]);
-      preadx(lease.fd, raw_points.get(), sizeof(FilePoint) * num_points_first,
+      preadx(lease->fd, raw_points.get(), sizeof(FilePoint) * num_points_first,
           start_offset);
-      preadx(lease.fd, &(raw_points.get()[num_points_first]),
+      preadx(lease->fd, &(raw_points.get()[num_points_first]),
           sizeof(FilePoint) * num_points_second, archive.offset);
     }
 
@@ -445,7 +445,7 @@ Series WhisperArchive::read_all() {
     file_size = this->get_file_size_locked();
 
     auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
-    data = preadx(lease.fd, file_size - offset, offset);
+    data = preadx(lease->fd, file_size - offset, offset);
   }
 
   Series ret;
@@ -502,7 +502,7 @@ void WhisperArchive::write_sorted_locked(const Series& sorted_data, int64_t t) {
     // while we can't fit any more points into the current archive, commit
     while ((archive_index < this->metadata->num_archives) && (retention < pt_age)) {
       if (next_commit_point != x) {
-        this->write_archive_locked(lease.fd, archive_index, sorted_data, next_commit_point, x);
+        this->write_archive_locked(lease->fd, archive_index, sorted_data, next_commit_point, x);
         next_commit_point = x;
       }
       archive_index++;
@@ -510,14 +510,14 @@ void WhisperArchive::write_sorted_locked(const Series& sorted_data, int64_t t) {
   }
 
   if (archive_index < this->metadata->num_archives) {
-    this->write_archive_locked(lease.fd, archive_index, sorted_data, next_commit_point, x);
+    this->write_archive_locked(lease->fd, archive_index, sorted_data, next_commit_point, x);
   }
 }
 
 void WhisperArchive::truncate() {
   rw_guard g(this->lock, true);
   auto lease = WhisperArchive::file_cache.lease(filename);
-  this->create_file_locked(lease.fd);
+  this->create_file_locked(lease->fd);
 }
 
 void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
@@ -549,7 +549,7 @@ void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
     }
 
     auto lease = WhisperArchive::file_cache.lease(filename);
-    this->create_file_locked(lease.fd);
+    this->create_file_locked(lease->fd);
 
   } else {
     // if archive_args was changed in any way, we need to resample the data.
@@ -579,7 +579,7 @@ void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
       int64_t file_size = this->get_file_size_locked();
 
       auto lease = WhisperArchive::file_cache.lease(this->filename, 0);
-      data = preadx(lease.fd, file_size - offset, offset);
+      data = preadx(lease->fd, file_size - offset, offset);
 
       const FilePoint* file_points = reinterpret_cast<const FilePoint*>(data.data());
       size_t num_points = (file_size - offset) / sizeof(FilePoint);
@@ -640,9 +640,9 @@ void WhisperArchive::update_metadata(const vector<ArchiveArg>& archive_args,
           offset += archive_args[x].points * sizeof(FilePoint);
         }
 
-        this->create_file_locked(lease.fd);
+        this->create_file_locked(lease->fd);
       } else {
-        this->write_header_locked(lease.fd);
+        this->write_header_locked(lease->fd);
       }
     }
 
