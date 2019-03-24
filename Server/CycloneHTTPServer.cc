@@ -28,18 +28,22 @@ CycloneHTTPServer::CycloneHTTPServer(shared_ptr<Store> store,
     HTTPServer(num_threads), store(store), config_filename(config_filename),
     start_time(now()) {
   // generate the favicon
-  Image img(16, 16);
-  img.draw_horizontal_line(0, 15, 0, 0, 0, 0xFF, 0);
-  img.draw_horizontal_line(0, 14, 1, 0, 0, 0xFF, 0);
-  img.draw_vertical_line(0, 2, 15, 0, 0, 0xFF, 0);
-  img.draw_vertical_line(1, 2, 14, 0, 0, 0xFF, 0);
-  img.draw_horizontal_line(1, 15, 15, 0, 0, 0x80, 0);
-  img.draw_horizontal_line(2, 15, 14, 0, 0, 0x80, 0);
-  img.draw_vertical_line(15, 1, 13, 0, 0, 0x80, 0);
-  img.draw_vertical_line(14, 2, 13, 0, 0, 0x80, 0);
-  img.fill_rect(2, 2, 12, 12, 0, 0xC0, 0);
-  img.fill_rect(3, 9, 4, 4, 0xFF, 0xFF, 0xFF);
-  img.fill_rect(9, 3, 4, 4, 0xFF, 0xFF, 0xFF);
+  Image img(32, 32);
+  img.draw_horizontal_line(0, 31, 0, 0, 0, 0xFF, 0);
+  img.draw_horizontal_line(0, 30, 1, 0, 0, 0xFF, 0);
+  img.draw_horizontal_line(0, 29, 2, 0, 0, 0xFF, 0);
+  img.draw_vertical_line(0, 3, 31, 0, 0, 0xFF, 0);
+  img.draw_vertical_line(1, 3, 30, 0, 0, 0xFF, 0);
+  img.draw_vertical_line(2, 3, 29, 0, 0, 0xFF, 0);
+  img.draw_horizontal_line(1, 31, 31, 0, 0, 0x80, 0);
+  img.draw_horizontal_line(2, 31, 30, 0, 0, 0x80, 0);
+  img.draw_horizontal_line(3, 31, 29, 0, 0, 0x80, 0);
+  img.draw_vertical_line(31, 1, 29, 0, 0, 0x80, 0);
+  img.draw_vertical_line(30, 2, 29, 0, 0, 0x80, 0);
+  img.draw_vertical_line(29, 3, 29, 0, 0, 0x80, 0);
+  img.fill_rect(3, 3, 26, 26, 0, 0xC0, 0);
+  img.fill_rect(5, 18, 9, 9, 0xFF, 0xFF, 0xFF);
+  img.fill_rect(18, 5, 9, 9, 0xFF, 0xFF, 0xFF);
   this->favicon_data = img.save(Image::ImageFormat::WindowsBitmap);
 }
 
