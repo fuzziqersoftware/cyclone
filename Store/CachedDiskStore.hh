@@ -100,7 +100,11 @@ protected:
     // subdirectory oldness a different way: each directory keeps track of its
     // version, which atomically increases every time it's touched, and the
     // MINIMUM version of any directory within its subtree. when a subdirectory
-    // is touched, we propagate the minimum change up the tree until 
+    // is touched, we propagate the minimum change up the tree until we can't
+    // anymore (if the existing minimum is lower than the propagating value).
+    // then, to evict a directory, we start at the root and repeatedly move to
+    // the directory with the smallest min subtree version, stopping when we
+    // reach an empty directory. this empty directory is then evicted.
     LRUSet<std::string> files_lru;
     mutable std::mutex files_lru_lock;
 
