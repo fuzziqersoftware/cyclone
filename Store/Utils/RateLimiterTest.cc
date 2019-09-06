@@ -91,8 +91,6 @@ int main(int argc, char* argv[]) {
     uint64_t total_denied_actions = 0;
     for (size_t x = 0; x < thread_count; x++) {
       expect_eq(num_actions_per_thread, allowed_actions_counts[x] + denied_actions_counts[x]);
-      expect_ne(0, allowed_actions_counts[x]);
-      expect_ne(0, denied_actions_counts[x]);
       total_allowed_actions += allowed_actions_counts[x];
       total_denied_actions += denied_actions_counts[x];
       fprintf(stderr, "---- thread %zu did %" PRIu64 " actions and was denied %" PRIu64 " times\n",
@@ -121,8 +119,6 @@ int main(int argc, char* argv[]) {
     total_denied_actions = 0;
     for (size_t x = 0; x < thread_count; x++) {
       expect_eq(num_actions_per_thread, allowed_actions_counts[x] + denied_actions_counts[x]);
-      expect_ne(0, allowed_actions_counts[x]);
-      expect_ne(0, denied_actions_counts[x]);
       total_allowed_actions += allowed_actions_counts[x];
       total_denied_actions += denied_actions_counts[x];
       fprintf(stderr, "---- thread %zu did %" PRIu64 " actions and was denied %" PRIu64 " times\n",
